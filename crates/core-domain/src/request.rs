@@ -103,10 +103,50 @@ pub struct HttpPayload {
     pub follow_redirects: bool,
 }
 
+/// Request authentication reference. Secrets are stored by name in `secret-store`;
+/// this struct never carries plaintext credentials.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRef {
+    /// `none` | `bearer` | `basic` | `api_key`
     pub kind: String,
+    /// Secret store ref for bearer token, basic password, or API key value.
+    #[serde(default)]
     pub secret_ref: Option<String>,
+    /// Basic auth username (may contain `{{var}}` templates).
+    #[serde(default)]
+    pub username: Option<String>,
+    /// API Key header name (default `X-Api-Key`).
+    #[serde(default)]
+    pub header_name: Option<String>,
+}
+
+impl AuthRef {
+    pub fn bearer(secret_ref: impl Into<String>) -> Self {
+        Self {
+            kind: "bearer".into(),
+            secret_ref: Some(secret_ref.into()),
+            username: None,
+            header_name: None,
+        }
+    }
+
+    pub fn basic(username: impl Into<String>, password_secret_ref: impl Into<String>) -> Self {
+        Self {
+            kind: "basic".into(),
+            secret_ref: Some(password_secret_ref.into()),
+            username: Some(username.into()),
+            header_name: None,
+        }
+    }
+
+    pub fn api_key(secret_ref: impl Into<String>, header_name: impl Into<String>) -> Self {
+        Self {
+            kind: "api_key".into(),
+            secret_ref: Some(secret_ref.into()),
+            username: None,
+            header_name: Some(header_name.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

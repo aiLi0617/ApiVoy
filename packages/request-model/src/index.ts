@@ -24,9 +24,16 @@ export type ProtocolPayload =
   | ({ type: "http" } & HttpPayload)
   | { type: "raw"; value: unknown };
 
+/** Request auth reference — secrets stay in Keychain / Agent secret-store. */
 export interface AuthRef {
+  /** `none` | `bearer` | `basic` | `api_key` */
   kind: string;
+  /** Secret store name for bearer token, basic password, or API key. */
   secret_ref?: string | null;
+  /** Basic auth username (may contain `{{var}}`). */
+  username?: string | null;
+  /** API Key header name (default `X-Api-Key`). */
+  header_name?: string | null;
 }
 
 export interface RetryPolicy {
@@ -142,6 +149,8 @@ export interface CreateHttpRequestOptions {
   followRedirects?: boolean;
   variables?: Record<string, string>;
   assertions?: Assertion[];
+  auth?: AuthRef | null;
+  environmentRef?: string | null;
 }
 
 export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnvelope {
@@ -151,8 +160,8 @@ export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnv
     protocolId: "http",
     name: options.name ?? `${method} ${options.url}`,
     target: options.url,
-    environmentRef: null,
-    authRef: null,
+    environmentRef: options.environmentRef ?? null,
+    authRef: options.auth ?? null,
     timeoutMs: options.timeoutMs ?? 30_000,
     retryPolicy: { max_retries: 0, backoff_ms: 0 },
     proxy: null,

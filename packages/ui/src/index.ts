@@ -6,5 +6,7 @@ export {
   type HttpRunResult,
   type HttpSendHooks,
   type HistoryItem,
+  type HistoryFilter,
+  type AuthKind,
 } from "./HttpWorkbench";
 

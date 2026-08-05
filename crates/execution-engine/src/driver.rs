@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use core_domain::{ExecutionId, ExecutionSummary, RequestEnvelope};
+use core_domain::{DomainError, ErrorKind, ExecutionId, ExecutionSummary, RequestEnvelope};
 use event_stream::EventSink;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -36,6 +36,8 @@ pub enum DriverError {
     Validation(String),
     #[error("connection failed: {0}")]
     Connection(String),
+    #[error("tls error: {0}")]
+    Tls(String),
     #[error("protocol error: {0}")]
     Protocol(String),
     #[error("timeout: {0}")]
@@ -47,20 +49,45 @@ pub enum DriverError {
 }
 
 impl DriverError {
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Validation(_) => ErrorKind::Validation,
+            Self::Connection(_) => ErrorKind::Connection,
+            Self::Tls(_) => ErrorKind::Tls,
+            Self::Protocol(_) => ErrorKind::Protocol,
+            Self::Timeout(_) => ErrorKind::Timeout,
+            Self::Cancelled => ErrorKind::Cancelled,
+            Self::Internal(_) => ErrorKind::Internal,
+        }
+    }
+
     /// Stable wire / UI error codes.
     pub fn code(&self) -> &'static str {
-        match self {
-            Self::Validation(_) => "validation",
-            Self::Connection(_) => "connection_failed",
-            Self::Protocol(_) => "protocol_error",
-            Self::Timeout(_) => "timeout",
-            Self::Cancelled => "cancelled",
-            Self::Internal(_) => "internal",
-        }
+        self.kind().as_str()
     }
 
     pub fn message(&self) -> String {
         self.to_string()
+    }
+
+    pub fn to_domain(&self) -> DomainError {
+        match self {
+            Self::Validation(msg) => DomainError::validation("request", msg.clone()),
+            Self::Connection(msg) => DomainError::Connection {
+                message: msg.clone(),
+            },
+            Self::Tls(msg) => DomainError::Tls {
+                message: msg.clone(),
+            },
+            Self::Protocol(msg) => DomainError::Protocol {
+                message: msg.clone(),
+            },
+            Self::Timeout(msg) => DomainError::Timeout {
+                message: msg.clone(),
+            },
+            Self::Cancelled => DomainError::Cancelled,
+            Self::Internal(msg) => DomainError::internal(msg.clone()),
+        }
     }
 }
 

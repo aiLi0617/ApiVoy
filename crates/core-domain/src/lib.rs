@@ -8,7 +8,7 @@ mod execution;
 mod request;
 
 pub use assertion::Assertion;
-pub use error::{DomainError, DomainResult};
+pub use error::{DomainError, DomainResult, ErrorKind};
 pub use execution::{
     AssertionResultEvent, ExecutionEvent, ExecutionId, ExecutionPhase, ExecutionState,
     ExecutionSummary, MetricEvent, ResponseMeta,

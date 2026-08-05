@@ -145,10 +145,13 @@ name = "apivoy-local-agent"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "core-domain",
  "driver-http",
  "execution-engine",
  "futures",
+ "local-store",
+ "secret-store",
  "serde",
  "serde_json",
  "tokio",
@@ -1020,6 +1023,7 @@ name = "execution-engine"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "core-domain",
  "event-stream",
@@ -2085,6 +2089,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.19",
  "uuid",
 ]

@@ -1,5 +1,12 @@
 import { useState, type CSSProperties } from "react";
-import type { Assertion, AssertionResultEvent, ExecutionSummary } from "@apivoy/request-model";
+import type {
+  Assertion,
+  AssertionResultEvent,
+  AuthRef,
+  ExecutionSummary,
+} from "@apivoy/request-model";
+
+export type AuthKind = "none" | "bearer" | "basic" | "api_key";
 
 export interface HttpWorkbenchRequest {
   url: string;
@@ -9,6 +16,7 @@ export interface HttpWorkbenchRequest {
   timeoutMs: number;
   variables: Record<string, string>;
   assertions: Assertion[];
+  auth?: AuthRef | null;
 }
 
 export interface HttpRunResult {
@@ -33,6 +41,14 @@ export interface HistoryItem {
   durationMs: number;
   startedAt: string;
   target?: string;
+  preview?: string | null;
+}
+
+export interface HistoryFilter {
+  state?: string;
+  status?: number;
+  protocolId?: string;
+  requestId?: string;
 }
 
 export interface HttpWorkbenchProps {
@@ -40,9 +56,13 @@ export interface HttpWorkbenchProps {
   onCancel?: (executionId: string) => Promise<void>;
   onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
   onLoad?: () => Promise<HttpWorkbenchRequest | null>;
-  onLoadEnvironment?: () => Promise<Record<string, string>>;
-  onSaveEnvironment?: (variables: Record<string, string>) => Promise<void>;
-  onListHistory?: () => Promise<HistoryItem[]>;
+  onLoadEnvironment?: () => Promise<{ variables: Record<string, string>; secretRefs: string[] }>;
+  onSaveEnvironment?: (
+    variables: Record<string, string>,
+    secretRefs: string[],
+  ) => Promise<void>;
+  onPutSecret?: (name: string, value: string) => Promise<void>;
+  onListHistory?: (filter?: HistoryFilter) => Promise<HistoryItem[]>;
   onReplayHistory?: (id: string) => Promise<HttpWorkbenchRequest | null>;
 }
 
@@ -141,6 +161,23 @@ function formatAssertions(list: Assertion[]): string {
     .join("\n");
 }
 
+function buildAuth(
+  kind: AuthKind,
+  secretRef: string,
+  username: string,
+  headerName: string,
+): AuthRef | null {
+  if (kind === "none") {
+    return null;
+  }
+  return {
+    kind,
+    secret_ref: secretRef.trim() || null,
+    username: kind === "basic" ? username.trim() || null : null,
+    header_name: kind === "api_key" ? headerName.trim() || "X-Api-Key" : null,
+  };
+}
+
 export function HttpWorkbench({
   onSend,
   onCancel,
@@ -148,6 +185,7 @@ export function HttpWorkbench({
   onLoad,
   onLoadEnvironment,
   onSaveEnvironment,
+  onPutSecret,
   onListHistory,
   onReplayHistory,
 }: HttpWorkbenchProps) {
@@ -158,12 +196,22 @@ export function HttpWorkbench({
   const [timeoutMs, setTimeoutMs] = useState(30_000);
   const [variablesText, setVariablesText] = useState("host=example.com");
   const [envText, setEnvText] = useState("host=example.com");
+  const [secretRefs, setSecretRefs] = useState<string[]>([]);
   const [assertionsText, setAssertionsText] = useState("status == 200\nbody contains Example");
+  const [authKind, setAuthKind] = useState<AuthKind>("none");
+  const [authSecretRef, setAuthSecretRef] = useState("apiToken");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authHeaderName, setAuthHeaderName] = useState("X-Api-Key");
+  const [secretName, setSecretName] = useState("apiToken");
+  const [secretValue, setSecretValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [result, setResult] = useState<HttpRunResult | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyStateFilter, setHistoryStateFilter] = useState("");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("");
+  const [compareIds, setCompareIds] = useState<string[]>([]);
 
   function buildRequest(): HttpWorkbenchRequest {
     const headers = headersText
@@ -186,6 +234,7 @@ export function HttpWorkbench({
       timeoutMs,
       variables: parseKv(variablesText),
       assertions: parseAssertions(assertionsText),
+      auth: buildAuth(authKind, authSecretRef, authUsername, authHeaderName),
     };
   }
 
@@ -197,6 +246,17 @@ export function HttpWorkbench({
     setTimeoutMs(loaded.timeoutMs);
     setVariablesText(formatKv(loaded.variables));
     setAssertionsText(formatAssertions(loaded.assertions));
+    const auth = loaded.auth;
+    if (!auth || auth.kind === "none") {
+      setAuthKind("none");
+    } else if (auth.kind === "bearer" || auth.kind === "basic" || auth.kind === "api_key") {
+      setAuthKind(auth.kind);
+      setAuthSecretRef(auth.secret_ref ?? "");
+      setAuthUsername(auth.username ?? "");
+      setAuthHeaderName(auth.header_name ?? "X-Api-Key");
+    } else {
+      setAuthKind("none");
+    }
   }
 
   async function handleSend() {
@@ -210,7 +270,7 @@ export function HttpWorkbench({
       });
       setResult(next);
       if (onListHistory) {
-        setHistory(await onListHistory());
+        setHistory(await onListHistory(currentHistoryFilter()));
       }
     } catch (err) {
       setResult({
@@ -270,8 +330,9 @@ export function HttpWorkbench({
       return;
     }
     try {
-      const vars = await onLoadEnvironment();
-      setEnvText(formatKv(vars));
+      const env = await onLoadEnvironment();
+      setEnvText(formatKv(env.variables));
+      setSecretRefs(env.secretRefs ?? []);
       setStatusMsg("已加载环境变量");
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
@@ -283,11 +344,54 @@ export function HttpWorkbench({
       return;
     }
     try {
-      await onSaveEnvironment(parseKv(envText));
+      const refs = [...secretRefs];
+      if (authKind !== "none" && authSecretRef.trim() && !refs.includes(authSecretRef.trim())) {
+        refs.push(authSecretRef.trim());
+      }
+      await onSaveEnvironment(parseKv(envText), refs);
+      setSecretRefs(refs);
       setStatusMsg("环境变量已保存");
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  async function handlePutSecret() {
+    if (!onPutSecret) {
+      return;
+    }
+    const name = secretName.trim();
+    if (!name || !secretValue) {
+      setStatusMsg("请填写密钥名称与值");
+      return;
+    }
+    try {
+      await onPutSecret(name, secretValue);
+      setSecretValue("");
+      setAuthSecretRef(name);
+      const refs = secretRefs.includes(name) ? secretRefs : [...secretRefs, name];
+      setSecretRefs(refs);
+      if (onSaveEnvironment) {
+        await onSaveEnvironment(parseKv(envText), refs);
+      }
+      setStatusMsg(`密钥 ${name} 已写入安全存储（不明文落盘）`);
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function currentHistoryFilter(): HistoryFilter | undefined {
+    const status = historyStatusFilter.trim()
+      ? Number(historyStatusFilter.trim())
+      : undefined;
+    const filter: HistoryFilter = {};
+    if (historyStateFilter.trim()) {
+      filter.state = historyStateFilter.trim();
+    }
+    if (status != null && !Number.isNaN(status)) {
+      filter.status = status;
+    }
+    return filter.state || filter.status != null ? filter : undefined;
   }
 
   async function handleRefreshHistory() {
@@ -295,11 +399,23 @@ export function HttpWorkbench({
       return;
     }
     try {
-      setHistory(await onListHistory());
+      setHistory(await onListHistory(currentHistoryFilter()));
       setStatusMsg("历史已刷新");
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  function toggleCompare(id: string) {
+    setCompareIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((x) => x !== id);
+      }
+      if (prev.length >= 2) {
+        return [prev[1], id];
+      }
+      return [...prev, id];
+    });
   }
 
   async function handleReplay(id: string) {
@@ -325,7 +441,8 @@ export function HttpWorkbench({
     <section style={styles.section}>
       <h1 style={styles.h1}>HTTP 请求编辑器</h1>
       <p style={styles.p}>
-        支持 {"{{var}}"} 变量、内置断言与历史重放。桌面端走 Tauri；Web 端经 Local Agent。
+        支持 {"{{var}}"} 变量、Basic/Bearer/API Key 认证、内置断言与历史重放。桌面端走 Tauri；Web
+        端经 Local Agent。
       </p>
 
       <div style={styles.row}>
@@ -403,15 +520,59 @@ export function HttpWorkbench({
 
       <div style={styles.grid2}>
         <label style={styles.label}>
-          请求变量（`key=value`，覆盖环境）
-          <textarea
-            style={styles.textarea}
-            value={variablesText}
-            onChange={(e) => setVariablesText(e.target.value)}
-            rows={4}
-            spellCheck={false}
+          认证
+          <select
+            style={styles.selectWide}
+            value={authKind}
+            onChange={(e) => setAuthKind(e.target.value as AuthKind)}
             disabled={loading}
-          />
+          >
+            <option value="none">None</option>
+            <option value="bearer">Bearer Token</option>
+            <option value="basic">Basic</option>
+            <option value="api_key">API Key</option>
+          </select>
+          {authKind !== "none" && (
+            <div style={styles.authFields}>
+              {authKind === "basic" && (
+                <input
+                  style={styles.input}
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  placeholder="Username（支持 {{var}}）"
+                  spellCheck={false}
+                  disabled={loading}
+                />
+              )}
+              <input
+                style={styles.input}
+                value={authSecretRef}
+                onChange={(e) => setAuthSecretRef(e.target.value)}
+                placeholder={
+                  authKind === "basic"
+                    ? "Password secret_ref 名称"
+                    : authKind === "api_key"
+                      ? "API Key secret_ref 名称"
+                      : "Token secret_ref 名称"
+                }
+                spellCheck={false}
+                disabled={loading}
+              />
+              {authKind === "api_key" && (
+                <input
+                  style={styles.input}
+                  value={authHeaderName}
+                  onChange={(e) => setAuthHeaderName(e.target.value)}
+                  placeholder="Header 名（默认 X-Api-Key）"
+                  spellCheck={false}
+                  disabled={loading}
+                />
+              )}
+              <div style={styles.muted}>
+                仅保存密钥引用名；明文写入下方「密钥存储」。
+              </div>
+            </div>
+          )}
         </label>
         <label style={styles.label}>
           断言（每行一条：`status == 200` / `body contains …` / `jsonpath $.a == 1`）
@@ -424,6 +585,51 @@ export function HttpWorkbench({
             disabled={loading}
           />
         </label>
+      </div>
+
+      <div style={styles.grid2}>
+        <label style={styles.label}>
+          请求变量（`key=value`，覆盖环境）
+          <textarea
+            style={styles.textarea}
+            value={variablesText}
+            onChange={(e) => setVariablesText(e.target.value)}
+            rows={4}
+            spellCheck={false}
+            disabled={loading}
+          />
+        </label>
+        {onPutSecret ? (
+          <label style={styles.label}>
+            密钥存储（写入 OS Keychain / Agent，不明文进 SQLite）
+            <input
+              style={styles.input}
+              value={secretName}
+              onChange={(e) => setSecretName(e.target.value)}
+              placeholder="secret 名称，如 apiToken"
+              spellCheck={false}
+              disabled={loading}
+            />
+            <input
+              style={styles.input}
+              type="password"
+              value={secretValue}
+              onChange={(e) => setSecretValue(e.target.value)}
+              placeholder="密钥值（仅写入安全存储）"
+              disabled={loading}
+            />
+            <div style={styles.row}>
+              <button style={styles.secondaryButton} disabled={loading} onClick={handlePutSecret}>
+                存入密钥
+              </button>
+              {secretRefs.length > 0 && (
+                <span style={styles.muted}>已关联: {secretRefs.join(", ")}</span>
+              )}
+            </div>
+          </label>
+        ) : (
+          <div />
+        )}
       </div>
 
       {(onLoadEnvironment || onSaveEnvironment) && (
@@ -475,12 +681,47 @@ export function HttpWorkbench({
               刷新
             </button>
           </div>
+          <div style={styles.row}>
+            <label style={styles.label}>
+              状态
+              <select
+                style={styles.select}
+                value={historyStateFilter}
+                onChange={(e) => setHistoryStateFilter(e.target.value)}
+              >
+                <option value="">全部</option>
+                <option value="completed">completed</option>
+                <option value="failed">failed</option>
+                <option value="cancelled">cancelled</option>
+              </select>
+            </label>
+            <label style={styles.label}>
+              HTTP 状态码
+              <input
+                style={styles.input}
+                value={historyStatusFilter}
+                onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                placeholder="如 200"
+              />
+            </label>
+            <button style={styles.secondaryButton} disabled={loading} onClick={handleRefreshHistory}>
+              筛选
+            </button>
+          </div>
           {history.length === 0 ? (
             <div style={styles.muted}>暂无历史；发送请求后会出现在这里。</div>
           ) : (
             <ul style={styles.historyList}>
               {history.map((item) => (
                 <li key={item.id} style={styles.historyItem}>
+                  <label style={styles.compareCheck}>
+                    <input
+                      type="checkbox"
+                      checked={compareIds.includes(item.id)}
+                      onChange={() => toggleCompare(item.id)}
+                    />
+                    对比
+                  </label>
                   <span style={styles.mono}>
                     {item.status ?? "—"} · {item.durationMs}ms · {item.state}
                   </span>
@@ -497,6 +738,24 @@ export function HttpWorkbench({
                 </li>
               ))}
             </ul>
+          )}
+          {compareIds.length === 2 && (
+            <div style={styles.comparePanel}>
+              {compareIds.map((id) => {
+                const item = history.find((h) => h.id === id);
+                return (
+                  <div key={id} style={styles.comparePane}>
+                    <div style={styles.mono}>
+                      {item?.status ?? "—"} · {item?.durationMs ?? 0}ms · {item?.state ?? "—"}
+                    </div>
+                    <div style={styles.muted}>{item?.target ?? id.slice(0, 8)}</div>
+                    <pre style={styles.comparePre}>
+                      {(item?.preview ?? "(无预览)").slice(0, 2000)}
+                    </pre>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
@@ -586,6 +845,22 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(62, 207, 142, 0.35)",
     borderRadius: 8,
     padding: "10px 12px",
+  },
+  selectWide: {
+    fontFamily: "var(--apivoy-mono)",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "var(--apivoy-text)",
+    background: "var(--apivoy-bg-elevated)",
+    border: "1px solid var(--apivoy-border)",
+    borderRadius: 8,
+    padding: "10px 12px",
+  },
+  authFields: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    marginTop: 4,
   },
   input: {
     flex: 1,
@@ -703,6 +978,39 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     flexWrap: "wrap",
     fontSize: 12,
+  },
+  compareCheck: {
+    display: "inline-flex",
+    gap: 4,
+    alignItems: "center",
+    color: "var(--apivoy-muted)",
+    fontSize: 12,
+  },
+  compareBox: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 12,
+    marginTop: 8,
+  },
+  comparePane: {
+    border: "1px solid var(--apivoy-border)",
+    borderRadius: 8,
+    padding: 10,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    minWidth: 0,
+  },
+  comparePre: {
+    margin: 0,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    fontFamily: "var(--apivoy-mono)",
+    fontSize: 11,
+    lineHeight: 1.4,
+    maxHeight: 240,
+    overflow: "auto",
+    color: "var(--apivoy-text)",
   },
   mono: {
     fontFamily: "var(--apivoy-mono)",

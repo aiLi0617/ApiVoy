@@ -7,7 +7,13 @@ import {
   type RequestEnvelope,
 } from "@apivoy/request-model";
 import type { AssertionResultEvent } from "@apivoy/request-model";
-import type { HttpRunResult, HttpSendHooks, HttpWorkbenchRequest } from "@apivoy/ui";
+import type {
+  HistoryFilter,
+  HistoryItem,
+  HttpRunResult,
+  HttpSendHooks,
+  HttpWorkbenchRequest,
+} from "@apivoy/ui";
 
 const AGENT_BASE =
   (import.meta.env.VITE_APIVOY_AGENT_URL as string | undefined) ?? "http://127.0.0.1:39217";
@@ -22,6 +28,29 @@ export interface AgentHealth {
   minProtocolApiVersion: string;
   maxProtocolApiVersion: string;
   authRequired: boolean;
+}
+
+interface EnvironmentRecord {
+  id: string;
+  variables: Record<string, string>;
+  secretRefs?: string[];
+}
+
+interface HistoryRecord {
+  id: string;
+  protocolId: string;
+  state: string;
+  status?: number | null;
+  durationMs: number;
+  startedAt: string;
+  requestSnapshot?: RequestEnvelope | null;
+  preview?: string | null;
+}
+
+interface StoredRequest {
+  id: string;
+  target: string;
+  envelope: RequestEnvelope;
 }
 
 function agentHeaders(extra?: HeadersInit): Headers {
@@ -59,7 +88,140 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
     timeoutMs: request.timeoutMs,
     variables: request.variables,
     assertions: request.assertions,
+    auth: request.auth ?? null,
+    environmentRef: "default-env",
   });
+}
+
+export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpWorkbenchRequest {
+  const payload = envelope.payload;
+  if (payload.type !== "http") {
+    throw new Error("仅支持 HTTP 请求重放");
+  }
+  return {
+    url: envelope.target || fallbackTarget || "",
+    method: payload.method,
+    headers: payload.headers,
+    body: payload.body ?? undefined,
+    timeoutMs: envelope.timeoutMs,
+    variables: envelope.variables ?? {},
+    assertions: envelope.assertions ?? [],
+    auth: envelope.authRef ?? null,
+  };
+}
+
+export async function putSecretViaAgent(name: string, value: string): Promise<void> {
+  await checkAgentHandshake();
+  const res = await fetch(`${AGENT_BASE}/v1/secrets`, {
+    method: "PUT",
+    headers: agentHeaders(),
+    body: JSON.stringify({ name, value }),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+}
+
+export async function getEnvironmentViaAgent(): Promise<{
+  variables: Record<string, string>;
+  secretRefs: string[];
+}> {
+  await checkAgentHandshake();
+  const res = await fetch(`${AGENT_BASE}/v1/environments/default`, {
+    headers: agentHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  const env = (await res.json()) as EnvironmentRecord;
+  return {
+    variables: env.variables ?? {},
+    secretRefs: env.secretRefs ?? [],
+  };
+}
+
+export async function saveEnvironmentViaAgent(
+  variables: Record<string, string>,
+  secretRefs: string[],
+): Promise<void> {
+  await checkAgentHandshake();
+  const res = await fetch(`${AGENT_BASE}/v1/environments/default`, {
+    method: "PUT",
+    headers: agentHeaders(),
+    body: JSON.stringify({ variables, secretRefs }),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+}
+
+export async function listHistoryViaAgent(filter?: HistoryFilter): Promise<HistoryItem[]> {
+  await checkAgentHandshake();
+  const params = new URLSearchParams();
+  params.set("limit", "30");
+  if (filter?.state) params.set("state", filter.state);
+  if (filter?.protocolId) params.set("protocolId", filter.protocolId);
+  if (filter?.status != null) params.set("status", String(filter.status));
+  if (filter?.requestId) params.set("requestId", filter.requestId);
+  const res = await fetch(`${AGENT_BASE}/v1/history?${params}`, {
+    headers: agentHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  const rows = (await res.json()) as HistoryRecord[];
+  return rows.map((r) => ({
+    id: r.id,
+    protocolId: r.protocolId,
+    state: r.state,
+    status: r.status,
+    durationMs: r.durationMs,
+    startedAt: r.startedAt,
+    target: r.requestSnapshot?.target,
+    preview: r.preview ?? undefined,
+  }));
+}
+
+export async function getHistoryItemViaAgent(id: string): Promise<HttpWorkbenchRequest | null> {
+  await checkAgentHandshake();
+  const res = await fetch(`${AGENT_BASE}/v1/history/${id}`, {
+    headers: agentHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  const item = (await res.json()) as HistoryRecord | null;
+  if (!item?.requestSnapshot) {
+    return null;
+  }
+  return fromEnvelope(item.requestSnapshot);
+}
+
+export async function saveRequestViaAgent(request: HttpWorkbenchRequest): Promise<void> {
+  await checkAgentHandshake();
+  const res = await fetch(`${AGENT_BASE}/v1/requests`, {
+    method: "POST",
+    headers: agentHeaders(),
+    body: JSON.stringify(toEnvelope(request)),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+}
+
+export async function loadLatestRequestViaAgent(): Promise<HttpWorkbenchRequest | null> {
+  await checkAgentHandshake();
+  const res = await fetch(`${AGENT_BASE}/v1/requests/latest`, {
+    headers: agentHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  const stored = (await res.json()) as StoredRequest | null;
+  if (!stored) {
+    return null;
+  }
+  return fromEnvelope(stored.envelope, stored.target);
 }
 
 async function* readSseEvents(res: Response): AsyncGenerator<ExecutionEvent> {

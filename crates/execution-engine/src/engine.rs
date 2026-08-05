@@ -11,8 +11,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 
 use crate::{
-    run_assertions, AssertionContext, DriverError, EngineError, LifecycleHook, LifecyclePhase,
-    NoopLifecycleHook, ProtocolDriver, VariableScope,
+    apply_auth, run_assertions, AssertionContext, DriverError, EngineError, LifecycleHook,
+    LifecyclePhase, NoopLifecycleHook, ProtocolDriver, VariableScope,
 };
 use crate::variables::resolve_request;
 
@@ -179,7 +179,7 @@ async fn run_driver(
         Ok(req) => req,
         Err(err) => {
             sink.emit(ExecutionEvent::Failed {
-                code: "resolution".into(),
+                code: EngineError::Resolve(err.clone()).code().into(),
                 message: err.to_string(),
             })
             .await;
@@ -190,6 +190,24 @@ async fn run_driver(
             .await;
             drop(sink);
             return Err(EngineError::Resolve(err));
+        }
+    };
+
+    let request = match apply_auth(request, &scope) {
+        Ok(req) => req,
+        Err(err) => {
+            sink.emit(ExecutionEvent::Failed {
+                code: err.code().into(),
+                message: err.to_string(),
+            })
+            .await;
+            sink.emit(ExecutionEvent::StateChanged {
+                state: ExecutionState::Failed,
+                phase: Some(ExecutionPhase::Resolve),
+            })
+            .await;
+            drop(sink);
+            return Err(EngineError::Auth(err));
         }
     };
 
@@ -205,7 +223,7 @@ async fn run_driver(
     if !report.is_valid() {
         let message = report.errors.join("; ");
         sink.emit(ExecutionEvent::Failed {
-            code: "validation".into(),
+            code: crate::ErrorKind::Validation.as_str().into(),
             message: message.clone(),
         })
         .await;
@@ -515,6 +533,26 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, ExecutionEvent::Completed { .. })));
+    }
+
+    #[tokio::test]
+    async fn auth_failure_emits_failed_event() {
+        let mut engine = ExecutionEngine::new();
+        engine.register(Arc::new(MockOkDriver));
+        let mut req = mock_request();
+        req.auth_ref = Some(core_domain::AuthRef::bearer("missing-token"));
+        let (id, mut rx, handle) = engine.execute(req).await.expect("execute");
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        let err = handle.await.expect("join").expect_err("auth should fail");
+        assert!(matches!(err, EngineError::Auth(_)));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ExecutionEvent::Failed { code, .. } if code == "auth"
+        )));
+        assert!(!engine.cancel(&id));
     }
 
     #[tokio::test]

@@ -1,9 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AppShell, HttpWorkbench, type HttpWorkbenchRequest } from "@apivoy/ui";
+import {
+  AppShell,
+  HttpWorkbench,
+  type HistoryFilter,
+  type HttpWorkbenchRequest,
+} from "@apivoy/ui";
 import type {
   Assertion,
   AssertionResultEvent,
+  AuthRef,
   ExecutionSummary,
   ProtocolPayload,
   RequestEnvelope,
@@ -29,6 +35,7 @@ interface StoredRequest {
     payload: ProtocolPayload;
     variables?: Record<string, string>;
     assertions?: Assertion[];
+    authRef?: AuthRef | null;
   };
 }
 
@@ -40,14 +47,24 @@ interface HistoryRecord {
   durationMs: number;
   startedAt: string;
   requestSnapshot?: RequestEnvelope | null;
+  preview?: string | null;
 }
 
 interface EnvironmentRecord {
   id: string;
   variables: Record<string, string>;
+  secretRefs?: string[];
 }
 
 function toInvokeRequest(request: HttpWorkbenchRequest) {
+  const auth = request.auth
+    ? {
+        kind: request.auth.kind,
+        secretRef: request.auth.secret_ref ?? null,
+        username: request.auth.username ?? null,
+        headerName: request.auth.header_name ?? null,
+      }
+    : null;
   return {
     url: request.url,
     method: request.method,
@@ -56,6 +73,7 @@ function toInvokeRequest(request: HttpWorkbenchRequest) {
     timeoutMs: request.timeoutMs,
     variables: request.variables,
     assertions: request.assertions,
+    auth,
   };
 }
 
@@ -72,6 +90,7 @@ function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpW
     timeoutMs: envelope.timeoutMs,
     variables: envelope.variables ?? {},
     assertions: envelope.assertions ?? [],
+    auth: envelope.authRef ?? null,
   };
 }
 
@@ -144,19 +163,36 @@ export function App() {
             timeoutMs: stored.envelope.timeoutMs,
             variables: stored.envelope.variables ?? {},
             assertions: stored.envelope.assertions ?? [],
+            auth: stored.envelope.authRef ?? null,
           };
         }}
         onLoadEnvironment={async () => {
           const env = await invoke<EnvironmentRecord>("get_environment");
-          return env.variables ?? {};
+          return {
+            variables: env.variables ?? {},
+            secretRefs: env.secretRefs ?? [],
+          };
         }}
-        onSaveEnvironment={async (variables) => {
+        onSaveEnvironment={async (variables, secretRefs) => {
           await invoke("save_environment", {
-            request: { variables, secretRefs: [] },
+            request: { variables, secretRefs },
           });
         }}
-        onListHistory={async () => {
-          const rows = await invoke<HistoryRecord[]>("list_history", { limit: 20 });
+        onPutSecret={async (name, value) => {
+          await invoke("put_secret", { request: { name, value } });
+        }}
+        onListHistory={async (filter?: HistoryFilter) => {
+          const rows = await invoke<HistoryRecord[]>("list_history", {
+            limit: 30,
+            filter: filter
+              ? {
+                  state: filter.state ?? null,
+                  status: filter.status ?? null,
+                  protocolId: filter.protocolId ?? null,
+                  requestId: filter.requestId ?? null,
+                }
+              : null,
+          });
           return rows.map((r) => ({
             id: r.id,
             protocolId: r.protocolId,
@@ -165,6 +201,7 @@ export function App() {
             durationMs: r.durationMs,
             startedAt: r.startedAt,
             target: r.requestSnapshot?.target,
+            preview: r.preview ?? undefined,
           }));
         }}
         onReplayHistory={async (id) => {

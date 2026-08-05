@@ -144,6 +144,11 @@ impl ProtocolDriver for HttpDriver {
                         DriverError::Timeout(e.to_string())
                     } else if e.is_connect() {
                         DriverError::Connection(e.to_string())
+                    } else if format!("{e:#}").to_ascii_lowercase().contains("tls")
+                        || format!("{e:#}").to_ascii_lowercase().contains("certificate")
+                        || format!("{e:#}").to_ascii_lowercase().contains("ssl")
+                    {
+                        DriverError::Tls(e.to_string())
                     } else {
                         DriverError::Protocol(e.to_string())
                     }

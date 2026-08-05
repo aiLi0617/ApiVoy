@@ -54,8 +54,8 @@ URL（GET only）
 
 | 范围 | 相对 PRD MVP | 说明 |
 |------|--------------|------|
-| 阶段 0 架构 | ~70% | HTTP 通路通；缺 SQLite、正式执行 API、版本握手 |
-| MVP 产品面 | ~5–10% | 仅 HTTP 烟测；六协议与工作区/变量/断言等未做 |
+| 阶段 0 架构 | ~95% | 正式执行 API、SQLite、版本握手已落地 |
+| MVP / M1 内核 | ~100%（M1 退出条件） | HTTP 保存→环境→发送→断言→历史闭环；七协议属 M2 |
 | P1 / P2 | ~0% | README / 占位为主 |
 
 ---
@@ -68,17 +68,17 @@ URL（GET only）
 
 | 编号 | 模块 | PRD | 定稿阶段 | 现状 | 缺口摘要 |
 |------|------|-----|----------|------|----------|
-| F-001 | 工作区与项目 | P0 | P0 | ❌ | 无 Workspace/Project；无搜索/归档 |
-| F-002 | 集合与目录 | P0 | P0 | ❌ | 无树形集合、拖拽、标签 |
-| F-003 | 统一请求编辑器 | P0 | P0 | 🟡 | 仅 URL+GET；无公共区/协议区、认证、脚本位 |
-| F-004 | 请求执行 | P0 | P0 | 🟡 | HTTP 可发可取消；缺重试/代理/TLS UI/Cookie/完整事件流 API |
-| F-005 | 响应工作台 | P0 | P0 | 🟡 | 摘要+预览；缺格式化/Hex/表格/时间线/虚拟列表 |
-| F-006 | 环境与变量 | P0 | P0 | ❌ | Envelope 有字段；无 `{{var}}` 解析与多级作用域 |
-| F-007 | 机密管理 | P0 | P0 | 🟡 | `secret-store` 内存 stub，未接入 Keychain/执行链路 |
-| F-008 | 认证 | P0 | P0 | ❌ | 无 Basic/Bearer/API Key/OAuth/JWT/证书 UI 与解析 |
+| F-001 | 工作区与项目 | P0 | P0 | 🟡 | 默认 workspace/project/collection；无搜索/归档/多工作区 UI |
+| F-002 | 集合与目录 | P0 | P0 | 🟡 | 默认 collection + 请求保存；无树形/拖拽/标签 |
+| F-003 | 统一请求编辑器 | P0 | P0 | 🟡 | HTTP method/headers/body/auth/变量/断言；非 HTTP 协议编辑器属 M2 |
+| F-004 | 请求执行 | P0 | P0 | 🟡 | HTTP 可发可取消 + 正式执行 API；缺重试/代理/TLS UI/Cookie |
+| F-005 | 响应工作台 | P0 | P0 | 🟡 | 摘要+预览；缺格式化/Hex/表格/时间线/虚拟列表（M3/M4） |
+| F-006 | 环境与变量 | P0 | P0 | ✅ | 多级作用域 + `{{var}}`；Desktop/Agent 环境持久化 |
+| F-007 | 机密管理 | P0 | P0 | ✅ | Keychain + secret_ref；导出扫描属 M3 |
+| F-008 | 认证 | P0 | P0 | 🟡 | Basic/Bearer/API Key 完成；OAuth/TLS 客户端证书后置 |
 | F-009 | 前后置脚本 | P0 | **P1** | ⏭ | 生命周期钩子已预留；无 QuickJS |
-| F-010 | 断言与测试 | P0 | P0 | ❌ | 事件类型有；无状态码/耗时/JSONPath 等内置断言 |
-| F-011 | 历史与重放 | P0 | P0 | ❌ | 无本地历史、对比、从历史生成请求 |
+| F-010 | 断言与测试 | P0 | P0 | ✅ | 内置状态码/耗时/大小/Header/JSONPath/文本包含 |
+| F-011 | 历史与重放 | P0 | P0 | ✅ | 本地历史、筛选、对比、重放（Desktop + Agent/Web） |
 | F-012 | 导入导出 | P0 | P0 | ❌ | 无 OpenAPI/cURL/HAR/Postman；无敏感扫描 |
 | F-013 | 代码生成 | P1 | P1 | ❌ | — |
 | F-014 | 集合运行器 | P1 | P1 | ❌ | CLI 仅 http-get，无集合运行 |
@@ -107,12 +107,12 @@ URL（GET only）
 
 | 模块（架构 §5 / §8–12） | 现状 | 目标阶段 |
 |-------------------------|------|----------|
-| SQLite 本地库（workspace/request/history…） | ❌ | P0-M0/M1 |
-| Agent 正式 API（pair/session/executions + SSE） | 🟡 debug http-get | P0-M0 |
-| Desktop ↔ Agent 版本握手 | 🟡 `protocol_api_version: "1"` | P0-M0 |
+| SQLite 本地库（workspace/request/history…） | ✅ | P0-M0/M1 |
+| Agent 正式 API（pair/session/executions + SSE） | ✅ | P0-M0（+ env/history/request） |
+| Desktop ↔ Agent 版本握手 | ✅ `protocol_api_version: "1"` | P0-M0 |
 | Desktop 捆绑 Agent sidecar | ❌ | P0 后期 / P1 |
-| OS Keychain 接入 | 🟡 stub | P0-M1 |
-| 变量解析 + 内置断言 | ❌ | P0-M1 |
+| OS Keychain 接入 | ✅ | P0-M1 |
+| 变量解析 + 内置断言 | ✅ | P0-M1 |
 | 导入导出包 `packages/import-export` | ❌ | P0-M3 |
 | Monaco / 命令面板 / i18n | ❌ | P0 UI |
 | TanStack Query + Zustand 分层 | ❌ 未引入 | P0 UI |
@@ -129,12 +129,12 @@ URL（GET only）
 | AC-01 | 三平台安装/升级/卸载一致 | ❌ 无发布流水线 |
 | AC-02 | Web 完成 HTTP/GraphQL/WS + 安全连 Agent | 🟡 仅 HTTP GET + Token |
 | AC-03 | 七协议创建/保存/发送/取消/响应/历史 | ❌ 仅 HTTP 发送/取消 |
-| AC-04 | 变量、Secret、认证、脚本、断言复用 | ❌（脚本定稿延后 P1） |
-| AC-05 | OpenAPI/cURL/HAR/Postman + 敏感检测 | ❌ |
-| AC-06 | gRPC 四类流；TCP/UDP 文本+Hex；WS 双帧 | ❌ |
-| AC-07 | 10MB/长流不冻 UI；可取消 | 🟡 内核可取消；UI 未虚拟化 |
-| AC-08 | Secret 不明文落盘/日志/导出 | ❌ Keychain 未接 |
-| AC-09 | 异常退出数据完整 + 草稿恢复 | ❌ 无持久化 |
+| AC-04 | 变量、Secret、认证、脚本、断言复用 | 🟡 变量/Secret/认证/断言已通；脚本定稿延后 P1 |
+| AC-05 | OpenAPI/cURL/HAR/Postman + 敏感检测 | ❌（M3） |
+| AC-06 | gRPC 四类流；TCP/UDP 文本+Hex；WS 双帧 | ❌（M2） |
+| AC-07 | 10MB/长流不冻 UI；可取消 | 🟡 内核可取消；UI 未虚拟化（M3） |
+| AC-08 | Secret 不明文落盘/日志/导出 | 🟡 Keychain + secret_ref；导出扫描属 M3 |
+| AC-09 | 异常退出数据完整 + 草稿恢复 | 🟡 请求/环境/历史已持久化；草稿恢复属 M3 |
 | AC-10 | 单测/集成/E2E/安全/安装冒烟 | 🟡 少量 Rust 测试 |
 
 ---
@@ -200,15 +200,21 @@ P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 /
 
 | 工作包 | 内容 | 进度 |
 |--------|------|------|
-| 持久化 | SQLite 表：workspace/project/collection/request/environment/variable/secret_ref/execution/blob_index；大正文外置 | 🟡 已有 project/collection/request/environment/execution（含快照）；workspace/blob_index 待补 |
-| 变量 | 多级作用域 + `{{var}}` / 动态变量；解析阶段挂生命周期 | 🟡 `VariableScope` + `{{var}}`/`$uuid`/`$timestamp` 已接入引擎 |
-| Secret | Keychain 读写；项目仅存 `secret_ref`；事件/导出脱敏管道骨架 | 🟡 `secret-store` Keychain + 内存回退 + `redact`；UI 存密钥仍简陋 |
-| 认证 | Basic、Bearer、API Key；证书引用（TLS 客户端证书可后置半周） | ❌ |
-| 断言（无脚本） | 状态码、耗时、大小、Header、JSONPath、文本包含 | 🟡 引擎内置断言 + Desktop/Web UI 文本 DSL |
-| 历史 | 本地执行摘要、筛选、重放、从历史生成请求 | 🟡 Desktop 列表 + 重放；筛选/对比待补 |
-| 错误模型 | Validation / Resolution / Connection / TLS / Protocol 统一字段 | 🟡 Resolution/Validation 事件已发；统一错误模型未收敛 |
+| 持久化 | SQLite 表：workspace/project/collection/request/environment/variable/secret_ref/execution/blob_index；大正文外置 | ✅ `workspace` + `blob_index`；请求大正文 / 大预览外置（≥64KB）；variable/secret_ref 仍嵌在 environment JSON（M1 可接受） |
+| 变量 | 多级作用域 + `{{var}}` / 动态变量；解析阶段挂生命周期 | ✅ `VariableScope` + `{{var}}`/`$uuid`/`$timestamp`/`$isoTimestamp` 已接入引擎 |
+| Secret | Keychain 读写；项目仅存 `secret_ref`；事件/导出脱敏管道骨架 | ✅ Keychain + UI「存入密钥」+ Agent `PUT /v1/secrets`；导出敏感扫描属 M3，本里程碑不要求 |
+| 认证 | Basic、Bearer、API Key；证书引用（TLS 客户端证书可后置半周） | ✅ Basic/Bearer/API Key 引擎注入 + Desktop/Web UI；TLS 客户端证书按计划后置 |
+| 断言（无脚本） | 状态码、耗时、大小、Header、JSONPath、文本包含 | ✅ 引擎内置断言 + Desktop/Web UI 文本 DSL |
+| 历史 | 本地执行摘要、筛选、重放、从历史生成请求 | ✅ Desktop/Agent/Web 均持久化；筛选（state/status）+ 双条预览对比 + 重放 |
+| 错误模型 | Validation / Resolution / Connection / TLS / Protocol 统一字段 | ✅ `ErrorKind` 迁入 `core-domain`；`DomainError` 覆盖全 kind；引擎 `to_domain()` / wire code 对齐 |
 
-**退出**：HTTP 请求可「保存 → 换环境变量 → 发送 → 断言 → 历史重放」闭环。
+**退出**：HTTP 请求可「保存 → 换环境变量 → 发送 → 断言 → 历史重放」闭环。✅（Desktop 与 Web→Agent 均已打通）
+
+**M1 明确后置（非本里程碑阻塞）**
+
+- TLS 客户端证书（计划写明可后置）
+- OAuth 授权码流（§11：P0 末或 P1）
+- 导出敏感扫描（M3 工作包）
 
 ### 6.2 M2 — MVP 七协议（约 5–6 周）
 
@@ -349,11 +355,13 @@ before_request
 
 ## 12. 下一迭代（建议 1–2 周）
 
-1. 落地 Agent/Desktop **正式执行 API** + SSE 事件流  
-2. SQLite：**保存/打开 HTTP 请求**  
-3. HTTP 编辑器：method / headers / body  
-4. 版本握手字段  
-5. 勾选阶段 0 验收锚点；开 M1 变量与断言  
+> **M1 已收口**（2026-08-05）：内核持久化 / 变量 / Secret / 认证 / 断言 / 历史 / 错误模型均达退出条件。  
+> 建议下一迭代进入 **M2**：增强 HTTP（Cookie/代理/重定向）并启动 SSE / WebSocket Driver。
+
+1. `driver-http`：Cookie、代理、重定向策略、流式 UI 契约测试  
+2. 新建 `driver-sse` 最小通路  
+3. 新建 `driver-websocket` 最小通路  
+4. Protocol Editor Host 骨架（按 Driver Descriptor 切换）  
 
 ---
 

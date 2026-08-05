@@ -18,12 +18,22 @@ pub enum ResolveError {
     Unresolved(String),
 }
 
+impl ResolveError {
+    pub fn reference(&self) -> String {
+        match self {
+            Self::Unresolved(name) => name.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VariableScope {
     pub global: HashMap<String, String>,
     pub environment: HashMap<String, String>,
     pub collection: HashMap<String, String>,
     pub request: HashMap<String, String>,
+    /// Resolved secret values keyed by `secret_ref` name (never persisted).
+    pub secrets: HashMap<String, String>,
 }
 
 impl VariableScope {

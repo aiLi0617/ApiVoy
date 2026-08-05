@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use core_domain::{
-    Assertion, ExecutionEvent, ExecutionId, ExecutionState, ExecutionSummary, HttpPayload,
+    Assertion, AuthRef, ExecutionEvent, ExecutionId, ExecutionState, ExecutionSummary, HttpPayload,
     ProtocolPayload, RequestEnvelope,
 };
 use driver_http::HttpDriver;
 use execution_engine::{ExecutionEngine, VariableScope};
-use local_store::{EnvironmentRecord, ExecutionRecord, LocalStore, StoredRequest};
+use local_store::{
+    EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore, StoredRequest,
+};
 use secret_store::{SecretBackendKind, SecretStore};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -45,6 +47,29 @@ struct ExecuteResponse {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AuthDto {
+    kind: String,
+    #[serde(default)]
+    secret_ref: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    header_name: Option<String>,
+}
+
+impl From<AuthDto> for AuthRef {
+    fn from(value: AuthDto) -> Self {
+        AuthRef {
+            kind: value.kind,
+            secret_ref: value.secret_ref,
+            username: value.username,
+            header_name: value.header_name,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct HttpExecuteRequest {
     url: String,
     method: String,
@@ -57,6 +82,8 @@ struct HttpExecuteRequest {
     assertions: Vec<AssertionDto>,
     #[serde(default)]
     environment_id: Option<String>,
+    #[serde(default)]
+    auth: Option<AuthDto>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -139,15 +166,27 @@ async fn execute_request(
             scope.environment = env.variables;
             for secret_name in env.secret_refs {
                 if let Ok(value) = state.secrets.resolve(&secret_name) {
+                    scope.secrets.insert(secret_name.clone(), value.clone());
                     scope.environment.insert(secret_name, value);
                 }
             }
         }
     }
+
+    // Resolve auth secret into scope.secrets (not into request variables).
+    if let Some(auth) = &request.auth {
+        if let Some(name) = auth.secret_ref.as_deref().filter(|s| !s.is_empty()) {
+            if let Ok(value) = state.secrets.resolve(name) {
+                scope.secrets.insert(name.to_string(), value);
+            }
+        }
+    }
+
     scope.request = request.variables.clone();
     envelope.variables = request.variables.clone();
     envelope.assertions = request.assertions.into_iter().map(Into::into).collect();
     envelope.environment_ref = Some(env_id.to_string());
+    envelope.auth_ref = request.auth.map(Into::into);
 
     let engine = state.engine.read().await;
     let (id, mut rx, handle) = engine
@@ -184,9 +223,21 @@ async fn execute_request(
         })
         .collect();
 
+    // Persist snapshot without resolved auth headers (keep AuthRef only).
+    let mut snapshot = envelope.clone();
+    if let ProtocolPayload::Http(ref mut payload) = snapshot.payload {
+        // Auth headers are injected at execute time; strip Authorization if auth_ref set
+        // so replay regenerates from secret store.
+        if snapshot.auth_ref.is_some() {
+            payload
+                .headers
+                .retain(|(k, _)| !k.eq_ignore_ascii_case("Authorization"));
+        }
+    }
+
     let record = ExecutionRecord {
         id: id.0.to_string(),
-        request_id: envelope.id.0.to_string(),
+        request_id: snapshot.id.0.to_string(),
         protocol_id: summary.protocol_id.clone(),
         state: state_name(summary.state).into(),
         status: summary.status,
@@ -194,8 +245,9 @@ async fn execute_request(
         bytes_received: summary.bytes_received,
         started_at: summary.started_at,
         finished_at: summary.finished_at,
-        request_snapshot: Some(envelope),
+        request_snapshot: Some(snapshot),
         preview: preview.clone(),
+        response_blob_id: None,
     };
     state
         .store
@@ -232,6 +284,7 @@ async fn http_get(
             variables: HashMap::new(),
             assertions: vec![],
             environment_id: None,
+            auth: None,
         },
         app,
         state,
@@ -262,6 +315,7 @@ async fn save_request(
     let mut envelope = build_envelope(&request);
     envelope.variables = request.variables;
     envelope.assertions = request.assertions.into_iter().map(Into::into).collect();
+    envelope.auth_ref = request.auth.map(Into::into);
     state
         .store
         .lock()
@@ -280,16 +334,39 @@ async fn load_latest_request(state: State<'_, AppState>) -> Result<Option<Stored
         .map_err(|e| e.to_string())
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct HistoryFilterDto {
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    protocol_id: Option<String>,
+    #[serde(default)]
+    status: Option<u16>,
+}
+
 #[tauri::command]
 async fn list_history(
     limit: Option<usize>,
+    filter: Option<HistoryFilterDto>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ExecutionRecord>, String> {
+    let filter = filter.unwrap_or_default();
     state
         .store
         .lock()
         .await
-        .list_executions(limit.unwrap_or(30))
+        .list_executions_filtered(
+            limit.unwrap_or(30),
+            &ExecutionFilter {
+                request_id: filter.request_id,
+                state: filter.state,
+                protocol_id: filter.protocol_id,
+                status: filter.status,
+            },
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -345,6 +422,11 @@ async fn put_secret(request: PutSecretRequest, state: State<'_, AppState>) -> Re
         .secrets
         .put_ref(request.name, request.value)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn secret_exists(name: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.secrets.exists(&name).map_err(|e| e.to_string())
 }
 
 fn build_envelope(request: &HttpExecuteRequest) -> RequestEnvelope {
@@ -407,6 +489,7 @@ pub fn run() {
             get_environment,
             save_environment,
             put_secret,
+            secret_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ApiVoy desktop");
