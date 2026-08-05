@@ -6,6 +6,7 @@ members = [
   "crates/secret-store",
   "crates/execution-engine",
   "crates/driver-http",
+  "crates/local-store",
   "apps/desktop/src-tauri",
   "apps/local-agent",
   "apps/cli",
@@ -43,6 +44,7 @@ event-stream = { path = "crates/event-stream" }
 secret-store = { path = "crates/secret-store" }
 execution-engine = { path = "crates/execution-engine" }
 driver-http = { path = "crates/driver-http" }
+local-store = { path = "crates/local-store" }
 
 [profile.release]
 lto = true

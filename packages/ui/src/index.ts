@@ -1,2 +1,9 @@
 export { AppShell } from "./AppShell";
-export { HttpWorkbench } from "./HttpWorkbench";
+export {
+  HttpWorkbench,
+  type HttpWorkbenchProps,
+  type HttpWorkbenchRequest,
+  type HttpRunResult,
+  type HttpSendHooks,
+} from "./HttpWorkbench";
+

@@ -12,5 +12,6 @@ pub use execution::{
     ExecutionSummary, MetricEvent, ResponseMeta,
 };
 pub use request::{
-    AuthRef, ProtocolId, ProtocolPayload, RequestEnvelope, RequestId, RetryPolicy, TlsOptions,
+    AuthRef, HttpPayload, ProtocolId, ProtocolPayload, RequestEnvelope, RequestId, RetryPolicy,
+    TlsOptions,
 };

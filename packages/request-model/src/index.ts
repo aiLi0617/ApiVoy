@@ -121,25 +121,36 @@ export type ExecutionEvent =
   | { type: "failed"; code: string; message: string }
   | { type: "cancelled"; reason?: string | null };
 
-export function createHttpGetRequest(name: string, url: string): RequestEnvelope {
+export interface CreateHttpRequestOptions {
+  name?: string;
+  url: string;
+  method?: string;
+  headers?: Array<[string, string]>;
+  body?: string | null;
+  timeoutMs?: number;
+  followRedirects?: boolean;
+}
+
+export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnvelope {
+  const method = (options.method ?? "GET").toUpperCase();
   return {
     id: crypto.randomUUID(),
     protocolId: "http",
-    name,
-    target: url,
+    name: options.name ?? `${method} ${options.url}`,
+    target: options.url,
     environmentRef: null,
     authRef: null,
-    timeoutMs: 30_000,
+    timeoutMs: options.timeoutMs ?? 30_000,
     retryPolicy: { max_retries: 0, backoff_ms: 0 },
     proxy: null,
     tls: { verify: true, client_cert_ref: null },
     metadata: {},
     payload: {
       type: "http",
-      method: "GET",
-      headers: [],
-      body: null,
-      followRedirects: true,
+      method,
+      headers: options.headers ?? [],
+      body: options.body ?? null,
+      followRedirects: options.followRedirects ?? true,
     },
     preScripts: [],
     postScripts: [],
@@ -147,3 +158,12 @@ export function createHttpGetRequest(name: string, url: string): RequestEnvelope
     createdAt: new Date().toISOString(),
   };
 }
+
+export function createHttpGetRequest(name: string, url: string): RequestEnvelope {
+  return createHttpRequest({ name, url, method: "GET" });
+}
+
+/** Protocol API version expected by Web/Desktop clients (must match Agent). */
+export const PROTOCOL_API_VERSION = "1";
+
+export const CLIENT_VERSION = "0.1.0";

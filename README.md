@@ -63,6 +63,9 @@ pnpm dev:web
 pnpm dev:desktop
 ```
 
+Formal Agent execution path (Phase 0): `POST /v1/executions` → `GET /v1/executions/{id}/events` (SSE) → optional `POST .../cancel`.  
+Smoke checklist: [`docs/SMOKE_CHECKLIST.md`](docs/SMOKE_CHECKLIST.md).
+
 ## Phase focus
 
 - **P0 / MVP**: local-first Desktop + Web + Agent; seven protocols; no cloud sync

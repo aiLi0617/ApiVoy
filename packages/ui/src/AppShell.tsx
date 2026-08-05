@@ -11,7 +11,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children }: AppShellP
     <div style={styles.root}>
       <header style={styles.header}>
         <div style={styles.brand}>
-          <span style={styles.mark}>Rq</span>
+          <span style={styles.mark}>Av</span>
           <div>
             <div style={styles.title}>{title}</div>
             <div style={styles.subtitle}>Explore Every Protocol. · 探索每一种协议。</div>
