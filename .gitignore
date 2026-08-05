@@ -49,6 +49,7 @@ docs/_extract/
 *.iml
 .cache/
 .target-review/
+/*.docx
 
 # ApiVoy local runtime data (secrets refs, caches) — not workspace project files
 .apivoy/
