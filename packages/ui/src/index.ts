@@ -5,5 +5,6 @@ export {
   type HttpWorkbenchRequest,
   type HttpRunResult,
   type HttpSendHooks,
+  type HistoryItem,
 } from "./HttpWorkbench";
 

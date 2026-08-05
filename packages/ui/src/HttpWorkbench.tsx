@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import type { ExecutionSummary } from "@apivoy/request-model";
+import type { Assertion, AssertionResultEvent, ExecutionSummary } from "@apivoy/request-model";
 
 export interface HttpWorkbenchRequest {
   url: string;
@@ -7,6 +7,8 @@ export interface HttpWorkbenchRequest {
   headers: Array<[string, string]>;
   body?: string;
   timeoutMs: number;
+  variables: Record<string, string>;
+  assertions: Assertion[];
 }
 
 export interface HttpRunResult {
@@ -15,6 +17,7 @@ export interface HttpRunResult {
   preview?: string | null;
   error?: string;
   executionId?: string;
+  assertions?: AssertionResultEvent[];
 }
 
 export interface HttpSendHooks {
@@ -22,11 +25,25 @@ export interface HttpSendHooks {
   onStarted?: (executionId: string) => void;
 }
 
+export interface HistoryItem {
+  id: string;
+  protocolId: string;
+  state: string;
+  status?: number | null;
+  durationMs: number;
+  startedAt: string;
+  target?: string;
+}
+
 export interface HttpWorkbenchProps {
   onSend: (request: HttpWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>;
   onCancel?: (executionId: string) => Promise<void>;
   onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
   onLoad?: () => Promise<HttpWorkbenchRequest | null>;
+  onLoadEnvironment?: () => Promise<Record<string, string>>;
+  onSaveEnvironment?: (variables: Record<string, string>) => Promise<void>;
+  onListHistory?: () => Promise<HistoryItem[]>;
+  onReplayHistory?: (id: string) => Promise<HttpWorkbenchRequest | null>;
 }
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
@@ -45,16 +62,108 @@ function failedSummary(): ExecutionSummary {
   };
 }
 
-export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenchProps) {
+function parseKv(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const idx = trimmed.indexOf("=");
+    if (idx <= 0) {
+      continue;
+    }
+    out[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+  }
+  return out;
+}
+
+function formatKv(vars: Record<string, string>): string {
+  return Object.entries(vars)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
+function parseAssertions(text: string): Assertion[] {
+  const out: Assertion[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const status = trimmed.match(/^status\s*==\s*(\d+)$/i);
+    if (status) {
+      out.push({ type: "status_equals", expected: Number(status[1]) });
+      continue;
+    }
+    const duration = trimmed.match(/^duration\s*<\s*(\d+)$/i);
+    if (duration) {
+      out.push({ type: "duration_lt", max_ms: Number(duration[1]) });
+      continue;
+    }
+    const contains = trimmed.match(/^body\s+contains\s+(.+)$/i);
+    if (contains) {
+      out.push({ type: "body_contains", expected: contains[1].trim() });
+      continue;
+    }
+    const header = trimmed.match(/^header\s+(\S+)\s+==\s+(.+)$/i);
+    if (header) {
+      out.push({ type: "header_equals", name: header[1], expected: header[2].trim() });
+      continue;
+    }
+    const jsonpath = trimmed.match(/^jsonpath\s+(\S+)\s+==\s+(.+)$/i);
+    if (jsonpath) {
+      out.push({ type: "json_path_equals", path: jsonpath[1], expected: jsonpath[2].trim() });
+    }
+  }
+  return out;
+}
+
+function formatAssertions(list: Assertion[]): string {
+  return list
+    .map((a) => {
+      switch (a.type) {
+        case "status_equals":
+          return `status == ${a.expected}`;
+        case "duration_lt":
+          return `duration < ${a.max_ms}`;
+        case "body_contains":
+          return `body contains ${a.expected}`;
+        case "header_equals":
+          return `header ${a.name} == ${a.expected}`;
+        case "json_path_equals":
+          return `jsonpath ${a.path} == ${a.expected}`;
+        default:
+          return "";
+      }
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function HttpWorkbench({
+  onSend,
+  onCancel,
+  onSave,
+  onLoad,
+  onLoadEnvironment,
+  onSaveEnvironment,
+  onListHistory,
+  onReplayHistory,
+}: HttpWorkbenchProps) {
   const [method, setMethod] = useState<string>("GET");
-  const [url, setUrl] = useState("https://example.com");
+  const [url, setUrl] = useState("https://{{host}}");
   const [headersText, setHeadersText] = useState("Accept: application/json");
   const [body, setBody] = useState("");
   const [timeoutMs, setTimeoutMs] = useState(30_000);
+  const [variablesText, setVariablesText] = useState("host=example.com");
+  const [envText, setEnvText] = useState("host=example.com");
+  const [assertionsText, setAssertionsText] = useState("status == 200\nbody contains Example");
   const [loading, setLoading] = useState(false);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [result, setResult] = useState<HttpRunResult | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
 
   function buildRequest(): HttpWorkbenchRequest {
     const headers = headersText
@@ -75,7 +184,19 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
       headers,
       body: method === "GET" || method === "HEAD" ? undefined : body,
       timeoutMs,
+      variables: parseKv(variablesText),
+      assertions: parseAssertions(assertionsText),
     };
+  }
+
+  function applyRequest(loaded: HttpWorkbenchRequest) {
+    setMethod(loaded.method);
+    setUrl(loaded.url);
+    setHeadersText(loaded.headers.map(([k, v]) => `${k}: ${v}`).join("\n"));
+    setBody(loaded.body ?? "");
+    setTimeoutMs(loaded.timeoutMs);
+    setVariablesText(formatKv(loaded.variables));
+    setAssertionsText(formatAssertions(loaded.assertions));
   }
 
   async function handleSend() {
@@ -88,6 +209,9 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
         onStarted: (id) => setExecutionId(id),
       });
       setResult(next);
+      if (onListHistory) {
+        setHistory(await onListHistory());
+      }
     } catch (err) {
       setResult({
         summary: failedSummary(),
@@ -134,12 +258,62 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
         setStatusMsg("本地库中暂无已保存请求");
         return;
       }
-      setMethod(loaded.method);
-      setUrl(loaded.url);
-      setHeadersText(loaded.headers.map(([k, v]) => `${k}: ${v}`).join("\n"));
-      setBody(loaded.body ?? "");
-      setTimeoutMs(loaded.timeoutMs);
+      applyRequest(loaded);
       setStatusMsg("已从本地库打开请求");
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleLoadEnv() {
+    if (!onLoadEnvironment) {
+      return;
+    }
+    try {
+      const vars = await onLoadEnvironment();
+      setEnvText(formatKv(vars));
+      setStatusMsg("已加载环境变量");
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleSaveEnv() {
+    if (!onSaveEnvironment) {
+      return;
+    }
+    try {
+      await onSaveEnvironment(parseKv(envText));
+      setStatusMsg("环境变量已保存");
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleRefreshHistory() {
+    if (!onListHistory) {
+      return;
+    }
+    try {
+      setHistory(await onListHistory());
+      setStatusMsg("历史已刷新");
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleReplay(id: string) {
+    if (!onReplayHistory) {
+      return;
+    }
+    try {
+      const loaded = await onReplayHistory(id);
+      if (!loaded) {
+        setStatusMsg("该历史记录无可重放的请求快照");
+        return;
+      }
+      applyRequest(loaded);
+      setStatusMsg("已从历史生成请求，可再次发送");
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
     }
@@ -151,7 +325,7 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
     <section style={styles.section}>
       <h1 style={styles.h1}>HTTP 请求编辑器</h1>
       <p style={styles.p}>
-        通过统一执行内核发送请求。桌面端走 Tauri Command，Web 端经 Local Agent 正式执行 API（SSE）。
+        支持 {"{{var}}"} 变量、内置断言与历史重放。桌面端走 Tauri；Web 端经 Local Agent。
       </p>
 
       <div style={styles.row}>
@@ -171,7 +345,7 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
           style={styles.input}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://"
+          placeholder="https://{{host}}/api"
           spellCheck={false}
           disabled={loading}
         />
@@ -227,6 +401,57 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
         </label>
       )}
 
+      <div style={styles.grid2}>
+        <label style={styles.label}>
+          请求变量（`key=value`，覆盖环境）
+          <textarea
+            style={styles.textarea}
+            value={variablesText}
+            onChange={(e) => setVariablesText(e.target.value)}
+            rows={4}
+            spellCheck={false}
+            disabled={loading}
+          />
+        </label>
+        <label style={styles.label}>
+          断言（每行一条：`status == 200` / `body contains …` / `jsonpath $.a == 1`）
+          <textarea
+            style={styles.textarea}
+            value={assertionsText}
+            onChange={(e) => setAssertionsText(e.target.value)}
+            rows={4}
+            spellCheck={false}
+            disabled={loading}
+          />
+        </label>
+      </div>
+
+      {(onLoadEnvironment || onSaveEnvironment) && (
+        <label style={styles.label}>
+          环境变量（Default env，`key=value`）
+          <textarea
+            style={styles.textarea}
+            value={envText}
+            onChange={(e) => setEnvText(e.target.value)}
+            rows={3}
+            spellCheck={false}
+            disabled={loading}
+          />
+          <div style={styles.row}>
+            {onLoadEnvironment && (
+              <button style={styles.secondaryButton} disabled={loading} onClick={handleLoadEnv}>
+                加载环境
+              </button>
+            )}
+            {onSaveEnvironment && (
+              <button style={styles.secondaryButton} disabled={loading} onClick={handleSaveEnv}>
+                保存环境
+              </button>
+            )}
+          </div>
+        </label>
+      )}
+
       {(onSave || onLoad) && (
         <div style={styles.row}>
           {onSave && (
@@ -238,6 +463,40 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
             <button style={styles.secondaryButton} disabled={loading} onClick={handleLoad}>
               打开最近请求
             </button>
+          )}
+        </div>
+      )}
+
+      {onListHistory && (
+        <div style={styles.history}>
+          <div style={styles.row}>
+            <strong style={{ color: "var(--apivoy-text)" }}>执行历史</strong>
+            <button style={styles.secondaryButton} disabled={loading} onClick={handleRefreshHistory}>
+              刷新
+            </button>
+          </div>
+          {history.length === 0 ? (
+            <div style={styles.muted}>暂无历史；发送请求后会出现在这里。</div>
+          ) : (
+            <ul style={styles.historyList}>
+              {history.map((item) => (
+                <li key={item.id} style={styles.historyItem}>
+                  <span style={styles.mono}>
+                    {item.status ?? "—"} · {item.durationMs}ms · {item.state}
+                  </span>
+                  <span style={styles.muted}>{item.target ?? item.protocolId}</span>
+                  {onReplayHistory && (
+                    <button
+                      style={styles.linkButton}
+                      disabled={loading}
+                      onClick={() => handleReplay(item.id)}
+                    >
+                      重放
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}
@@ -257,6 +516,16 @@ export function HttpWorkbench({ onSend, onCancel, onSave, onLoad }: HttpWorkbenc
                 <span>{result.eventCount} events</span>
                 {result.executionId && <span>id {result.executionId.slice(0, 8)}</span>}
               </div>
+              {result.assertions && result.assertions.length > 0 && (
+                <ul style={styles.assertList}>
+                  {result.assertions.map((a, i) => (
+                    <li key={`${a.name}-${i}`} style={a.passed ? styles.assertPass : styles.assertFail}>
+                      {a.passed ? "✓" : "✗"} {a.name}
+                      {a.message ? ` — ${a.message}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {result.preview && (
                 <pre style={styles.pre}>{result.preview.slice(0, 4000)}</pre>
               )}
@@ -294,6 +563,11 @@ const styles: Record<string, CSSProperties> = {
   grid: {
     display: "grid",
     gridTemplateColumns: "1fr 160px",
+    gap: 12,
+  },
+  grid2: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
     gap: 12,
   },
   label: {
@@ -366,6 +640,15 @@ const styles: Record<string, CSSProperties> = {
     padding: "12px 18px",
     cursor: "pointer",
   },
+  linkButton: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--apivoy-accent)",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    padding: 0,
+  },
   panel: {
     marginTop: 8,
     background: "var(--apivoy-bg-elevated)",
@@ -400,5 +683,49 @@ const styles: Record<string, CSSProperties> = {
   status: {
     fontSize: 13,
     color: "var(--apivoy-accent)",
+  },
+  history: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  historyList: {
+    listStyle: "none",
+    margin: 0,
+    padding: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  historyItem: {
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    flexWrap: "wrap",
+    fontSize: 12,
+  },
+  mono: {
+    fontFamily: "var(--apivoy-mono)",
+    color: "var(--apivoy-text)",
+  },
+  muted: {
+    color: "var(--apivoy-muted)",
+    fontSize: 12,
+  },
+  assertList: {
+    listStyle: "none",
+    margin: "0 0 12px",
+    padding: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    fontFamily: "var(--apivoy-mono)",
+    fontSize: 12,
+  },
+  assertPass: {
+    color: "var(--apivoy-success)",
+  },
+  assertFail: {
+    color: "var(--apivoy-danger)",
   },
 };

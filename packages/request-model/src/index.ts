@@ -39,6 +39,16 @@ export interface TlsOptions {
   client_cert_ref?: string | null;
 }
 
+export type Assertion =
+  | { type: "status_equals"; expected: number }
+  | { type: "status_in"; expected: number[] }
+  | { type: "duration_lt"; max_ms: number }
+  | { type: "size_lt"; max_bytes: number }
+  | { type: "header_equals"; name: string; expected: string }
+  | { type: "header_contains"; name: string; expected: string }
+  | { type: "body_contains"; expected: string }
+  | { type: "json_path_equals"; path: string; expected: string };
+
 export interface RequestEnvelope {
   id: string;
   protocolId: ProtocolId;
@@ -54,7 +64,8 @@ export interface RequestEnvelope {
   payload: ProtocolPayload;
   preScripts: string[];
   postScripts: string[];
-  assertions: string[];
+  assertions: Assertion[];
+  variables: Record<string, string>;
   createdAt: string;
 }
 
@@ -129,6 +140,8 @@ export interface CreateHttpRequestOptions {
   body?: string | null;
   timeoutMs?: number;
   followRedirects?: boolean;
+  variables?: Record<string, string>;
+  assertions?: Assertion[];
 }
 
 export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnvelope {
@@ -154,7 +167,8 @@ export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnv
     },
     preScripts: [],
     postScripts: [],
-    assertions: [],
+    assertions: options.assertions ?? [],
+    variables: options.variables ?? {},
     createdAt: new Date().toISOString(),
   };
 }

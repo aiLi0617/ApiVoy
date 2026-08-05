@@ -6,6 +6,7 @@ import {
   type ExecutionSummary,
   type RequestEnvelope,
 } from "@apivoy/request-model";
+import type { AssertionResultEvent } from "@apivoy/request-model";
 import type { HttpRunResult, HttpSendHooks, HttpWorkbenchRequest } from "@apivoy/ui";
 
 const AGENT_BASE =
@@ -56,6 +57,8 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
     headers: request.headers,
     body: request.body,
     timeoutMs: request.timeoutMs,
+    variables: request.variables,
+    assertions: request.assertions,
   });
 }
 
@@ -123,11 +126,15 @@ export async function executeViaAgent(
   let preview: string | null = null;
   let eventCount = 0;
   let error: string | undefined;
+  const assertions: AssertionResultEvent[] = [];
 
   for await (const event of readSseEvents(eventsRes)) {
     eventCount += 1;
     if (event.type === "response_chunk" && event.done && event.preview) {
       preview = event.preview;
+    }
+    if (event.type === "assertion_result") {
+      assertions.push(event);
     }
     if (event.type === "completed") {
       summary = event.summary;
@@ -156,6 +163,7 @@ export async function executeViaAgent(
       preview,
       error: error ?? "execution finished without summary",
       executionId: started.executionId,
+      assertions,
     };
   }
 
@@ -165,6 +173,7 @@ export async function executeViaAgent(
     preview: preview ?? JSON.stringify(summary, null, 2),
     error,
     executionId: started.executionId,
+    assertions,
   };
 }
 

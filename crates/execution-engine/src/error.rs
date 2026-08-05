@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::DriverError;
+use crate::{DriverError, ResolveError};
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -8,6 +8,8 @@ pub enum EngineError {
     DriverNotFound(String),
     #[error(transparent)]
     Driver(#[from] DriverError),
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     #[error("execution cancelled")]
     Cancelled,
 }

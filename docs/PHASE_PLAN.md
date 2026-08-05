@@ -198,15 +198,15 @@ P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 /
 
 ### 6.1 M1 — 内核与本地数据（约 3–4 周）
 
-| 工作包 | 内容 |
-|--------|------|
-| 持久化 | SQLite 表：workspace/project/collection/request/environment/variable/secret_ref/execution/blob_index；大正文外置 |
-| 变量 | 多级作用域 + `{{var}}` / 动态变量；解析阶段挂生命周期 |
-| Secret | Keychain 读写；项目仅存 `secret_ref`；事件/导出脱敏管道骨架 |
-| 认证 | Basic、Bearer、API Key；证书引用（TLS 客户端证书可后置半周） |
-| 断言（无脚本） | 状态码、耗时、大小、Header、JSONPath、文本包含 |
-| 历史 | 本地执行摘要、筛选、重放、从历史生成请求 |
-| 错误模型 | Validation / Resolution / Connection / TLS / Protocol 统一字段 |
+| 工作包 | 内容 | 进度 |
+|--------|------|------|
+| 持久化 | SQLite 表：workspace/project/collection/request/environment/variable/secret_ref/execution/blob_index；大正文外置 | 🟡 已有 project/collection/request/environment/execution（含快照）；workspace/blob_index 待补 |
+| 变量 | 多级作用域 + `{{var}}` / 动态变量；解析阶段挂生命周期 | 🟡 `VariableScope` + `{{var}}`/`$uuid`/`$timestamp` 已接入引擎 |
+| Secret | Keychain 读写；项目仅存 `secret_ref`；事件/导出脱敏管道骨架 | 🟡 `secret-store` Keychain + 内存回退 + `redact`；UI 存密钥仍简陋 |
+| 认证 | Basic、Bearer、API Key；证书引用（TLS 客户端证书可后置半周） | ❌ |
+| 断言（无脚本） | 状态码、耗时、大小、Header、JSONPath、文本包含 | 🟡 引擎内置断言 + Desktop/Web UI 文本 DSL |
+| 历史 | 本地执行摘要、筛选、重放、从历史生成请求 | 🟡 Desktop 列表 + 重放；筛选/对比待补 |
+| 错误模型 | Validation / Resolution / Connection / TLS / Protocol 统一字段 | 🟡 Resolution/Validation 事件已发；统一错误模型未收敛 |
 
 **退出**：HTTP 请求可「保存 → 换环境变量 → 发送 → 断言 → 历史重放」闭环。
 

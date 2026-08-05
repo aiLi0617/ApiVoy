@@ -10,7 +10,9 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 core-domain = { workspace = true }
 event-stream = { workspace = true }
+regex = "1"
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

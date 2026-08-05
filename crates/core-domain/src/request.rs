@@ -1,7 +1,11 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
+
+use crate::Assertion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -46,7 +50,11 @@ pub struct RequestEnvelope {
     pub payload: ProtocolPayload,
     pub pre_scripts: Vec<String>,
     pub post_scripts: Vec<String>,
-    pub assertions: Vec<String>,
+    #[serde(default)]
+    pub assertions: Vec<Assertion>,
+    /// Request-scoped variables (highest precedence after dynamic tokens).
+    #[serde(default)]
+    pub variables: HashMap<String, String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -73,6 +81,7 @@ impl RequestEnvelope {
             pre_scripts: vec![],
             post_scripts: vec![],
             assertions: vec![],
+            variables: HashMap::new(),
             created_at: Utc::now(),
         }
     }

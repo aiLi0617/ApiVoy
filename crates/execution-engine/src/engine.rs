@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use core_domain::{
     ExecutionEvent, ExecutionId, ExecutionPhase, ExecutionState, ExecutionSummary, RequestEnvelope,
+    ResponseMeta,
 };
 use event_stream::EventSink;
 use tokio::sync::mpsc;
@@ -10,8 +11,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 
 use crate::{
-    DriverError, EngineError, LifecycleHook, LifecyclePhase, NoopLifecycleHook, ProtocolDriver,
+    run_assertions, AssertionContext, DriverError, EngineError, LifecycleHook, LifecyclePhase,
+    NoopLifecycleHook, ProtocolDriver, VariableScope,
 };
+use crate::variables::resolve_request;
 
 pub struct ExecutionEngine {
     drivers: HashMap<String, Arc<dyn ProtocolDriver>>,
@@ -66,6 +69,23 @@ impl ExecutionEngine {
         ),
         EngineError,
     > {
+        self.execute_with_scope(request, VariableScope::default())
+            .await
+    }
+
+    #[instrument(skip(self, request, scope), fields(protocol = %request.protocol_id.0, request = %request.id.0))]
+    pub async fn execute_with_scope(
+        &self,
+        request: RequestEnvelope,
+        scope: VariableScope,
+    ) -> Result<
+        (
+            ExecutionId,
+            mpsc::Receiver<ExecutionEvent>,
+            tokio::task::JoinHandle<Result<ExecutionSummary, EngineError>>,
+        ),
+        EngineError,
+    > {
         let protocol = request.protocol_id.0.clone();
         let driver = self
             .drivers
@@ -73,12 +93,8 @@ impl ExecutionEngine {
             .cloned()
             .ok_or_else(|| EngineError::DriverNotFound(protocol))?;
 
-        let report = driver.validate(&request);
-        if !report.is_valid() {
-            return Err(EngineError::Driver(DriverError::Validation(
-                report.errors.join("; "),
-            )));
-        }
+        // Validate after variable resolution inside `run_driver` so `{{baseUrl}}`
+        // templates are not rejected before substitution.
 
         let execution_id = ExecutionId::new();
         let (sink, rx) = EventSink::channel();
@@ -96,6 +112,7 @@ impl ExecutionEngine {
             let result = run_driver(
                 driver,
                 request,
+                scope,
                 sink,
                 cancel_child,
                 execution_id,
@@ -119,7 +136,16 @@ impl ExecutionEngine {
         &self,
         request: RequestEnvelope,
     ) -> Result<(ExecutionId, ExecutionSummary, Vec<ExecutionEvent>), EngineError> {
-        let (id, mut rx, handle) = self.execute(request).await?;
+        self.execute_collect_with_scope(request, VariableScope::default())
+            .await
+    }
+
+    pub async fn execute_collect_with_scope(
+        &self,
+        request: RequestEnvelope,
+        scope: VariableScope,
+    ) -> Result<(ExecutionId, ExecutionSummary, Vec<ExecutionEvent>), EngineError> {
+        let (id, mut rx, handle) = self.execute_with_scope(request, scope).await?;
         let mut events = Vec::new();
         while let Some(event) = rx.recv().await {
             events.push(event);
@@ -134,14 +160,39 @@ impl ExecutionEngine {
 async fn run_driver(
     driver: Arc<dyn ProtocolDriver>,
     request: RequestEnvelope,
+    scope: VariableScope,
     mut sink: EventSink,
     cancel_child: CancellationToken,
     execution_id: ExecutionId,
     lifecycle: Arc<dyn LifecycleHook>,
 ) -> Result<ExecutionSummary, EngineError> {
-    // P0: no-script path; hooks are invoked so P1 can attach without rewiring.
     lifecycle.on_phase(LifecyclePhase::BeforeRequest).await;
+
+    sink.emit(ExecutionEvent::StateChanged {
+        state: ExecutionState::Running,
+        phase: Some(ExecutionPhase::Resolve),
+    })
+    .await;
+
     lifecycle.on_phase(LifecyclePhase::ResolveVariables).await;
+    let request = match resolve_request(request, &scope) {
+        Ok(req) => req,
+        Err(err) => {
+            sink.emit(ExecutionEvent::Failed {
+                code: "resolution".into(),
+                message: err.to_string(),
+            })
+            .await;
+            sink.emit(ExecutionEvent::StateChanged {
+                state: ExecutionState::Failed,
+                phase: Some(ExecutionPhase::Resolve),
+            })
+            .await;
+            drop(sink);
+            return Err(EngineError::Resolve(err));
+        }
+    };
+
     lifecycle.on_phase(LifecyclePhase::BuildRequest).await;
 
     sink.emit(ExecutionEvent::StateChanged {
@@ -150,18 +201,80 @@ async fn run_driver(
     })
     .await;
 
+    let report = driver.validate(&request);
+    if !report.is_valid() {
+        let message = report.errors.join("; ");
+        sink.emit(ExecutionEvent::Failed {
+            code: "validation".into(),
+            message: message.clone(),
+        })
+        .await;
+        sink.emit(ExecutionEvent::StateChanged {
+            state: ExecutionState::Failed,
+            phase: Some(ExecutionPhase::Validate),
+        })
+        .await;
+        drop(sink);
+        return Err(EngineError::Driver(DriverError::Validation(message)));
+    }
+
     lifecycle.on_phase(LifecyclePhase::SendRequest).await;
 
-    // Keep a sink clone so we can emit terminal Failed after the driver returns Err.
-    let driver_sink = sink.clone();
+    // Tee driver events so we can run assertions against response meta/body.
+    let (tee_sink, mut tee_rx) = EventSink::channel();
+    let mut outer = sink;
+    let forward = tokio::spawn(async move {
+        let mut meta: Option<ResponseMeta> = None;
+        let mut body = String::new();
+        while let Some(event) = tee_rx.recv().await {
+            match &event {
+                ExecutionEvent::ResponseMeta(m) => meta = Some(m.clone()),
+                ExecutionEvent::ResponseChunk {
+                    preview: Some(p),
+                    done: true,
+                    ..
+                } => body = p.clone(),
+                _ => {}
+            }
+            outer.emit(event).await;
+        }
+        (outer, meta, body)
+    });
 
     match driver
-        .execute(request, driver_sink, cancel_child, execution_id)
+        .execute(request.clone(), tee_sink, cancel_child, execution_id)
         .await
     {
         Ok(summary) => {
+            let (mut sink, meta, body) = forward
+                .await
+                .map_err(|e| EngineError::Driver(DriverError::Internal(e.to_string())))?;
+
             lifecycle.on_phase(LifecyclePhase::ReceiveComplete).await;
             lifecycle.on_phase(LifecyclePhase::RunAssertions).await;
+
+            if !request.assertions.is_empty() {
+                sink.emit(ExecutionEvent::StateChanged {
+                    state: ExecutionState::Running,
+                    phase: Some(ExecutionPhase::Assert),
+                })
+                .await;
+
+                let ctx = AssertionContext {
+                    status: summary.status.or_else(|| meta.as_ref().and_then(|m| m.status)),
+                    headers: meta
+                        .as_ref()
+                        .map(|m| m.headers.clone())
+                        .unwrap_or_default(),
+                    body,
+                    duration_ms: summary.duration_ms,
+                    bytes_received: summary.bytes_received,
+                };
+                for result in run_assertions(&request.assertions, &ctx) {
+                    sink.emit(ExecutionEvent::AssertionResult(result)).await;
+                }
+            }
+
             lifecycle.on_phase(LifecyclePhase::ExtractVariables).await;
             lifecycle.on_phase(LifecyclePhase::AfterResponse).await;
             debug_assert_eq!(summary.execution_id.0, execution_id.0);
@@ -169,11 +282,13 @@ async fn run_driver(
             Ok(summary)
         }
         Err(DriverError::Cancelled) => {
-            // Drivers that support cancel emit Cancelled before returning.
-            drop(sink);
+            let _ = forward.await;
             Err(EngineError::Cancelled)
         }
         Err(err) => {
+            let (mut sink, _, _) = forward
+                .await
+                .map_err(|e| EngineError::Driver(DriverError::Internal(e.to_string())))?;
             let code = err.code().to_string();
             let message = err.message();
             sink.emit(ExecutionEvent::Failed { code, message })
@@ -205,7 +320,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use chrono::Utc;
-    use core_domain::RequestId;
+    use core_domain::{Assertion, RequestId};
     use std::time::Duration;
     use tokio::sync::oneshot;
 
@@ -233,6 +348,23 @@ mod tests {
             _cancel: CancellationToken,
             execution_id: ExecutionId,
         ) -> Result<ExecutionSummary, DriverError> {
+            events
+                .emit(ExecutionEvent::ResponseMeta(ResponseMeta {
+                    status: Some(200),
+                    status_text: Some("OK".into()),
+                    headers: vec![("x-test".into(), "1".into())],
+                    content_type: Some("text/plain".into()),
+                    size_hint: Some(2),
+                }))
+                .await;
+            events
+                .emit(ExecutionEvent::ResponseChunk {
+                    content_type: Some("text/plain".into()),
+                    size: 2,
+                    preview: Some("ok".into()),
+                    done: true,
+                })
+                .await;
             let summary = ExecutionSummary {
                 execution_id,
                 request_id: request.id.0,
@@ -241,7 +373,7 @@ mod tests {
                 started_at: Utc::now(),
                 finished_at: Utc::now(),
                 duration_ms: 1,
-                bytes_received: 0,
+                bytes_received: 2,
                 status: Some(200),
             };
             events
@@ -343,6 +475,46 @@ mod tests {
             _ => None,
         });
         assert_eq!(completed, Some(id.0));
+    }
+
+    #[tokio::test]
+    async fn runs_builtin_assertions() {
+        let mut engine = ExecutionEngine::new();
+        engine.register(Arc::new(MockOkDriver));
+        let mut req = mock_request();
+        req.assertions = vec![
+            Assertion::StatusEquals { expected: 200 },
+            Assertion::BodyContains {
+                expected: "ok".into(),
+            },
+        ];
+        let (_, _, events) = engine.execute_collect(req).await.expect("ok");
+        let assertion_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, ExecutionEvent::AssertionResult(_)))
+            .collect();
+        assert_eq!(assertion_events.len(), 2);
+        assert!(assertion_events.iter().all(|e| match e {
+            ExecutionEvent::AssertionResult(r) => r.passed,
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
+    async fn resolves_variables_before_send() {
+        let mut engine = ExecutionEngine::new();
+        engine.register(Arc::new(MockOkDriver));
+        let mut req = mock_request();
+        req.target = "https://{{host}}/ping".into();
+        let mut scope = VariableScope::default();
+        scope.environment.insert("host".into(), "example.com".into());
+        let (_, _, events) = engine
+            .execute_collect_with_scope(req, scope)
+            .await
+            .expect("ok");
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ExecutionEvent::Completed { .. })));
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
-//! Minimal SQLite store for Phase 0: save / open HTTP requests.
+//! Local SQLite store: requests, environments/variables, execution history.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -50,6 +51,23 @@ pub struct ExecutionRecord {
     pub bytes_received: u64,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
+    /// Snapshot of the request at send time (for history replay).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_snapshot: Option<RequestEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRecord {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub variables: HashMap<String, String>,
+    /// Names of secrets stored in OS keychain (values never persisted here).
+    pub secret_refs: Vec<String>,
+    pub updated_at: DateTime<Utc>,
 }
 
 pub struct LocalStore {
@@ -114,10 +132,30 @@ impl LocalStore {
               duration_ms INTEGER NOT NULL,
               bytes_received INTEGER NOT NULL,
               started_at TEXT NOT NULL,
-              finished_at TEXT NOT NULL
+              finished_at TEXT NOT NULL,
+              request_snapshot_json TEXT,
+              preview TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS environments (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              variables_json TEXT NOT NULL,
+              secret_refs_json TEXT NOT NULL DEFAULT '[]',
+              updated_at TEXT NOT NULL
             );
             "#,
         )?;
+
+        // Additive migrations for DBs created in Phase 0.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE executions ADD COLUMN request_snapshot_json TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE executions ADD COLUMN preview TEXT", []);
+
         Ok(())
     }
 
@@ -130,6 +168,20 @@ impl LocalStore {
         self.conn.execute(
             "INSERT OR IGNORE INTO collections (id, project_id, name, created_at) VALUES (?1, ?2, ?3, ?4)",
             params!["default-collection", "default-project", "Default Collection", now],
+        )?;
+        self.conn.execute(
+            r#"
+            INSERT OR IGNORE INTO environments (id, project_id, name, variables_json, secret_refs_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                "default-env",
+                "default-project",
+                "Default",
+                "{}",
+                "[]",
+                now,
+            ],
         )?;
         Ok(())
     }
@@ -211,9 +263,7 @@ impl LocalStore {
                     protocol_id,
                     target,
                     envelope,
-                    updated_at: DateTime::parse_from_rfc3339(&updated_at)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    updated_at: parse_time(&updated_at),
                 })
             })
             .transpose()
@@ -287,20 +337,24 @@ impl LocalStore {
                 protocol_id,
                 target,
                 envelope,
-                updated_at: DateTime::parse_from_rfc3339(&updated_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                updated_at: parse_time(&updated_at),
             });
         }
         Ok(out)
     }
 
     pub fn record_execution(&self, record: &ExecutionRecord) -> StoreResult<()> {
+        let snapshot = record
+            .request_snapshot
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
         self.conn.execute(
             r#"
             INSERT INTO executions
-              (id, request_id, protocol_id, state, status, duration_ms, bytes_received, started_at, finished_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+              (id, request_id, protocol_id, state, status, duration_ms, bytes_received,
+               started_at, finished_at, request_snapshot_json, preview)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 record.id,
@@ -312,10 +366,206 @@ impl LocalStore {
                 record.bytes_received as i64,
                 record.started_at.to_rfc3339(),
                 record.finished_at.to_rfc3339(),
+                snapshot,
+                record.preview,
             ],
         )?;
         Ok(())
     }
+
+    pub fn list_executions(&self, limit: usize) -> StoreResult<Vec<ExecutionRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, request_id, protocol_id, state, status, duration_ms, bytes_received,
+                   started_at, finished_at, request_snapshot_json, preview
+            FROM executions
+            ORDER BY started_at DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+            ))
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let (
+                id,
+                request_id,
+                protocol_id,
+                state,
+                status,
+                duration_ms,
+                bytes_received,
+                started_at,
+                finished_at,
+                snapshot,
+                preview,
+            ) = row?;
+            let request_snapshot = snapshot
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()?;
+            out.push(ExecutionRecord {
+                id,
+                request_id: request_id.unwrap_or_default(),
+                protocol_id,
+                state,
+                status: status.map(|s| s as u16),
+                duration_ms: duration_ms as u64,
+                bytes_received: bytes_received as u64,
+                started_at: parse_time(&started_at),
+                finished_at: parse_time(&finished_at),
+                request_snapshot,
+                preview,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn get_execution(&self, id: &str) -> StoreResult<Option<ExecutionRecord>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT id, request_id, protocol_id, state, status, duration_ms, bytes_received,
+                       started_at, finished_at, request_snapshot_json, preview
+                FROM executions WHERE id = ?1
+                "#,
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                        row.get::<_, Option<String>>(10)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(
+                |(
+                    id,
+                    request_id,
+                    protocol_id,
+                    state,
+                    status,
+                    duration_ms,
+                    bytes_received,
+                    started_at,
+                    finished_at,
+                    snapshot,
+                    preview,
+                )| {
+                    let request_snapshot = snapshot
+                        .as_deref()
+                        .map(serde_json::from_str)
+                        .transpose()?;
+                    Ok(ExecutionRecord {
+                        id,
+                        request_id: request_id.unwrap_or_default(),
+                        protocol_id,
+                        state,
+                        status: status.map(|s| s as u16),
+                        duration_ms: duration_ms as u64,
+                        bytes_received: bytes_received as u64,
+                        started_at: parse_time(&started_at),
+                        finished_at: parse_time(&finished_at),
+                        request_snapshot,
+                        preview,
+                    })
+                },
+            )
+            .transpose()
+    }
+
+    pub fn save_environment(&self, env: &EnvironmentRecord) -> StoreResult<()> {
+        let variables_json = serde_json::to_string(&env.variables)?;
+        let secret_refs_json = serde_json::to_string(&env.secret_refs)?;
+        self.conn.execute(
+            r#"
+            INSERT INTO environments (id, project_id, name, variables_json, secret_refs_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(id) DO UPDATE SET
+              project_id = excluded.project_id,
+              name = excluded.name,
+              variables_json = excluded.variables_json,
+              secret_refs_json = excluded.secret_refs_json,
+              updated_at = excluded.updated_at
+            "#,
+            params![
+                env.id,
+                env.project_id,
+                env.name,
+                variables_json,
+                secret_refs_json,
+                env.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_environment(&self, id: &str) -> StoreResult<Option<EnvironmentRecord>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT id, project_id, name, variables_json, secret_refs_json, updated_at
+                FROM environments WHERE id = ?1
+                "#,
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(|(id, project_id, name, variables_json, secret_refs_json, updated_at)| {
+                Ok(EnvironmentRecord {
+                    id,
+                    project_id,
+                    name,
+                    variables: serde_json::from_str(&variables_json)?,
+                    secret_refs: serde_json::from_str(&secret_refs_json)?,
+                    updated_at: parse_time(&updated_at),
+                })
+            })
+            .transpose()
+    }
+
+    pub fn default_environment(&self) -> StoreResult<EnvironmentRecord> {
+        self.get_environment("default-env")?
+            .ok_or_else(|| StoreError::NotFound("default-env".into()))
+    }
+}
+
+fn parse_time(value: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
 }
 
 #[cfg(test)]
@@ -341,5 +591,39 @@ mod tests {
 
         let latest = store.latest_request().expect("latest").expect("present");
         assert_eq!(latest.id, saved.id);
+    }
+
+    #[test]
+    fn environment_and_history_roundtrip() {
+        let store = LocalStore::open_in_memory().expect("open");
+        let mut env = store.default_environment().expect("env");
+        env.variables.insert("host".into(), "example.com".into());
+        env.secret_refs.push("apiToken".into());
+        env.updated_at = Utc::now();
+        store.save_environment(&env).expect("save env");
+
+        let reloaded = store.default_environment().expect("reload");
+        assert_eq!(reloaded.variables.get("host").unwrap(), "example.com");
+        assert_eq!(reloaded.secret_refs, vec!["apiToken".to_string()]);
+
+        let req = RequestEnvelope::http_get("hist", "https://example.com");
+        let record = ExecutionRecord {
+            id: Uuid::new_v4().to_string(),
+            request_id: req.id.0.to_string(),
+            protocol_id: "http".into(),
+            state: "completed".into(),
+            status: Some(200),
+            duration_ms: 10,
+            bytes_received: 5,
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+            request_snapshot: Some(req),
+            preview: Some("hi".into()),
+        };
+        store.record_execution(&record).expect("record");
+        let list = store.list_executions(10).expect("list");
+        assert_eq!(list.len(), 1);
+        assert!(list[0].request_snapshot.is_some());
+        assert_eq!(list[0].preview.as_deref(), Some("hi"));
     }
 }
