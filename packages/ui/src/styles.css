@@ -1,0 +1,25 @@
+:root {
+  --apivoy-bg: #0f1419;
+  --apivoy-bg-elevated: #1a222c;
+  --apivoy-border: #2a3542;
+  --apivoy-text: #e7eef7;
+  --apivoy-muted: #8b9bb0;
+  --apivoy-accent: #3d9cf0;
+  --apivoy-accent-soft: rgba(61, 156, 240, 0.14);
+  --apivoy-success: #3ecf8e;
+  --apivoy-danger: #f07178;
+  --apivoy-font: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --apivoy-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--apivoy-font);
+  background: radial-gradient(1200px 600px at 10% -10%, #1b2a3a 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #172433 0%, transparent 50%), var(--apivoy-bg);
+  color: var(--apivoy-text);
+}

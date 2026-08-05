@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+!apps/desktop/dist/
+!apps/desktop/dist/index.html
+build/
+target/
+*.tsbuildinfo
+.turbo/
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+*.swp
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs / coverage
+*.log
+coverage/
+.nyc_output/
+
+# Tauri / local
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/WixTools/
+*.local
+
+# Extracted doc scratch
+docs/_extract/
+
+# Java
+**/target/
+!.mvn/wrapper/maven-wrapper.jar
+.gradle/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Misc
+*.iml
+.cache/
+.target-review/
+
+# ApiVoy local runtime data (secrets refs, caches) — not workspace project files
+.apivoy/

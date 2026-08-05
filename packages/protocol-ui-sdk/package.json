@@ -1,0 +1,19 @@
+{
+  "name": "@apivoy/protocol-ui-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ApiVoy protocol UI Schema / plugin SDK (placeholder)",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"lint placeholder\"",
+    "test": "echo \"no tests yet\""
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

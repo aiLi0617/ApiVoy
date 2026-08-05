@@ -1,0 +1,21 @@
+{
+  "name": "apivoy",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ApiVoy — Explore Every Protocol. Local-first multi-protocol API client.",
+  "packageManager": "pnpm@10.27.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @apivoy/web dev",
+    "build:web": "pnpm --filter @apivoy/web build",
+    "dev:desktop": "pnpm --filter @apivoy/desktop tauri:dev",
+    "build:desktop": "pnpm --filter @apivoy/desktop tauri:build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "rust:check": "cargo check --workspace",
+    "rust:test": "cargo test --workspace"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

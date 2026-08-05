@@ -1,0 +1,11 @@
+[package]
+name = "secret-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local secret references; OS keychain integration comes later"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

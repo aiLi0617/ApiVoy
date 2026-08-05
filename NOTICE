@@ -1,0 +1,41 @@
+ApiVoy
+Copyright 2026 ApiVoy Contributors
+
+This product includes software developed for the ApiVoy project.
+
+Licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+---------------------------------------------------------------------------
+Brand & Trademark Notice
+---------------------------------------------------------------------------
+
+The product name "ApiVoy", the slogan "Explore Every Protocol.",
+associated logos, icons, and other brand assets are NOT licensed under
+Apache-2.0 by default.
+
+Use of ApiVoy branding requires a separate brand / trademark grant.
+Redistribution of modified software must not imply official endorsement
+by the ApiVoy project unless expressly permitted.
+
+---------------------------------------------------------------------------
+Open Source vs Commercial Boundary
+---------------------------------------------------------------------------
+
+Apache-2.0 (this repository / core open source):
+  - Desktop client
+  - Local Agent
+  - Rust protocol core
+  - WASM plugin SDK
+  - CLI
+  - Public protocol plugins
+  - Local storage modules
+
+Commercial / closed source (not covered by this NOTICE as OSS):
+  - Team cloud sync services
+  - Enterprise RBAC & audit
+  - Private plugin marketplace
+  - Cloud protocol gateway
+  - SSO / LDAP
+  - Enterprise policy management
+  - Commercial AI capabilities

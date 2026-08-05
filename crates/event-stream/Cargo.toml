@@ -1,0 +1,12 @@
+[package]
+name = "event-stream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bounded execution event sink and fan-out"
+
+[dependencies]
+core-domain = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

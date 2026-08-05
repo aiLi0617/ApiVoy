@@ -1,0 +1,149 @@
+/**
+ * Shared request / execution DTOs mirrored from Rust `core-domain`.
+ * Rust is the source of truth; this package is a hand-written mirror (codegen later via ts-rs/typeshare).
+ */
+
+export type ProtocolId =
+  | "http"
+  | "websocket"
+  | "sse"
+  | "graphql"
+  | "grpc"
+  | "tcp"
+  | "udp"
+  | string;
+
+export interface HttpPayload {
+  method: string;
+  headers: Array<[string, string]>;
+  body?: string | null;
+  followRedirects: boolean;
+}
+
+export type ProtocolPayload =
+  | ({ type: "http" } & HttpPayload)
+  | { type: "raw"; value: unknown };
+
+export interface AuthRef {
+  kind: string;
+  secret_ref?: string | null;
+}
+
+export interface RetryPolicy {
+  max_retries: number;
+  backoff_ms: number;
+}
+
+export interface TlsOptions {
+  verify: boolean;
+  client_cert_ref?: string | null;
+}
+
+export interface RequestEnvelope {
+  id: string;
+  protocolId: ProtocolId;
+  name: string;
+  target: string;
+  environmentRef?: string | null;
+  authRef?: AuthRef | null;
+  timeoutMs: number;
+  retryPolicy: RetryPolicy;
+  proxy?: string | null;
+  tls: TlsOptions;
+  metadata: unknown;
+  payload: ProtocolPayload;
+  preScripts: string[];
+  postScripts: string[];
+  assertions: string[];
+  createdAt: string;
+}
+
+export type ExecutionState = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export type ExecutionPhase =
+  | "validate"
+  | "resolve"
+  | "pre_script"
+  | "connect"
+  | "transfer"
+  | "post_script"
+  | "assert"
+  | "persist";
+
+export interface ExecutionSummary {
+  executionId: string;
+  requestId: string;
+  protocolId: string;
+  state: ExecutionState;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  bytesReceived: number;
+  status?: number | null;
+}
+
+export interface MetricEvent {
+  name: string;
+  value: number;
+  unit: string;
+}
+
+export interface AssertionResultEvent {
+  name: string;
+  passed: boolean;
+  expected?: string | null;
+  actual?: string | null;
+  message?: string | null;
+}
+
+export type ExecutionEvent =
+  | { type: "state_changed"; state: ExecutionState; phase?: ExecutionPhase | null }
+  | { type: "log"; level: string; message: string }
+  | ({ type: "metric" } & MetricEvent)
+  | {
+      type: "response_meta";
+      status?: number | null;
+      statusText?: string | null;
+      headers: Array<[string, string]>;
+      contentType?: string | null;
+      sizeHint?: number | null;
+    }
+  | {
+      type: "response_chunk";
+      contentType?: string | null;
+      size: number;
+      preview?: string | null;
+      done: boolean;
+    }
+  | ({ type: "assertion_result" } & AssertionResultEvent)
+  | { type: "warning"; code: string; message: string }
+  | { type: "completed"; summary: ExecutionSummary }
+  | { type: "failed"; code: string; message: string }
+  | { type: "cancelled"; reason?: string | null };
+
+export function createHttpGetRequest(name: string, url: string): RequestEnvelope {
+  return {
+    id: crypto.randomUUID(),
+    protocolId: "http",
+    name,
+    target: url,
+    environmentRef: null,
+    authRef: null,
+    timeoutMs: 30_000,
+    retryPolicy: { max_retries: 0, backoff_ms: 0 },
+    proxy: null,
+    tls: { verify: true, client_cert_ref: null },
+    metadata: {},
+    payload: {
+      type: "http",
+      method: "GET",
+      headers: [],
+      body: null,
+      followRedirects: true,
+    },
+    preScripts: [],
+    postScripts: [],
+    assertions: [],
+    createdAt: new Date().toISOString(),
+  };
+}
