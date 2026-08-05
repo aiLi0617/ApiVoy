@@ -4,8 +4,6 @@ node_modules/
 
 # Build
 dist/
-!apps/desktop/dist/
-!apps/desktop/dist/index.html
 build/
 target/
 *.tsbuildinfo
@@ -49,7 +47,10 @@ docs/_extract/
 *.iml
 .cache/
 .target-review/
-/*.docx
+*.docx
+*.tmp
+*.bak
+Desktop.ini
 
 # ApiVoy local runtime data (secrets refs, caches) — not workspace project files
 .apivoy/
