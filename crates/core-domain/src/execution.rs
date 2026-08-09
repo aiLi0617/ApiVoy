@@ -52,12 +52,17 @@ pub enum ExecutionEvent {
         level: String,
         message: String,
     },
+    VariablesExtracted {
+        variables: std::collections::HashMap<String, String>,
+    },
     Metric(MetricEvent),
     ResponseMeta(ResponseMeta),
     ResponseChunk {
         content_type: Option<String>,
         size: u64,
         preview: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_base64: Option<String>,
         done: bool,
     },
     AssertionResult(AssertionResultEvent),

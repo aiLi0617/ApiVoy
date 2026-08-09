@@ -1,0 +1,24 @@
+[package]
+name = "driver-tcp-udp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Built-in TCP and UDP protocol drivers"
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+core-domain = { workspace = true }
+event-stream = { workspace = true }
+execution-engine = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+tokio = { workspace = true, features = ["io-util", "net"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-util = { workspace = true }
+webpki-roots = "1"
+
+[dev-dependencies]
+rcgen = "0.13"
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }

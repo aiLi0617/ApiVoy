@@ -29,13 +29,7 @@ impl EventSink {
 
     pub fn with_capacity(capacity: usize) -> (Self, mpsc::Receiver<ExecutionEvent>) {
         let (tx, rx) = mpsc::channel(capacity);
-        (
-            Self {
-                tx,
-                dropped: 0,
-            },
-            rx,
-        )
+        (Self { tx, dropped: 0 }, rx)
     }
 
     pub async fn emit(&mut self, event: ExecutionEvent) {
@@ -50,7 +44,10 @@ impl EventSink {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped = self.dropped.saturating_add(1);
-                warn!(dropped = self.dropped, "execution event channel full; dropping");
+                warn!(
+                    dropped = self.dropped,
+                    "execution event channel full; dropping"
+                );
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 self.dropped = self.dropped.saturating_add(1);

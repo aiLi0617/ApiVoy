@@ -1,0 +1,20 @@
+[package]
+name = "plugin-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sandboxed Wasmtime Component plugin host"
+
+[dependencies]
+base64 = { workspace = true }
+ed25519-dalek = "2.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+wasmtime = { version = "47.0.3", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
+
+[dev-dependencies]
+rand = "0.8"
+tempfile = "3"
+wat = "1"

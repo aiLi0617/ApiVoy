@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use core_domain::DomainError;
 
-use crate::{AuthError, DriverError, ResolveError};
+use crate::{AuthError, DriverError, ResolveError, ScriptError};
 
 pub use core_domain::ErrorKind;
 
@@ -16,6 +16,8 @@ pub enum EngineError {
     Resolve(#[from] ResolveError),
     #[error(transparent)]
     Auth(#[from] AuthError),
+    #[error(transparent)]
+    Script(#[from] ScriptError),
     #[error("execution cancelled")]
     Cancelled,
 }
@@ -27,6 +29,7 @@ impl EngineError {
             Self::Driver(err) => err.kind(),
             Self::Resolve(_) => ErrorKind::Resolution,
             Self::Auth(_) => ErrorKind::Auth,
+            Self::Script(_) => ErrorKind::Validation,
             Self::Cancelled => ErrorKind::Cancelled,
         }
     }
@@ -46,6 +49,7 @@ impl EngineError {
                 recoverable: true,
             },
             Self::Auth(err) => DomainError::auth(err.to_string()),
+            Self::Script(err) => DomainError::validation("script", err.to_string()),
             Self::Cancelled => DomainError::Cancelled,
         }
     }

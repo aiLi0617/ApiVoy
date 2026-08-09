@@ -17,16 +17,43 @@ export interface HttpPayload {
   method: string;
   headers: Array<[string, string]>;
   body?: string | null;
+  multipart?: MultipartPart[];
   followRedirects: boolean;
 }
 
+export interface MultipartPart {
+  name: string;
+  value: string;
+  fileName?: string | null;
+  contentType?: string | null;
+  base64?: boolean;
+}
+
+export interface SsePayload {
+  headers: Array<[string, string]>;
+  lastEventId?: string | null;
+  reconnectMax?: number;
+  reconnectDelayMs?: number;
+}
+export interface SocketPayload { data: string; encoding: "text" | "hex" | string; framing?: "none" | "delimiter" | "fixed" | string | null; delimiter?: string | null; fixedLength?: number | null; sendCount?: number; intervalMs?: number; tls?: boolean; serverName?: string | null; caCertRef?: string | null }
+export interface UdpPayload { data: string; encoding: "text" | "hex" | string; sendCount: number; intervalMs: number }
+export interface GraphqlPayload { query: string; variables: unknown; operationName?: string | null; headers: Array<[string, string]> }
+export interface WebSocketPayload { headers: Array<[string, string]>; subprotocols: string[]; messages: Array<{ encoding: "text" | "binary" | string; data: string }>; receiveLimit?: number | null; reconnectMax?: number; reconnectDelayMs?: number }
+export interface GrpcPayload { service: string; method: string; messageBase64: string; mode: "unary" | "server_streaming" | string; metadata: Array<[string, string]>; descriptorSetBase64?: string | null; messageJson?: string | null }
+
 export type ProtocolPayload =
   | ({ type: "http" } & HttpPayload)
+  | ({ type: "sse" } & SsePayload)
+  | ({ type: "tcp" } & SocketPayload)
+  | ({ type: "udp" } & UdpPayload)
+  | ({ type: "graphql" } & GraphqlPayload)
+  | ({ type: "websocket" } & WebSocketPayload)
+  | ({ type: "grpc" } & GrpcPayload)
   | { type: "raw"; value: unknown };
 
 /** Request auth reference — secrets stay in Keychain / Agent secret-store. */
 export interface AuthRef {
-  /** `none` | `bearer` | `basic` | `api_key` */
+  /** `none` | `bearer` | `basic` | `api_key` | `oauth2_client_credentials` */
   kind: string;
   /** Secret store name for bearer token, basic password, or API key. */
   secret_ref?: string | null;
@@ -34,6 +61,13 @@ export interface AuthRef {
   username?: string | null;
   /** API Key header name (default `X-Api-Key`). */
   header_name?: string | null;
+  token_url?: string | null;
+  scope?: string | null;
+  audience?: string | null;
+  authorization_url?: string | null;
+  redirect_uri?: string | null;
+  authorization_code_ref?: string | null;
+  code_verifier_ref?: string | null;
 }
 
 export interface RetryPolicy {
@@ -114,23 +148,26 @@ export interface AssertionResultEvent {
   message?: string | null;
 }
 
+export interface ResponseMeta {
+  status?: number | null;
+  statusText?: string | null;
+  headers: Array<[string, string]>;
+  contentType?: string | null;
+  sizeHint?: number | null;
+}
+
 export type ExecutionEvent =
   | { type: "state_changed"; state: ExecutionState; phase?: ExecutionPhase | null }
   | { type: "log"; level: string; message: string }
+  | { type: "variables_extracted"; variables: Record<string, string> }
   | ({ type: "metric" } & MetricEvent)
-  | {
-      type: "response_meta";
-      status?: number | null;
-      statusText?: string | null;
-      headers: Array<[string, string]>;
-      contentType?: string | null;
-      sizeHint?: number | null;
-    }
+  | ({ type: "response_meta" } & ResponseMeta)
   | {
       type: "response_chunk";
       contentType?: string | null;
       size: number;
       preview?: string | null;
+      dataBase64?: string | null;
       done: boolean;
     }
   | ({ type: "assertion_result" } & AssertionResultEvent)
@@ -145,12 +182,18 @@ export interface CreateHttpRequestOptions {
   method?: string;
   headers?: Array<[string, string]>;
   body?: string | null;
+  multipart?: MultipartPart[];
   timeoutMs?: number;
   followRedirects?: boolean;
   variables?: Record<string, string>;
   assertions?: Assertion[];
   auth?: AuthRef | null;
   environmentRef?: string | null;
+  retryPolicy?: RetryPolicy;
+  proxy?: string | null;
+  tls?: TlsOptions;
+  preScripts?: string[];
+  postScripts?: string[];
 }
 
 export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnvelope {
@@ -163,19 +206,20 @@ export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnv
     environmentRef: options.environmentRef ?? null,
     authRef: options.auth ?? null,
     timeoutMs: options.timeoutMs ?? 30_000,
-    retryPolicy: { max_retries: 0, backoff_ms: 0 },
-    proxy: null,
-    tls: { verify: true, client_cert_ref: null },
+    retryPolicy: options.retryPolicy ?? { max_retries: 0, backoff_ms: 0 },
+    proxy: options.proxy ?? null,
+    tls: options.tls ?? { verify: true, client_cert_ref: null },
     metadata: {},
     payload: {
       type: "http",
       method,
       headers: options.headers ?? [],
       body: options.body ?? null,
+      multipart: options.multipart ?? [],
       followRedirects: options.followRedirects ?? true,
     },
-    preScripts: [],
-    postScripts: [],
+    preScripts: options.preScripts ?? [],
+    postScripts: options.postScripts ?? [],
     assertions: options.assertions ?? [],
     variables: options.variables ?? {},
     createdAt: new Date().toISOString(),

@@ -13,7 +13,12 @@ pub struct AssertionContext {
 }
 
 impl AssertionContext {
-    pub fn from_response(meta: &ResponseMeta, body: impl Into<String>, duration_ms: u64, bytes: u64) -> Self {
+    pub fn from_response(
+        meta: &ResponseMeta,
+        body: impl Into<String>,
+        duration_ms: u64,
+        bytes: u64,
+    ) -> Self {
         Self {
             status: meta.status,
             headers: meta.headers.clone(),
@@ -47,10 +52,7 @@ fn evaluate(assertion: &Assertion, ctx: &AssertionContext) -> AssertionResultEve
         }
         Assertion::StatusIn { expected } => {
             let actual = ctx.status.map(|s| s.to_string());
-            let passed = ctx
-                .status
-                .map(|s| expected.contains(&s))
-                .unwrap_or(false);
+            let passed = ctx.status.map(|s| expected.contains(&s)).unwrap_or(false);
             AssertionResultEvent {
                 name,
                 passed,
@@ -79,7 +81,10 @@ fn evaluate(assertion: &Assertion, ctx: &AssertionContext) -> AssertionResultEve
                 message: None,
             }
         }
-        Assertion::HeaderEquals { name: header, expected } => {
+        Assertion::HeaderEquals {
+            name: header,
+            expected,
+        } => {
             let actual = find_header(&ctx.headers, header);
             let passed = actual.as_deref() == Some(expected.as_str());
             AssertionResultEvent {
@@ -90,7 +95,10 @@ fn evaluate(assertion: &Assertion, ctx: &AssertionContext) -> AssertionResultEve
                 message: None,
             }
         }
-        Assertion::HeaderContains { name: header, expected } => {
+        Assertion::HeaderContains {
+            name: header,
+            expected,
+        } => {
             let actual = find_header(&ctx.headers, header);
             let passed = actual
                 .as_ref()
@@ -114,35 +122,33 @@ fn evaluate(assertion: &Assertion, ctx: &AssertionContext) -> AssertionResultEve
                 message: None,
             }
         }
-        Assertion::JsonPathEquals { path, expected } => {
-            match json_path_get(&ctx.body, path) {
-                Ok(Some(value)) => {
-                    let actual = value_to_compare_string(&value);
-                    let passed = actual == *expected;
-                    AssertionResultEvent {
-                        name,
-                        passed,
-                        expected: Some(expected.clone()),
-                        actual: Some(actual),
-                        message: None,
-                    }
+        Assertion::JsonPathEquals { path, expected } => match json_path_get(&ctx.body, path) {
+            Ok(Some(value)) => {
+                let actual = value_to_compare_string(&value);
+                let passed = actual == *expected;
+                AssertionResultEvent {
+                    name,
+                    passed,
+                    expected: Some(expected.clone()),
+                    actual: Some(actual),
+                    message: None,
                 }
-                Ok(None) => AssertionResultEvent {
-                    name,
-                    passed: false,
-                    expected: Some(expected.clone()),
-                    actual: None,
-                    message: Some(format!("path `{path}` not found")),
-                },
-                Err(err) => AssertionResultEvent {
-                    name,
-                    passed: false,
-                    expected: Some(expected.clone()),
-                    actual: None,
-                    message: Some(err),
-                },
             }
-        }
+            Ok(None) => AssertionResultEvent {
+                name,
+                passed: false,
+                expected: Some(expected.clone()),
+                actual: None,
+                message: Some(format!("path `{path}` not found")),
+            },
+            Err(err) => AssertionResultEvent {
+                name,
+                passed: false,
+                expected: Some(expected.clone()),
+                actual: None,
+                message: Some(err),
+            },
+        },
     }
 }
 

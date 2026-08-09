@@ -40,6 +40,30 @@ pub struct WorkspaceRecord {
     pub settings: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionRecord {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub sort_order: i64,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,7 +196,9 @@ impl LocalStore {
               id TEXT PRIMARY KEY,
               project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
               name TEXT NOT NULL,
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              parent_id TEXT REFERENCES collections(id) ON DELETE CASCADE,
+              sort_order INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS requests (
@@ -224,21 +250,38 @@ impl LocalStore {
         )?;
 
         // Additive migrations for DBs created in Phase 0 / early M1.
-        let _ = self
-            .conn
-            .execute("ALTER TABLE executions ADD COLUMN request_snapshot_json TEXT", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE executions ADD COLUMN request_snapshot_json TEXT",
+            [],
+        );
         let _ = self
             .conn
             .execute("ALTER TABLE executions ADD COLUMN preview TEXT", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE executions ADD COLUMN response_blob_id TEXT", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE executions ADD COLUMN response_blob_id TEXT",
+            [],
+        );
         let _ = self
             .conn
             .execute("ALTER TABLE requests ADD COLUMN body_blob_id TEXT", []);
         let _ = self
             .conn
             .execute("ALTER TABLE projects ADD COLUMN workspace_id TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE collections ADD COLUMN parent_id TEXT", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE collections ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE collections ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
 
         Ok(())
     }
@@ -291,7 +334,7 @@ impl LocalStore {
         self.conn
             .query_row(
                 r#"
-                SELECT id, name, root_path, settings_json, created_at, updated_at
+                SELECT id, name, root_path, settings_json, created_at, updated_at, archived
                 FROM workspaces WHERE id = ?1
                 "#,
                 params![id],
@@ -303,29 +346,33 @@ impl LocalStore {
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
+                        row.get::<_, bool>(6)?,
                     ))
                 },
             )
             .optional()?
-            .map(|(id, name, root_path, settings_json, created_at, updated_at)| {
-                Ok(WorkspaceRecord {
-                    id,
-                    name,
-                    root_path,
-                    settings: serde_json::from_str(&settings_json)
-                        .unwrap_or_else(|_| serde_json::json!({})),
-                    created_at: parse_time(&created_at),
-                    updated_at: parse_time(&updated_at),
-                })
-            })
+            .map(
+                |(id, name, root_path, settings_json, created_at, updated_at, archived)| {
+                    Ok(WorkspaceRecord {
+                        id,
+                        name,
+                        root_path,
+                        settings: serde_json::from_str(&settings_json)
+                            .unwrap_or_else(|_| serde_json::json!({})),
+                        created_at: parse_time(&created_at),
+                        updated_at: parse_time(&updated_at),
+                        archived,
+                    })
+                },
+            )
             .transpose()
     }
 
     pub fn list_workspaces(&self) -> StoreResult<Vec<WorkspaceRecord>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT id, name, root_path, settings_json, created_at, updated_at
-            FROM workspaces ORDER BY updated_at DESC
+            SELECT id, name, root_path, settings_json, created_at, updated_at, archived
+            FROM workspaces ORDER BY archived ASC, updated_at DESC
             "#,
         )?;
         let rows = stmt.query_map([], |row| {
@@ -336,11 +383,12 @@ impl LocalStore {
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, bool>(6)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, name, root_path, settings_json, created_at, updated_at) = row?;
+            let (id, name, root_path, settings_json, created_at, updated_at, archived) = row?;
             out.push(WorkspaceRecord {
                 id,
                 name,
@@ -349,6 +397,7 @@ impl LocalStore {
                     .unwrap_or_else(|_| serde_json::json!({})),
                 created_at: parse_time(&created_at),
                 updated_at: parse_time(&updated_at),
+                archived,
             });
         }
         Ok(out)
@@ -358,13 +407,14 @@ impl LocalStore {
         let settings_json = serde_json::to_string(&ws.settings)?;
         self.conn.execute(
             r#"
-            INSERT INTO workspaces (id, name, root_path, settings_json, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO workspaces (id, name, root_path, settings_json, created_at, updated_at, archived)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
               root_path = excluded.root_path,
               settings_json = excluded.settings_json,
-              updated_at = excluded.updated_at
+              updated_at = excluded.updated_at,
+              archived = excluded.archived
             "#,
             params![
                 ws.id,
@@ -373,8 +423,354 @@ impl LocalStore {
                 settings_json,
                 ws.created_at.to_rfc3339(),
                 ws.updated_at.to_rfc3339(),
+                ws.archived,
             ],
         )?;
+        Ok(())
+    }
+
+    pub fn create_workspace(
+        &self,
+        name: &str,
+        root_path: Option<String>,
+    ) -> StoreResult<WorkspaceRecord> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(StoreError::InvalidId("workspace name is required".into()));
+        }
+        let now = Utc::now();
+        let record = WorkspaceRecord {
+            id: Uuid::new_v4().to_string(),
+            name: name.into(),
+            root_path,
+            settings: serde_json::json!({}),
+            created_at: now,
+            updated_at: now,
+            archived: false,
+        };
+        self.save_workspace(&record)?;
+        Ok(record)
+    }
+
+    pub fn rename_workspace(&self, id: &str, name: &str) -> StoreResult<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(StoreError::InvalidId("workspace name is required".into()));
+        }
+        let changed = self.conn.execute(
+            "UPDATE workspaces SET name = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, name, Utc::now().to_rfc3339()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn touch_workspace(&self, id: &str) -> StoreResult<()> {
+        let changed = self.conn.execute(
+            "UPDATE workspaces SET updated_at = ?2 WHERE id = ?1",
+            params![id, Utc::now().to_rfc3339()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn archive_workspace(&self, id: &str, archived: bool) -> StoreResult<()> {
+        if id == "default-workspace" && archived {
+            return Err(StoreError::InvalidId(
+                "default workspace cannot be archived".into(),
+            ));
+        }
+        let changed = self.conn.execute(
+            "UPDATE workspaces SET archived = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, archived, Utc::now().to_rfc3339()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_workspace(&self, id: &str) -> StoreResult<()> {
+        if id == "default-workspace" {
+            return Err(StoreError::InvalidId(
+                "default workspace cannot be deleted".into(),
+            ));
+        }
+        for project in self.list_projects(id)? {
+            self.delete_project(&project.id)?;
+        }
+        let changed = self
+            .conn
+            .execute("DELETE FROM workspaces WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn create_project(&self, workspace_id: &str, name: &str) -> StoreResult<ProjectRecord> {
+        if self.get_workspace(workspace_id)?.is_none() {
+            return Err(StoreError::NotFound(workspace_id.into()));
+        }
+        let record = ProjectRecord {
+            id: Uuid::new_v4().to_string(),
+            workspace_id: workspace_id.into(),
+            name: name.trim().to_string(),
+            created_at: Utc::now(),
+        };
+        if record.name.is_empty() {
+            return Err(StoreError::InvalidId("project name is required".into()));
+        }
+        self.conn.execute(
+            "INSERT INTO projects (id, name, created_at, workspace_id) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                record.id,
+                record.name,
+                record.created_at.to_rfc3339(),
+                record.workspace_id
+            ],
+        )?;
+        Ok(record)
+    }
+
+    pub fn list_projects(&self, workspace_id: &str) -> StoreResult<Vec<ProjectRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, workspace_id, name, created_at FROM projects WHERE workspace_id = ?1 ORDER BY created_at, name",
+        )?;
+        let rows = stmt.query_map(params![workspace_id], |row| {
+            Ok(ProjectRecord {
+                id: row.get(0)?,
+                workspace_id: row.get(1)?,
+                name: row.get(2)?,
+                created_at: parse_time(&row.get::<_, String>(3)?),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn rename_project(&self, id: &str, name: &str) -> StoreResult<()> {
+        if name.trim().is_empty() {
+            return Err(StoreError::InvalidId("project name is required".into()));
+        }
+        let changed = self.conn.execute(
+            "UPDATE projects SET name = ?2 WHERE id = ?1",
+            params![id, name.trim()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_project(&self, id: &str) -> StoreResult<()> {
+        if id == "default-project" {
+            return Err(StoreError::InvalidId(
+                "default project cannot be deleted".into(),
+            ));
+        }
+        let changed = self
+            .conn
+            .execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn create_collection(
+        &self,
+        project_id: &str,
+        parent_id: Option<&str>,
+        name: &str,
+    ) -> StoreResult<CollectionRecord> {
+        if name.trim().is_empty() {
+            return Err(StoreError::InvalidId("collection name is required".into()));
+        }
+        if let Some(parent) = parent_id {
+            let valid_parent: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT id FROM collections WHERE id = ?1 AND project_id = ?2",
+                    params![parent, project_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if valid_parent.is_none() {
+                return Err(StoreError::NotFound(parent.into()));
+            }
+        }
+        let sort_order: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM collections WHERE project_id = ?1 AND parent_id IS ?2",
+            params![project_id, parent_id], |row| row.get(0),
+        )?;
+        let record = CollectionRecord {
+            id: Uuid::new_v4().to_string(),
+            project_id: project_id.into(),
+            name: name.trim().into(),
+            parent_id: parent_id.map(Into::into),
+            sort_order,
+            tags: vec![],
+            created_at: Utc::now(),
+        };
+        self.conn.execute(
+            "INSERT INTO collections (id, project_id, name, created_at, parent_id, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![record.id, record.project_id, record.name, record.created_at.to_rfc3339(), record.parent_id, record.sort_order],
+        )?;
+        Ok(record)
+    }
+
+    pub fn list_collections(&self, project_id: &str) -> StoreResult<Vec<CollectionRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_id, name, parent_id, sort_order, created_at, tags_json FROM collections WHERE project_id = ?1 ORDER BY parent_id, sort_order, name",
+        )?;
+        let rows = stmt.query_map(params![project_id], |row| {
+            Ok(CollectionRecord {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                name: row.get(2)?,
+                parent_id: row.get(3)?,
+                sort_order: row.get(4)?,
+                created_at: parse_time(&row.get::<_, String>(5)?),
+                tags: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or_default(),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn update_collection(
+        &self,
+        id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+        sort_order: i64,
+    ) -> StoreResult<()> {
+        if name.trim().is_empty() || parent_id == Some(id) {
+            return Err(StoreError::InvalidId(
+                "invalid collection name or parent".into(),
+            ));
+        }
+        if let Some(parent_id) = parent_id {
+            let mut cursor = parent_id.to_string();
+            let project_id: String = self
+                .conn
+                .query_row(
+                    "SELECT project_id FROM collections WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| StoreError::NotFound(id.into()))?;
+            loop {
+                if cursor == id {
+                    return Err(StoreError::InvalidId(
+                        "collection cycle is not allowed".into(),
+                    ));
+                }
+                let parent: Option<(String, Option<String>)> = self
+                    .conn
+                    .query_row(
+                        "SELECT project_id, parent_id FROM collections WHERE id = ?1",
+                        params![&cursor],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((parent_project, next)) = parent else {
+                    return Err(StoreError::NotFound(cursor));
+                };
+                if parent_project != project_id {
+                    return Err(StoreError::InvalidId(
+                        "parent must belong to the same project".into(),
+                    ));
+                }
+                let Some(next) = next else {
+                    break;
+                };
+                cursor = next;
+            }
+        }
+        let changed = self.conn.execute(
+            "UPDATE collections SET name = ?2, parent_id = ?3, sort_order = ?4 WHERE id = ?1",
+            params![id, name.trim(), parent_id, sort_order.max(0)],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn update_collection_tags(&self, id: &str, tags: &[String]) -> StoreResult<()> {
+        let tags = tags
+            .iter()
+            .map(|tag| tag.trim())
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let changed = self.conn.execute(
+            "UPDATE collections SET tags_json = ?2 WHERE id = ?1",
+            params![id, serde_json::to_string(&tags)?],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_collection(&self, id: &str) -> StoreResult<()> {
+        if id == "default-collection" {
+            return Err(StoreError::InvalidId(
+                "default collection cannot be deleted".into(),
+            ));
+        }
+        let changed = self
+            .conn
+            .execute("DELETE FROM collections WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_request(&self, id: &RequestId) -> StoreResult<()> {
+        let changed = self.conn.execute(
+            "DELETE FROM requests WHERE id = ?1",
+            params![id.0.to_string()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.0.to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn move_request(
+        &self,
+        id: &RequestId,
+        project_id: &str,
+        collection_id: &str,
+    ) -> StoreResult<()> {
+        let collection_project: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT project_id FROM collections WHERE id = ?1",
+                params![collection_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if collection_project.as_deref() != Some(project_id) {
+            return Err(StoreError::InvalidId(
+                "target collection does not belong to project".into(),
+            ));
+        }
+        let changed = self.conn.execute(
+            "UPDATE requests SET project_id = ?2, collection_id = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id.0.to_string(), project_id, collection_id, Utc::now().to_rfc3339()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.0.to_string()));
+        }
         Ok(())
     }
 
@@ -420,8 +816,7 @@ impl LocalStore {
                 created_at.to_rfc3339(),
             ],
         )?;
-        self.get_blob(&id)?
-            .ok_or_else(|| StoreError::NotFound(id))
+        self.get_blob(&id)?.ok_or_else(|| StoreError::NotFound(id))
     }
 
     pub fn read_blob(&self, id: &str) -> StoreResult<Vec<u8>> {
@@ -480,11 +875,11 @@ impl LocalStore {
             .map_err(Into::into)
     }
 
-    fn externalize_http_body(
-        &self,
-        envelope: &mut RequestEnvelope,
-    ) -> StoreResult<Option<String>> {
-        let ProtocolPayload::Http(HttpPayload { body: Some(body), .. }) = &envelope.payload else {
+    fn externalize_http_body(&self, envelope: &mut RequestEnvelope) -> StoreResult<Option<String>> {
+        let ProtocolPayload::Http(HttpPayload {
+            body: Some(body), ..
+        }) = &envelope.payload
+        else {
             return Ok(None);
         };
         if body.len() <= BLOB_THRESHOLD_BYTES {
@@ -850,10 +1245,8 @@ impl LocalStore {
                 preview,
                 response_blob_id,
             ) = row?;
-            let mut request_snapshot: Option<RequestEnvelope> = snapshot
-                .as_deref()
-                .map(serde_json::from_str)
-                .transpose()?;
+            let mut request_snapshot: Option<RequestEnvelope> =
+                snapshot.as_deref().map(serde_json::from_str).transpose()?;
             if let Some(ref mut env) = request_snapshot {
                 self.hydrate_http_body(env, None)?;
             }
@@ -931,10 +1324,8 @@ impl LocalStore {
                     preview,
                     response_blob_id,
                 )| {
-                    let mut request_snapshot: Option<RequestEnvelope> = snapshot
-                        .as_deref()
-                        .map(serde_json::from_str)
-                        .transpose()?;
+                    let mut request_snapshot: Option<RequestEnvelope> =
+                        snapshot.as_deref().map(serde_json::from_str).transpose()?;
                     if let Some(ref mut env) = request_snapshot {
                         self.hydrate_http_body(env, None)?;
                     }
@@ -1004,16 +1395,18 @@ impl LocalStore {
                 },
             )
             .optional()?
-            .map(|(id, project_id, name, variables_json, secret_refs_json, updated_at)| {
-                Ok(EnvironmentRecord {
-                    id,
-                    project_id,
-                    name,
-                    variables: serde_json::from_str(&variables_json)?,
-                    secret_refs: serde_json::from_str(&secret_refs_json)?,
-                    updated_at: parse_time(&updated_at),
-                })
-            })
+            .map(
+                |(id, project_id, name, variables_json, secret_refs_json, updated_at)| {
+                    Ok(EnvironmentRecord {
+                        id,
+                        project_id,
+                        name,
+                        variables: serde_json::from_str(&variables_json)?,
+                        secret_refs: serde_json::from_str(&secret_refs_json)?,
+                        updated_at: parse_time(&updated_at),
+                    })
+                },
+            )
             .transpose()
     }
 
@@ -1048,10 +1441,7 @@ mod tests {
             .expect("save");
         assert_eq!(saved.target, "https://example.com/api");
 
-        let loaded = store
-            .get_request(&req.id)
-            .expect("get")
-            .expect("present");
+        let loaded = store.get_request(&req.id).expect("get").expect("present");
         assert_eq!(loaded.envelope.target, req.target);
         assert_eq!(loaded.envelope.name, "sample");
 
@@ -1106,6 +1496,7 @@ mod tests {
             method: "POST".into(),
             headers: vec![],
             body: Some(large.clone()),
+            multipart: vec![],
             follow_redirects: true,
         });
         let saved = store
@@ -1147,5 +1538,122 @@ mod tests {
             .expect("filter");
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].state, "failed");
+
+        let large_response = "r".repeat(BLOB_THRESHOLD_BYTES + 32);
+        let response_record = ExecutionRecord {
+            id: Uuid::new_v4().to_string(),
+            request_id: req.id.0.to_string(),
+            protocol_id: "http".into(),
+            state: "completed".into(),
+            status: Some(200),
+            duration_ms: 2,
+            bytes_received: large_response.len() as u64,
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+            request_snapshot: None,
+            preview: Some(large_response.clone()),
+            response_blob_id: None,
+        };
+        store
+            .record_execution(&response_record)
+            .expect("record response blob");
+        let hydrated = store.get_execution(&response_record.id).unwrap().unwrap();
+        let response_blob_id = hydrated.response_blob_id.expect("response blob id");
+        assert_eq!(
+            store.read_blob(&response_blob_id).unwrap(),
+            large_response.as_bytes()
+        );
+    }
+
+    #[test]
+    fn workspace_crud_archive_and_recent_order() {
+        let store = LocalStore::open_in_memory().unwrap();
+        let first = store.create_workspace("First", None).unwrap();
+        let second = store
+            .create_workspace("Second", Some("C:/api".into()))
+            .unwrap();
+        store.rename_workspace(&first.id, "Renamed").unwrap();
+        store.archive_workspace(&second.id, true).unwrap();
+        assert!(
+            store
+                .list_workspaces()
+                .unwrap()
+                .iter()
+                .find(|item| item.id == second.id)
+                .unwrap()
+                .archived
+        );
+        store.archive_workspace(&second.id, false).unwrap();
+        store.touch_workspace(&first.id).unwrap();
+        assert_eq!(store.list_workspaces().unwrap()[0].id, first.id);
+        store.create_project(&second.id, "Nested").unwrap();
+        store.delete_workspace(&second.id).unwrap();
+        assert!(store.get_workspace(&second.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn collection_tags_are_persisted_and_normalized() {
+        let store = LocalStore::open_in_memory().unwrap();
+        let collection = store
+            .create_collection("default-project", None, "Tagged")
+            .unwrap();
+        store
+            .update_collection_tags(&collection.id, &[" smoke ".into(), "api".into(), "".into()])
+            .unwrap();
+        let saved = store
+            .list_collections("default-project")
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == collection.id)
+            .unwrap();
+        assert_eq!(saved.tags, vec!["smoke", "api"]);
+    }
+
+    #[test]
+    fn project_collection_and_request_crud() {
+        let store = LocalStore::open_in_memory().expect("open");
+        let project = store
+            .create_project("default-workspace", "Payments")
+            .expect("project");
+        let root = store
+            .create_collection(&project.id, None, "API")
+            .expect("root");
+        let child = store
+            .create_collection(&project.id, Some(&root.id), "Auth")
+            .expect("child");
+        assert_eq!(store.list_projects("default-workspace").unwrap().len(), 2);
+        assert_eq!(store.list_collections(&project.id).unwrap().len(), 2);
+
+        store
+            .rename_project(&project.id, "Billing")
+            .expect("rename project");
+        store
+            .update_collection(&child.id, "Login", None, 3)
+            .expect("move collection");
+        let moved = store
+            .list_collections(&project.id)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == child.id)
+            .unwrap();
+        assert_eq!(moved.name, "Login");
+        assert!(moved.parent_id.is_none());
+
+        let request = RequestEnvelope::http_get("health", "https://example.com/health");
+        store
+            .save_request(&request, &project.id, &root.id)
+            .expect("save request");
+        assert_eq!(store.list_requests(Some(&root.id)).unwrap().len(), 1);
+        store
+            .move_request(&request.id, &project.id, &child.id)
+            .expect("move request");
+        assert!(store.list_requests(Some(&root.id)).unwrap().is_empty());
+        assert_eq!(store.list_requests(Some(&child.id)).unwrap().len(), 1);
+        store.delete_request(&request.id).expect("delete request");
+        assert!(store.list_requests(Some(&root.id)).unwrap().is_empty());
+        store
+            .delete_collection(&child.id)
+            .expect("delete collection");
+        store.delete_project(&project.id).expect("delete project");
     }
 }

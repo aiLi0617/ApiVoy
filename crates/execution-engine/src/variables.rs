@@ -106,6 +106,7 @@ pub fn resolve_request(
         ProtocolPayload::Http(HttpPayload {
             headers,
             body,
+            multipart,
             method: _,
             follow_redirects: _,
         }) => {
@@ -115,6 +116,67 @@ pub fn resolve_request(
             }
             if let Some(b) = body.as_mut() {
                 *b = resolve_template(b, &vars)?;
+            }
+            for part in multipart {
+                part.name = resolve_template(&part.name, &vars)?;
+                if !part.base64 {
+                    part.value = resolve_template(&part.value, &vars)?;
+                }
+                if let Some(file_name) = &mut part.file_name {
+                    *file_name = resolve_template(file_name, &vars)?;
+                }
+                if let Some(content_type) = &mut part.content_type {
+                    *content_type = resolve_template(content_type, &vars)?;
+                }
+            }
+        }
+        ProtocolPayload::Sse(payload) => {
+            for (name, value) in &mut payload.headers {
+                *name = resolve_template(name, &vars)?;
+                *value = resolve_template(value, &vars)?;
+            }
+            if let Some(value) = &mut payload.last_event_id {
+                *value = resolve_template(value, &vars)?;
+            }
+        }
+        ProtocolPayload::Tcp(payload) => {
+            payload.data = resolve_template(&payload.data, &vars)?;
+            if let Some(value) = &mut payload.delimiter {
+                *value = resolve_template(value, &vars)?;
+            }
+            if let Some(value) = &mut payload.server_name {
+                *value = resolve_template(value, &vars)?;
+            }
+            if let Some(value) = &mut payload.ca_cert_ref {
+                *value = resolve_template(value, &vars)?;
+            }
+        }
+        ProtocolPayload::Udp(payload) => {
+            payload.data = resolve_template(&payload.data, &vars)?;
+        }
+        ProtocolPayload::Graphql(payload) => {
+            payload.query = resolve_template(&payload.query, &vars)?;
+            for (name, value) in &mut payload.headers {
+                *name = resolve_template(name, &vars)?;
+                *value = resolve_template(value, &vars)?;
+            }
+        }
+        ProtocolPayload::Websocket(payload) => {
+            for (name, value) in &mut payload.headers {
+                *name = resolve_template(name, &vars)?;
+                *value = resolve_template(value, &vars)?;
+            }
+            for message in &mut payload.messages {
+                message.data = resolve_template(&message.data, &vars)?;
+            }
+        }
+        ProtocolPayload::Grpc(payload) => {
+            for (name, value) in &mut payload.metadata {
+                *name = resolve_template(name, &vars)?;
+                *value = resolve_template(value, &vars)?;
+            }
+            if let Some(value) = &mut payload.message_json {
+                *value = resolve_template(value, &vars)?;
             }
         }
         ProtocolPayload::Raw(_) => {}
@@ -130,7 +192,9 @@ mod tests {
     #[test]
     fn resolves_nested_scopes_and_dynamics() {
         let mut scope = VariableScope::default();
-        scope.environment.insert("host".into(), "example.com".into());
+        scope
+            .environment
+            .insert("host".into(), "example.com".into());
         scope.request.insert("path".into(), "users".into());
         let out = scope
             .resolve_template("https://{{host}}/{{path}}?t={{$timestamp}}")
@@ -155,6 +219,7 @@ mod tests {
             method: "GET".into(),
             headers: vec![("X-Token".into(), "{{token}}".into())],
             body: None,
+            multipart: vec![],
             follow_redirects: true,
         });
         let mut scope = VariableScope::default();

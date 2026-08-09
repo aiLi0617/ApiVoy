@@ -80,11 +80,16 @@ impl SecretStore {
         self.kind
     }
 
-    pub fn put_ref(&self, name: impl Into<String>, value: impl Into<String>) -> Result<(), SecretError> {
+    pub fn put_ref(
+        &self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<(), SecretError> {
         let name = name.into();
         let value = value.into();
         if self.kind == SecretBackendKind::Keychain {
-            let entry = Entry::new(SERVICE, &name).map_err(|e| SecretError::Keychain(e.to_string()))?;
+            let entry =
+                Entry::new(SERVICE, &name).map_err(|e| SecretError::Keychain(e.to_string()))?;
             entry
                 .set_password(&value)
                 .map_err(|e| SecretError::Keychain(e.to_string()))?;
@@ -102,7 +107,8 @@ impl SecretStore {
             }
         }
         if self.kind == SecretBackendKind::Keychain {
-            let entry = Entry::new(SERVICE, name).map_err(|e| SecretError::Keychain(e.to_string()))?;
+            let entry =
+                Entry::new(SERVICE, name).map_err(|e| SecretError::Keychain(e.to_string()))?;
             match entry.get_password() {
                 Ok(value) => {
                     let mut guard = self.cache.write().map_err(|_| SecretError::LockPoisoned)?;
@@ -118,7 +124,8 @@ impl SecretStore {
 
     pub fn delete(&self, name: &str) -> Result<(), SecretError> {
         if self.kind == SecretBackendKind::Keychain {
-            let entry = Entry::new(SERVICE, name).map_err(|e| SecretError::Keychain(e.to_string()))?;
+            let entry =
+                Entry::new(SERVICE, name).map_err(|e| SecretError::Keychain(e.to_string()))?;
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => {}
                 Err(err) => return Err(SecretError::Keychain(err.to_string())),

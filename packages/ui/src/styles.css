@@ -1,15 +1,20 @@
 :root {
-  --apivoy-bg: #0f1419;
-  --apivoy-bg-elevated: #1a222c;
-  --apivoy-border: #2a3542;
-  --apivoy-text: #e7eef7;
-  --apivoy-muted: #8b9bb0;
-  --apivoy-accent: #3d9cf0;
+  --apivoy-bg: #090d13;
+  --apivoy-bg-elevated: #121923;
+  --apivoy-border: #263140;
+  --apivoy-text: #edf4fc;
+  --apivoy-muted: #8c9bae;
+  --apivoy-accent: #56adf5;
   --apivoy-accent-soft: rgba(61, 156, 240, 0.14);
   --apivoy-success: #3ecf8e;
   --apivoy-danger: #f07178;
   --apivoy-font: "IBM Plex Sans", "Segoe UI", sans-serif;
   --apivoy-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+@keyframes apivoy-panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 * {
@@ -19,7 +24,25 @@
 body {
   margin: 0;
   font-family: var(--apivoy-font);
-  background: radial-gradient(1200px 600px at 10% -10%, #1b2a3a 0%, transparent 55%),
-    radial-gradient(900px 500px at 100% 0%, #172433 0%, transparent 50%), var(--apivoy-bg);
+  background: radial-gradient(900px 520px at 60% -20%, rgba(38, 103, 162, .22), transparent 62%), var(--apivoy-bg);
   color: var(--apivoy-text);
+}
+
+button, input, textarea, select { transition: border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease; }
+input:focus, textarea:focus, select:focus { border-color: var(--apivoy-accent) !important; box-shadow: 0 0 0 3px rgba(86,173,245,.12); }
+button:not(:disabled):active { transform: translateY(1px); }
+button:disabled { opacity: .45; cursor: not-allowed !important; }
+.nav-item:hover, .icon-button:hover { color: var(--apivoy-text) !important; background: rgba(255,255,255,.045) !important; }
+.nav-item-active { color: var(--apivoy-text) !important; background: var(--apivoy-accent-soft) !important; box-shadow: inset 2px 0 var(--apivoy-accent); }
+.tree-row:hover { background: rgba(255,255,255,.045) !important; }
+.apivoy-workbench > div { min-width: 0; }
+.apivoy-workbench code { color: #9dcbf4; }
+small { display: block; color: var(--apivoy-muted); margin-top: 2px; }
+
+@media (max-width: 760px) {
+  .apivoy-shell aside { display: none !important; }
+  .apivoy-shell header { padding: 10px 14px !important; }
+  .apivoy-shell header > div:first-child > div:last-child > div:last-child { display: none; }
+  .apivoy-shell main { padding: 20px 14px 36px !important; }
+  .apivoy-workbench > div { grid-template-columns: 1fr !important; }
 }

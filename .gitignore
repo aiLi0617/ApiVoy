@@ -29,6 +29,7 @@ coverage/
 # Tauri / local
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/WixTools/
+apps/desktop/src-tauri/binaries/
 *.local
 
 # Extracted doc scratch

@@ -9,6 +9,7 @@
     "build:web": "pnpm --filter @apivoy/web build",
     "dev:desktop": "pnpm --filter @apivoy/desktop tauri:dev",
     "build:desktop": "pnpm --filter @apivoy/desktop tauri:build",
+    "prepare:sidecar": "node scripts/prepare-sidecar.mjs",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",

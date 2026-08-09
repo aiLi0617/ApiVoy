@@ -10,11 +10,12 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 
-use crate::{
-    apply_auth, run_assertions, AssertionContext, DriverError, EngineError, LifecycleHook,
-    LifecyclePhase, NoopLifecycleHook, ProtocolDriver, VariableScope,
-};
 use crate::variables::resolve_request;
+use crate::{
+    apply_auth, run_assertions, run_post_scripts, run_pre_scripts, AssertionContext, DriverError,
+    EngineError, LifecycleHook, LifecyclePhase, NoopLifecycleHook, ProtocolDriver, ScriptResponse,
+    VariableScope,
+};
 
 pub struct ExecutionEngine {
     drivers: HashMap<String, Arc<dyn ProtocolDriver>>,
@@ -168,6 +169,36 @@ async fn run_driver(
 ) -> Result<ExecutionSummary, EngineError> {
     lifecycle.on_phase(LifecyclePhase::BeforeRequest).await;
 
+    let request = if request.pre_scripts.is_empty() {
+        request
+    } else {
+        sink.emit(ExecutionEvent::StateChanged {
+            state: ExecutionState::Running,
+            phase: Some(ExecutionPhase::PreScript),
+        })
+        .await;
+        match run_pre_scripts(request).await {
+            Ok(result) => {
+                for message in result.logs {
+                    sink.emit(ExecutionEvent::Log {
+                        level: "info".into(),
+                        message: format!("[pre-script] {message}"),
+                    })
+                    .await;
+                }
+                result.request
+            }
+            Err(error) => {
+                sink.emit(ExecutionEvent::Failed {
+                    code: "script_error".into(),
+                    message: error.to_string(),
+                })
+                .await;
+                return Err(EngineError::Script(error));
+            }
+        }
+    };
+
     sink.emit(ExecutionEvent::StateChanged {
         state: ExecutionState::Running,
         phase: Some(ExecutionPhase::Resolve),
@@ -193,7 +224,7 @@ async fn run_driver(
         }
     };
 
-    let request = match apply_auth(request, &scope) {
+    let mut request = match apply_auth(request, &scope).await {
         Ok(req) => req,
         Err(err) => {
             sink.emit(ExecutionEvent::Failed {
@@ -210,6 +241,7 @@ async fn run_driver(
             return Err(EngineError::Auth(err));
         }
     };
+    request.runtime_secrets = scope.secrets.clone();
 
     lifecycle.on_phase(LifecyclePhase::BuildRequest).await;
 
@@ -269,6 +301,48 @@ async fn run_driver(
                 .map_err(|e| EngineError::Driver(DriverError::Internal(e.to_string())))?;
 
             lifecycle.on_phase(LifecyclePhase::ReceiveComplete).await;
+            if !request.post_scripts.is_empty() {
+                sink.emit(ExecutionEvent::StateChanged {
+                    state: ExecutionState::Running,
+                    phase: Some(ExecutionPhase::PostScript),
+                })
+                .await;
+                let response = ScriptResponse {
+                    status: summary
+                        .status
+                        .or_else(|| meta.as_ref().and_then(|value| value.status)),
+                    headers: meta
+                        .as_ref()
+                        .map(|value| value.headers.iter().cloned().collect())
+                        .unwrap_or_default(),
+                    body: body.clone(),
+                    duration_ms: summary.duration_ms,
+                    bytes_received: summary.bytes_received,
+                };
+                match run_post_scripts(request.clone(), response).await {
+                    Ok(result) => {
+                        for message in result.logs {
+                            sink.emit(ExecutionEvent::Log {
+                                level: "info".into(),
+                                message: format!("[post-script] {message}"),
+                            })
+                            .await;
+                        }
+                        sink.emit(ExecutionEvent::VariablesExtracted {
+                            variables: result.variables,
+                        })
+                        .await;
+                    }
+                    Err(error) => {
+                        sink.emit(ExecutionEvent::Failed {
+                            code: "script_error".into(),
+                            message: error.to_string(),
+                        })
+                        .await;
+                        return Err(EngineError::Script(error));
+                    }
+                }
+            }
             lifecycle.on_phase(LifecyclePhase::RunAssertions).await;
 
             if !request.assertions.is_empty() {
@@ -279,11 +353,10 @@ async fn run_driver(
                 .await;
 
                 let ctx = AssertionContext {
-                    status: summary.status.or_else(|| meta.as_ref().and_then(|m| m.status)),
-                    headers: meta
-                        .as_ref()
-                        .map(|m| m.headers.clone())
-                        .unwrap_or_default(),
+                    status: summary
+                        .status
+                        .or_else(|| meta.as_ref().and_then(|m| m.status)),
+                    headers: meta.as_ref().map(|m| m.headers.clone()).unwrap_or_default(),
                     body,
                     duration_ms: summary.duration_ms,
                     bytes_received: summary.bytes_received,
@@ -309,8 +382,7 @@ async fn run_driver(
                 .map_err(|e| EngineError::Driver(DriverError::Internal(e.to_string())))?;
             let code = err.code().to_string();
             let message = err.message();
-            sink.emit(ExecutionEvent::Failed { code, message })
-                .await;
+            sink.emit(ExecutionEvent::Failed { code, message }).await;
             sink.emit(ExecutionEvent::StateChanged {
                 state: ExecutionState::Failed,
                 phase: None,
@@ -380,6 +452,7 @@ mod tests {
                     content_type: Some("text/plain".into()),
                     size: 2,
                     preview: Some("ok".into()),
+                    data_base64: None,
                     done: true,
                 })
                 .await;
@@ -457,7 +530,12 @@ mod tests {
             cancel: CancellationToken,
             _execution_id: ExecutionId,
         ) -> Result<ExecutionSummary, DriverError> {
-            if let Some(tx) = self.started.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            if let Some(tx) = self
+                .started
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+            {
                 let _ = tx.send(());
             }
             cancel.cancelled().await;
@@ -519,13 +597,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn emits_variables_extracted_by_post_script() {
+        let mut engine = ExecutionEngine::new();
+        engine.register(Arc::new(MockOkDriver));
+        let mut request = mock_request();
+        request.post_scripts = vec!["variables.nextId = response.body;".into()];
+        let (_, _, events) = engine.execute_collect(request).await.expect("ok");
+        assert!(events.iter().any(|event| matches!(event, ExecutionEvent::VariablesExtracted { variables } if variables.get("nextId").map(String::as_str) == Some("ok"))));
+    }
+
+    #[tokio::test]
     async fn resolves_variables_before_send() {
         let mut engine = ExecutionEngine::new();
         engine.register(Arc::new(MockOkDriver));
         let mut req = mock_request();
         req.target = "https://{{host}}/ping".into();
         let mut scope = VariableScope::default();
-        scope.environment.insert("host".into(), "example.com".into());
+        scope
+            .environment
+            .insert("host".into(), "example.com".into());
         let (_, _, events) = engine
             .execute_collect_with_scope(req, scope)
             .await
@@ -567,7 +657,10 @@ mod tests {
             events.push(event);
         }
         let result = handle.await.expect("join").expect_err("should fail");
-        assert!(matches!(result, EngineError::Driver(DriverError::Timeout(_))));
+        assert!(matches!(
+            result,
+            EngineError::Driver(DriverError::Timeout(_))
+        ));
 
         assert!(
             events.iter().any(|e| matches!(

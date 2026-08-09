@@ -4,33 +4,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Assertion {
-    StatusEquals {
-        expected: u16,
-    },
-    StatusIn {
-        expected: Vec<u16>,
-    },
-    DurationLt {
-        max_ms: u64,
-    },
-    SizeLt {
-        max_bytes: u64,
-    },
-    HeaderEquals {
-        name: String,
-        expected: String,
-    },
-    HeaderContains {
-        name: String,
-        expected: String,
-    },
-    BodyContains {
-        expected: String,
-    },
-    JsonPathEquals {
-        path: String,
-        expected: String,
-    },
+    StatusEquals { expected: u16 },
+    StatusIn { expected: Vec<u16> },
+    DurationLt { max_ms: u64 },
+    SizeLt { max_bytes: u64 },
+    HeaderEquals { name: String, expected: String },
+    HeaderContains { name: String, expected: String },
+    BodyContains { expected: String },
+    JsonPathEquals { path: String, expected: String },
 }
 
 impl Assertion {

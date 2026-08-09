@@ -1,0 +1,22 @@
+[package]
+name = "driver-websocket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Built-in WebSocket protocol driver"
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+core-domain = { workspace = true }
+event-stream = { workspace = true }
+execution-engine = { workspace = true }
+futures = { workspace = true }
+http = "1"
+tokio = { workspace = true }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }

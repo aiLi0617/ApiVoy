@@ -1,0 +1,19 @@
+package apivoy:plugin@0.1.0;
+
+/// Minimal host-independent transformer surface. Plugins receive no WASI imports
+/// unless a future host version explicitly grants and links a capability.
+world transformer {
+  export transform: func(input: string) -> string;
+}
+
+world protocol {
+  export execute: func(request-json: string) -> string;
+}
+
+world auth {
+  export apply-auth: func(request-json: string) -> string;
+}
+
+world importer {
+  export import: func(document: string) -> string;
+}

@@ -11,8 +11,16 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+csv = "1"
 driver-http = { workspace = true }
+driver-sse = { workspace = true }
+driver-tcp-udp = { workspace = true }
+driver-graphql = { workspace = true }
+driver-websocket = { workspace = true }
+driver-grpc = { workspace = true }
+core-domain = { workspace = true }
 execution-engine = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
 tracing = { workspace = true }

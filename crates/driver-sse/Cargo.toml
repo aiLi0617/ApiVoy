@@ -1,0 +1,21 @@
+[package]
+name = "driver-sse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Built-in Server-Sent Events protocol driver"
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+core-domain = { workspace = true }
+event-stream = { workspace = true }
+execution-engine = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }

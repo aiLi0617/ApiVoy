@@ -55,6 +55,9 @@ pub struct RequestEnvelope {
     /// Request-scoped variables (highest precedence after dynamic tokens).
     #[serde(default)]
     pub variables: HashMap<String, String>,
+    /// Ephemeral secret material supplied by the execution host. Never serialized.
+    #[serde(skip)]
+    pub runtime_secrets: HashMap<String, String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -76,12 +79,14 @@ impl RequestEnvelope {
                 method: "GET".into(),
                 headers: vec![],
                 body: None,
+                multipart: vec![],
                 follow_redirects: true,
             }),
             pre_scripts: vec![],
             post_scripts: vec![],
             assertions: vec![],
             variables: HashMap::new(),
+            runtime_secrets: HashMap::new(),
             created_at: Utc::now(),
         }
     }
@@ -91,7 +96,134 @@ impl RequestEnvelope {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProtocolPayload {
     Http(HttpPayload),
+    Sse(SsePayload),
+    Tcp(SocketPayload),
+    Udp(UdpPayload),
+    Graphql(GraphqlPayload),
+    Websocket(WebSocketPayload),
+    Grpc(GrpcPayload),
     Raw(Value),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SsePayload {
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub last_event_id: Option<String>,
+    #[serde(default)]
+    pub reconnect_max: u32,
+    #[serde(default = "default_sse_reconnect_delay")]
+    pub reconnect_delay_ms: u64,
+}
+
+fn default_sse_reconnect_delay() -> u64 {
+    1_000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SocketPayload {
+    pub data: String,
+    #[serde(default = "default_text_encoding")]
+    pub encoding: String,
+    #[serde(default)]
+    pub framing: Option<String>,
+    #[serde(default)]
+    pub delimiter: Option<String>,
+    #[serde(default)]
+    pub fixed_length: Option<usize>,
+    #[serde(default = "default_send_count")]
+    pub send_count: u32,
+    #[serde(default)]
+    pub interval_ms: u64,
+    #[serde(default)]
+    pub tls: bool,
+    #[serde(default)]
+    pub server_name: Option<String>,
+    #[serde(default)]
+    pub ca_cert_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpPayload {
+    pub data: String,
+    #[serde(default = "default_text_encoding")]
+    pub encoding: String,
+    #[serde(default = "default_send_count")]
+    pub send_count: u32,
+    #[serde(default)]
+    pub interval_ms: u64,
+}
+
+fn default_text_encoding() -> String {
+    "text".into()
+}
+fn default_send_count() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphqlPayload {
+    pub query: String,
+    #[serde(default)]
+    pub variables: Value,
+    #[serde(default)]
+    pub operation_name: Option<String>,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSocketPayload {
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub subprotocols: Vec<String>,
+    #[serde(default)]
+    pub messages: Vec<WebSocketMessage>,
+    #[serde(default)]
+    pub receive_limit: Option<usize>,
+    #[serde(default)]
+    pub reconnect_max: u32,
+    #[serde(default = "default_websocket_reconnect_delay")]
+    pub reconnect_delay_ms: u64,
+}
+
+fn default_websocket_reconnect_delay() -> u64 {
+    1_000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSocketMessage {
+    #[serde(default = "default_text_encoding")]
+    pub encoding: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcPayload {
+    pub service: String,
+    pub method: String,
+    pub message_base64: String,
+    #[serde(default = "default_grpc_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub metadata: Vec<(String, String)>,
+    #[serde(default)]
+    pub descriptor_set_base64: Option<String>,
+    #[serde(default)]
+    pub message_json: Option<String>,
+}
+
+fn default_grpc_mode() -> String {
+    "unary".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,14 +232,29 @@ pub struct HttpPayload {
     pub method: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<String>,
+    #[serde(default)]
+    pub multipart: Vec<MultipartPart>,
     pub follow_redirects: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultipartPart {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub base64: bool,
 }
 
 /// Request authentication reference. Secrets are stored by name in `secret-store`;
 /// this struct never carries plaintext credentials.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRef {
-    /// `none` | `bearer` | `basic` | `api_key`
+    /// `none` | `bearer` | `basic` | `api_key` | `oauth2_client_credentials`
     pub kind: String,
     /// Secret store ref for bearer token, basic password, or API key value.
     #[serde(default)]
@@ -118,6 +265,25 @@ pub struct AuthRef {
     /// API Key header name (default `X-Api-Key`).
     #[serde(default)]
     pub header_name: Option<String>,
+    /// OAuth 2.0 token endpoint.
+    #[serde(default)]
+    pub token_url: Option<String>,
+    /// Space-delimited OAuth scopes.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Optional OAuth audience/resource identifier.
+    #[serde(default)]
+    pub audience: Option<String>,
+    /// OAuth authorization endpoint (used by clients to start the browser flow).
+    #[serde(default)]
+    pub authorization_url: Option<String>,
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
+    /// Keychain refs for the short-lived authorization code and PKCE verifier.
+    #[serde(default)]
+    pub authorization_code_ref: Option<String>,
+    #[serde(default)]
+    pub code_verifier_ref: Option<String>,
 }
 
 impl AuthRef {
@@ -127,6 +293,13 @@ impl AuthRef {
             secret_ref: Some(secret_ref.into()),
             username: None,
             header_name: None,
+            token_url: None,
+            scope: None,
+            audience: None,
+            authorization_url: None,
+            redirect_uri: None,
+            authorization_code_ref: None,
+            code_verifier_ref: None,
         }
     }
 
@@ -136,6 +309,13 @@ impl AuthRef {
             secret_ref: Some(password_secret_ref.into()),
             username: Some(username.into()),
             header_name: None,
+            token_url: None,
+            scope: None,
+            audience: None,
+            authorization_url: None,
+            redirect_uri: None,
+            authorization_code_ref: None,
+            code_verifier_ref: None,
         }
     }
 
@@ -145,6 +325,33 @@ impl AuthRef {
             secret_ref: Some(secret_ref.into()),
             username: None,
             header_name: Some(header_name.into()),
+            token_url: None,
+            scope: None,
+            audience: None,
+            authorization_url: None,
+            redirect_uri: None,
+            authorization_code_ref: None,
+            code_verifier_ref: None,
+        }
+    }
+
+    pub fn oauth2_client_credentials(
+        client_id: impl Into<String>,
+        client_secret_ref: impl Into<String>,
+        token_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: "oauth2_client_credentials".into(),
+            secret_ref: Some(client_secret_ref.into()),
+            username: Some(client_id.into()),
+            header_name: None,
+            token_url: Some(token_url.into()),
+            scope: None,
+            audience: None,
+            authorization_url: None,
+            redirect_uri: None,
+            authorization_code_ref: None,
+            code_verifier_ref: None,
         }
     }
 }

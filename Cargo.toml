@@ -6,6 +6,12 @@ members = [
   "crates/secret-store",
   "crates/execution-engine",
   "crates/driver-http",
+  "crates/driver-sse",
+  "crates/driver-tcp-udp",
+  "crates/driver-graphql",
+  "crates/driver-websocket",
+  "crates/driver-grpc",
+  "crates/plugin-runtime",
   "crates/local-store",
   "apps/desktop/src-tauri",
   "apps/local-agent",
@@ -26,12 +32,14 @@ repository = "https://github.com/apivoy/apivoy"
 
 [workspace.dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "http2", "cookies", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -44,6 +52,12 @@ event-stream = { path = "crates/event-stream" }
 secret-store = { path = "crates/secret-store" }
 execution-engine = { path = "crates/execution-engine" }
 driver-http = { path = "crates/driver-http" }
+driver-sse = { path = "crates/driver-sse" }
+driver-tcp-udp = { path = "crates/driver-tcp-udp" }
+driver-graphql = { path = "crates/driver-graphql" }
+driver-websocket = { path = "crates/driver-websocket" }
+driver-grpc = { path = "crates/driver-grpc" }
+plugin-runtime = { path = "crates/plugin-runtime" }
 local-store = { path = "crates/local-store" }
 
 [profile.release]

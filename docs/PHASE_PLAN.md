@@ -1,7 +1,7 @@
 # ApiVoy 阶段计划与缺口对照
 
 > 基于 PRD V1.1、技术架构 V1.0，以及 2026-08-05 品牌与技术定稿。  
-> 对照日期：2026-08-05（代码库现状快照）。
+> 对照日期：2026-08-09（代码库现状快照）。
 
 ---
 
@@ -35,8 +35,8 @@
 | CLI 烟测 | `apivoy-cli http-get` / `drivers` |
 | Local Agent | `127.0.0.1:39217`；Bearer Token；Origin 限 `localhost:5180` |
 | Desktop（Tauri） | `http_get` / `cancel_execution` / `list_drivers` |
-| Web 工作台 | 经 Agent 调试 HTTP GET |
-| 共享 UI 壳 | `@apivoy/ui`：`AppShell` + `HttpWorkbench`（GET-only） |
+| Web 工作台 | 经 Agent 调试 HTTP，支持方法/Header/Body/认证/变量/断言/历史 |
+| 共享 UI 壳 | `@apivoy/ui`：`AppShell` + `HttpWorkbench`，Desktop/Web 共用 |
 | TS 请求模型镜像 | `@apivoy/request-model`（手写，协议 ID 类型已预留） |
 | 生命周期枚举预留 | `LifecyclePhase` + `NoopLifecycleHook` |
 | ADR | Tauri、双二进制、WASM-only 插件 |
@@ -44,7 +44,7 @@
 ### 2.2 端到端现状（唯一通路）
 
 ```text
-URL（GET only）
+HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
   → Desktop Tauri / Web→Agent / CLI
   → ExecutionEngine → HttpDriver → reqwest
   → 摘要 + 正文预览（≤4KB）
@@ -68,23 +68,23 @@ URL（GET only）
 
 | 编号 | 模块 | PRD | 定稿阶段 | 现状 | 缺口摘要 |
 |------|------|-----|----------|------|----------|
-| F-001 | 工作区与项目 | P0 | P0 | 🟡 | 默认 workspace/project/collection；无搜索/归档/多工作区 UI |
-| F-002 | 集合与目录 | P0 | P0 | 🟡 | 默认 collection + 请求保存；无树形/拖拽/标签 |
-| F-003 | 统一请求编辑器 | P0 | P0 | 🟡 | HTTP method/headers/body/auth/变量/断言；非 HTTP 协议编辑器属 M2 |
-| F-004 | 请求执行 | P0 | P0 | 🟡 | HTTP 可发可取消 + 正式执行 API；缺重试/代理/TLS UI/Cookie |
-| F-005 | 响应工作台 | P0 | P0 | 🟡 | 摘要+预览；缺格式化/Hex/表格/时间线/虚拟列表（M3/M4） |
+| F-001 | 工作区与项目 | P0 | P0 | ✅ | 工作区/项目 CRUD、搜索、切换、归档与恢复、最近访问排序及 Web/Desktop 共享资源树均已实现 |
+| F-002 | 集合与目录 | P0 | P0 | ✅ | 嵌套集合树、搜索、CRUD、标签、拖拽归类与同级拖拽排序、请求批量移动/删除均已实现 |
+| F-003 | 统一请求编辑器 | P0 | P0 | ✅ | HTTP/SSE/TCP/UDP/GraphQL/WebSocket/gRPC 七协议双端编辑器、变量、认证、断言及协议专属配置均已实现 |
+| F-004 | 请求执行 | P0 | P0 | ✅ | HTTP 可发可取消；重试/代理/TLS 校验/重定向、Cookie Jar 可视化管理、文本/文件 multipart、Keychain 合并 PEM 客户端证书均已接入 |
+| F-005 | 响应工作台 | P0 | P0 | ✅ | 分块接收、64MB 正文 Blob、Headers、JSON 美化/原文/Hex/表格、完整执行事件时间线、万字符窗口化大响应渲染、复制与下载均已实现 |
 | F-006 | 环境与变量 | P0 | P0 | ✅ | 多级作用域 + `{{var}}`；Desktop/Agent 环境持久化 |
 | F-007 | 机密管理 | P0 | P0 | ✅ | Keychain + secret_ref；导出扫描属 M3 |
-| F-008 | 认证 | P0 | P0 | 🟡 | Basic/Bearer/API Key 完成；OAuth/TLS 客户端证书后置 |
-| F-009 | 前后置脚本 | P0 | **P1** | ⏭ | 生命周期钩子已预留；无 QuickJS |
+| F-008 | 认证 | P0 | P0 | ✅ | Basic/Bearer/API Key、OAuth 2.0 Client Credentials、Authorization Code + PKCE S256 浏览器授权（授权码/verifier 仅进入 Keychain/Agent secret-store）及不落盘的 TLS 客户端证书均已完成 |
+| F-009 | 前后置脚本 | P0 | **P1** | ✅ | QuickJS 前/后置脚本、request/response/variables/console/assert/crypto API、16MB 内存与 500ms 超时限制、HTTP 双端编辑器、变量提取事件及 Agent/Desktop/CLI 跨请求持久化已实现 |
 | F-010 | 断言与测试 | P0 | P0 | ✅ | 内置状态码/耗时/大小/Header/JSONPath/文本包含 |
 | F-011 | 历史与重放 | P0 | P0 | ✅ | 本地历史、筛选、对比、重放（Desktop + Agent/Web） |
-| F-012 | 导入导出 | P0 | P0 | ❌ | 无 OpenAPI/cURL/HAR/Postman；无敏感扫描 |
-| F-013 | 代码生成 | P1 | P1 | ❌ | — |
-| F-014 | 集合运行器 | P1 | P1 | ❌ | CLI 仅 http-get，无集合运行 |
-| F-015 | Mock 服务 | P1 | P1 | ❌ | — |
+| F-012 | 导入导出 | P0 | P0 | ✅ | cURL、OpenAPI JSON/YAML、HAR、Postman v2 与 ApiVoy 项目包已接入；支持 OpenAPI 内部及跨文件 `$ref`、循环检测、Schema 请求示例、server variables 与 Postman variables 映射，文件夹/tag/page 映射子集合及敏感扫描 |
+| F-013 | 代码生成 | P1 | P1 | ✅ | HTTP 工作台支持 cURL、JavaScript Fetch、Python Requests、Go net/http、Rust reqwest、Java HttpClient；GraphQL/gRPC/WebSocket/SSE/TCP/UDP 均有专用生成器，并开放 HTTP 与协议模板注册/卸载插件点 |
+| F-014 | 集合运行器 | P1 | P1 | ✅ | CLI 支持 RequestEnvelope/ApiVoy 项目集合、顺序/并发、失败即停、跨请求变量、JSON/CSV 数据迭代、JSON/JUnit 报告和结构化退出码；Desktop 支持当前集合运行、失败即停与断言报告 |
+| F-015 | Mock 服务 | P1 | P1 | ✅ | Agent HTTP/WebSocket Mock、规则 CRUD/持久化、确定性优先级/方法精确度匹配、Status/Header/Body、连接消息/回显、延迟、周期错误注入及 Web/Desktop 管理入口均已实现 |
 | F-016 | 团队协作 | P1 | **P2** | ⏭ | `collaboration-server` 仅 README |
-| F-017 | 插件中心 | P1 | P1 | ❌ | `plugins/sdk` 仅 README |
+| F-017 | 插件中心 | P1 | P1 | ✅ | Wasmtime Component-only 宿主、Transformer/Protocol/Auth/Importer 专用 WIT 入口、权限校验、SHA-256、防篡改、Ed25519 发布者信任链、内存/fuel 限制、Agent/Desktop 安装/启停/卸载/按类型调用 API 与 Web/Desktop 插件中心已实现 |
 | F-018 | AI 辅助 | P2 | P2 | ❌ | — |
 | F-019 | 流量代理抓包 | P2 | P2 | ❌ | — |
 | F-020 | 私有化部署 | P2 | P2 | ❌ | — |
@@ -93,13 +93,13 @@ URL（GET only）
 
 | 协议 | 现状 | 缺口 |
 |------|------|------|
-| HTTP/HTTPS | ✅ Driver + 烟测通路 | 完整编辑器、Cookie、代理/TLS UI、OpenAPI 导入、流式 UI |
-| WebSocket | ❌ | `driver-websocket`；连接/帧时间线/重连 |
-| SSE | ❌ | `driver-sse`；Last-Event-ID、增量渲染 |
-| GraphQL | ❌ | Query/Mutation/Variables；订阅依赖 WS |
-| gRPC | ❌ | Proto/反射；Unary + 三类 Streaming |
-| TCP | ❌ | 文本/Hex、分帧、TLS |
-| UDP | ❌ | 文本/Hex、编码、定时发送 |
+| HTTP/HTTPS | ✅ Driver + 双端工作台 | 编辑器、自动 Cookie Jar 与双端管理、multipart、代理/TLS/客户端证书 UI、OpenAPI 导入、事件级实时响应 UI 与响应持久化已实现 |
+| WebSocket | ✅ Driver + 双端工作台 | ws/wss、Text/Binary、子协议、自定义 Header、Ping/Pong、取消、自动重连、响应持久化，以及 Web/Desktop 原生持久连接后的多次交互发送与双向帧时间线均已实现 |
+| SSE | ✅ Driver + 双端工作台 | 强类型载荷、事件级增量 UI、流式接收、取消、Last-Event-ID、服务端 retry、可配置自动重连、变量/认证和响应持久化已实现 |
+| GraphQL | ✅ Driver + 双端工作台 | Query/Mutation/WS Subscription、Variables、operationName、自定义 Header、Schema Introspection/类型浏览、Monaco 语法高亮与关键字补全、GraphQL errors 提示、取消与历史持久化均已实现 |
+| gRPC | ✅ Driver + 双端工作台 | 通用 protobuf Base64、HTTP/2、Unary/Server/Client/Bidi 四类流、Metadata、FileDescriptorSet 导入、Server Reflection 自动描述符发现、JSON↔Protobuf、取消与响应持久化均已实现 |
+| TCP | ✅ Driver + 双端工作台 | 文本/Hex、固定长度/分隔符分帧、系统根/自定义 CA TLS、SNI、定时重复发送、超时、取消、响应持久化，以及经配对 Token 保护的 Agent 持久 TCP 交互桥接均已实现 |
+| UDP | ✅ Driver + 双端工作台 | 文本/Hex、重复/定时发送、接收超时、取消和响应持久化已实现 |
 
 > P1 协议（MQTT/AMQP/Kafka/Redis/SQL/SOAP…）与 P2/插件协议均未开始，符合分期。
 
@@ -108,34 +108,34 @@ URL（GET only）
 | 模块（架构 §5 / §8–12） | 现状 | 目标阶段 |
 |-------------------------|------|----------|
 | SQLite 本地库（workspace/request/history…） | ✅ | P0-M0/M1 |
-| Agent 正式 API（pair/session/executions + SSE） | ✅ | P0-M0（+ env/history/request） |
+| Agent 正式 API（executions + SSE + env/history/request） | ✅ | 执行闭环、长期配对 Token → 8 小时 session Token 交换、过期清理及 TCP 会话桥接鉴权均已实现 |
 | Desktop ↔ Agent 版本握手 | ✅ `protocol_api_version: "1"` | P0-M0 |
-| Desktop 捆绑 Agent sidecar | ❌ | P0 后期 / P1 |
+| Desktop 捆绑 Agent sidecar | ✅ | 构建钩子按 Rust host triple 自动编译、重命名并通过 Tauri `externalBin` 捆绑 `apivoy-agent` |
 | OS Keychain 接入 | ✅ | P0-M1 |
 | 变量解析 + 内置断言 | ✅ | P0-M1 |
-| 导入导出包 `packages/import-export` | ❌ | P0-M3 |
-| Monaco / 命令面板 / i18n | ❌ | P0 UI |
+| 导入导出包 `packages/import-export` | ✅ | 已实现 JSON/YAML 格式识别、四类导入、内部/外部 `$ref`、Schema 示例、环境变量映射、层级映射、项目包导出与敏感扫描 |
+| Monaco / 命令面板 / i18n | 🟡 | 离线本地 Monaco 已用于 HTTP Body、QuickJS、GraphQL/JSON；Ctrl/⌘+K、协议标签工作台、语言资源运行时、中文/英文持久化切换及核心导航翻译已实现；待迁移各工作台全部细粒度文案 |
 | TanStack Query + Zustand 分层 | ❌ 未引入 | P0 UI |
-| `plugin-runtime` + Wasmtime | ❌ | P1 |
-| QuickJS 脚本 | ❌ | P1 |
+| `plugin-runtime` + Wasmtime | ✅ | Component-only 四类插件宿主、权限与资源限制、Ed25519 签名校验、双端插件中心已接入 |
+| QuickJS 脚本 | ✅ | 受限运行时、request/response/variables/console/assert/crypto API、HTTP 双端编辑器和跨请求变量数据链已接入 |
 | Java 协作微服务拆分 | ❌ README | P2 |
 | 云协议网关 `protocol-gateway` | ❌ | P2 |
-| CI：三平台构建 / E2E / SBOM | ❌ | 随里程碑补齐 |
+| CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、全工作区测试、Clippy、RustSec、CycloneDX SBOM 与 tag 草稿发布；待补真实安装/升级/卸载和浏览器 E2E 冒烟 |
 
 ### 3.4 MVP 验收标准（AC）对照
 
 | 编号 | 验收条件 | 现状 |
 |------|----------|------|
-| AC-01 | 三平台安装/升级/卸载一致 | ❌ 无发布流水线 |
-| AC-02 | Web 完成 HTTP/GraphQL/WS + 安全连 Agent | 🟡 仅 HTTP GET + Token |
-| AC-03 | 七协议创建/保存/发送/取消/响应/历史 | ❌ 仅 HTTP 发送/取消 |
-| AC-04 | 变量、Secret、认证、脚本、断言复用 | 🟡 变量/Secret/认证/断言已通；脚本定稿延后 P1 |
-| AC-05 | OpenAPI/cURL/HAR/Postman + 敏感检测 | ❌（M3） |
-| AC-06 | gRPC 四类流；TCP/UDP 文本+Hex；WS 双帧 | ❌（M2） |
-| AC-07 | 10MB/长流不冻 UI；可取消 | 🟡 内核可取消；UI 未虚拟化（M3） |
-| AC-08 | Secret 不明文落盘/日志/导出 | 🟡 Keychain + secret_ref；导出扫描属 M3 |
-| AC-09 | 异常退出数据完整 + 草稿恢复 | 🟡 请求/环境/历史已持久化；草稿恢复属 M3 |
-| AC-10 | 单测/集成/E2E/安全/安装冒烟 | 🟡 少量 Rust 测试 |
+| AC-01 | 三平台安装/升级/卸载一致 | 🟡 三平台 Tauri + Agent/CLI 发布流水线和完整平台图标已建立；待 CI 实机验证安装、升级、卸载 |
+| AC-02 | Web 完成 HTTP/GraphQL/WS + 安全连 Agent | ✅ HTTP/GraphQL/WS 正式执行通路与配对 Bearer Token 已完成 |
+| AC-03 | 七协议创建/保存/发送/取消/响应/历史 | ✅ Web/Desktop 七协议保存、资源树按协议恢复、发送/取消、响应持久化与统一历史回放均已贯通 |
+| AC-04 | 变量、Secret、认证、脚本、断言复用 | ✅ 变量/Secret/五类认证/QuickJS 前后置脚本/断言已贯通 |
+| AC-05 | OpenAPI/cURL/HAR/Postman + 敏感检测 | ✅ 四类导入与 Header/Query/Body 敏感检测已完成 |
+| AC-06 | gRPC 四类流；TCP/UDP 文本+Hex；WS 双帧 | ✅ gRPC 四类流批次/逐帧编解码、TCP/UDP Text+Hex、WS Text/Binary 均已实现 |
+| AC-07 | 10MB/长流不冻 UI；可取消 | ✅ 内核可取消、正文外置 Blob、事件增量接收与万字符窗口渲染已完成 |
+| AC-08 | Secret 不明文落盘/日志/导出 | ✅ Keychain/Agent secret-store + runtime secret + 导出敏感扫描已完成 |
+| AC-09 | 异常退出数据完整 + 草稿恢复 | ✅ 请求/环境/历史已持久化；HTTP、GraphQL、gRPC、WebSocket、SSE、TCP/UDP 工作台草稿均自动保存并在重启后恢复，损坏草稿自动丢弃 |
+| AC-10 | 单测/集成/E2E/安全/安装冒烟 | 🟡 Rust/TS 单测、真实浏览器 UI 冒烟、三平台 CI、Clippy、RustSec 与 SBOM 已建立；待把浏览器冒烟固化为 CI 用例并完成三平台安装生命周期验证 |
 
 ---
 
@@ -275,10 +275,10 @@ P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 /
 | 主题 | 交付 | 依赖 |
 |------|------|------|
 | QuickJS 脚本 | 挂载同一生命周期；受控 API（request/response/variables/crypto/assert） | M1 生命周期 |
-| WASM 插件 | Wasmtime + WIT；Protocol/Auth/Importer 示例；权限模型 | ADR-0003 |
+| WASM 插件 | ✅ Wasmtime + 四类专用 WIT、权限模型、Ed25519 信任链与插件中心均已实现 | ADR-0003 |
 | 协议扩展 | MQTT、AMQP、Kafka、Redis、SQL、SOAP/JSON-RPC | Driver SPI 稳定 |
-| Mock | HTTP/WS 规则、延迟、错误注入 | 本地执行层 |
-| 集合运行器 | 顺序/并发、数据驱动、失败策略、报告；CI 示例 | CLI + 断言 |
+| Mock | 🟡 HTTP 规则、延迟、周期错误注入与 Web 管理台已完成；待补 WS、持久化和高级匹配 | 本地执行层 |
+| 集合运行器 | ✅ CLI 支持 RequestEnvelope/ApiVoy 项目 JSON、顺序/并发、失败即停、跨请求变量、JSON/CSV 数据迭代及 JSON/JUnit 报告；Desktop 提供集合报告页 | CLI + 断言 |
 | 代码生成 | 多语言片段 + 模板插件点 | 请求模型稳定 |
 | Desktop sidecar | 可选捆绑 `apivoy-agent` | 版本握手 |
 
