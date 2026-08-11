@@ -1,0 +1,47 @@
+package dev.apivoy.collaboration;
+
+import com.fasterxml.jackson.databind.*;
+import org.junit.jupiter.api.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@SpringBootTest(properties={"apivoy.bootstrap-token=test-bootstrap","spring.datasource.url=jdbc:h2:mem:collaboration;DB_CLOSE_DELAY=-1","spring.jpa.hibernate.ddl-auto=create-drop"})
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class CollaborationApiTests {
+    @Autowired MockMvc mvc; @Autowired ObjectMapper json;
+    @Autowired AuditRepository audits; @Autowired ChangeRepository changes; @Autowired WorkspaceRepository workspaces; @Autowired SessionRepository sessions; @Autowired MembershipRepository memberships; @Autowired OrganizationRepository organizations; @Autowired UserRepository users;
+    @BeforeEach void clean(){audits.deleteAll();changes.deleteAll();workspaces.deleteAll();sessions.deleteAll();memberships.deleteAll();organizations.deleteAll();users.deleteAll();}
+
+    @Test void bootstrapProvisionSyncConflictRbacAndAudit() throws Exception {
+        JsonNode owner=body(mvc.perform(post("/v1/auth/bootstrap").header("X-ApiVoy-Bootstrap-Token","test-bootstrap").contentType(MediaType.APPLICATION_JSON).content("""
+          {"email":"owner@apivoy.dev","password":"correct-horse-battery","displayName":"Owner","organizationName":"Voyagers","deviceName":"test"}
+        """)).andExpect(status().isOk()).andReturn());
+        String ownerToken=owner.get("token").asText(), organizationId=owner.get("organizationId").asText();
+
+        mvc.perform(post("/v1/organizations/{id}/members/provision",organizationId).header("Authorization","Bearer "+ownerToken).contentType(MediaType.APPLICATION_JSON).content("""
+          {"email":"viewer@apivoy.dev","password":"viewer-password","displayName":"Viewer","role":"VIEWER"}
+        """)).andExpect(status().isCreated()).andExpect(jsonPath("$.role").value("VIEWER"));
+        JsonNode viewer=body(mvc.perform(post("/v1/auth/login").contentType(MediaType.APPLICATION_JSON).content("""
+          {"email":"viewer@apivoy.dev","password":"viewer-password","deviceName":"browser"}
+        """)).andExpect(status().isOk()).andReturn());
+        String viewerToken=viewer.get("token").asText();
+
+        mvc.perform(put("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+ownerToken).contentType(MediaType.APPLICATION_JSON).content("""
+          {"baseRevision":0,"document":{"requests":[{"id":"r1"}]},"patch":{"op":"replace","path":"/requests"}}
+        """)).andExpect(status().isOk()).andExpect(jsonPath("$.revision").value(1));
+        mvc.perform(get("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken)).andExpect(status().isOk()).andExpect(jsonPath("$.document.requests[0].id").value("r1"));
+        mvc.perform(put("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).contentType(MediaType.APPLICATION_JSON).content("{"+"\"baseRevision\":1,\"document\":{},\"patch\":{}"+"}")).andExpect(status().isForbidden());
+        mvc.perform(put("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+ownerToken).contentType(MediaType.APPLICATION_JSON).content("{"+"\"baseRevision\":0,\"document\":{},\"patch\":{}"+"}")).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("revision_conflict")).andExpect(jsonPath("$.currentRevision").value(1));
+        mvc.perform(get("/v1/organizations/{org}/workspaces/{workspace}/changes",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).param("afterRevision","0")).andExpect(status().isOk()).andExpect(jsonPath("$[0].revision").value(1));
+        mvc.perform(get("/v1/organizations/{org}/audit",organizationId).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk()).andExpect(jsonPath("$[?(@.action == 'workspace.sync')]").exists());
+        mvc.perform(get("/v1/organizations/{org}/audit",organizationId).header("Authorization","Bearer "+viewerToken)).andExpect(status().isForbidden());
+    }
+    private JsonNode body(org.springframework.test.web.servlet.MvcResult result)throws Exception{return json.readTree(result.getResponse().getContentAsString());}
+}

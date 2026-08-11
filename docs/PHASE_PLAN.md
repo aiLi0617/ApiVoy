@@ -83,7 +83,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | F-013 | 代码生成 | P1 | P1 | ✅ | HTTP 工作台支持 cURL、JavaScript Fetch、Python Requests、Go net/http、Rust reqwest、Java HttpClient；GraphQL/gRPC/WebSocket/SSE/TCP/UDP 均有专用生成器，并开放 HTTP 与协议模板注册/卸载插件点 |
 | F-014 | 集合运行器 | P1 | P1 | ✅ | CLI 支持 RequestEnvelope/ApiVoy 项目集合、顺序/并发、失败即停、跨请求变量、JSON/CSV 数据迭代、JSON/JUnit 报告和结构化退出码；Desktop 支持当前集合运行、失败即停与断言报告 |
 | F-015 | Mock 服务 | P1 | P1 | ✅ | Agent HTTP/WebSocket Mock、规则 CRUD/持久化、确定性优先级/方法精确度匹配、Status/Header/Body、连接消息/回显、延迟、周期错误注入及 Web/Desktop 管理入口均已实现 |
-| F-016 | 团队协作 | P1 | **P2** | ⏭ | `collaboration-server` 仅 README |
+| F-016 | 团队协作 | P1 | **P2** | 🟡 | Java 21 / Spring Boot 3 协作服务与双端 Team 工作台已落地首个纵向切片：Owner 引导、设备会话、组织成员、五级 RBAC、工作区 revision/增量同步、冲突合并 UI 与审计；待本地资源树自动映射、SSO 和实时推送 |
 | F-017 | 插件中心 | P1 | P1 | ✅ | Wasmtime Component-only 宿主、Transformer/Protocol/Auth/Importer 专用 WIT 入口、权限校验、SHA-256、防篡改、Ed25519 发布者信任链、内存/fuel 限制、Agent/Desktop 安装/启停/卸载/按类型调用 API 与 Web/Desktop 插件中心已实现 |
 | F-018 | AI 辅助 | P2 | P2 | ❌ | — |
 | F-019 | 流量代理抓包 | P2 | P2 | ❌ | — |
@@ -118,7 +118,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | TanStack Query + Zustand 分层 | ❌ 未引入 | P0 UI |
 | `plugin-runtime` + Wasmtime | ✅ | Component-only 四类插件宿主、权限与资源限制、Ed25519 签名校验、双端插件中心已接入 |
 | QuickJS 脚本 | ✅ | 受限运行时、request/response/variables/console/assert/crypto API、HTTP 双端编辑器和跨请求变量数据链已接入 |
-| Java 协作微服务拆分 | ❌ README | P2 |
+| Java 协作微服务拆分 | 🟡 | 可部署单体已覆盖 identity/workspace/sync/audit，支持 H2 本地与 PostgreSQL/Docker 私有化；mock/automation 拆分及 SSO 待后续切片 |
 | 云协议网关 `protocol-gateway` | ❌ | P2 |
 | CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、全工作区测试、Clippy、RustSec、CycloneDX SBOM 与 tag 草稿发布；待补真实安装/升级/卸载和浏览器 E2E 冒烟 |
 
