@@ -120,13 +120,13 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | QuickJS 脚本 | ✅ | 受限运行时、request/response/variables/console/assert/crypto API、HTTP 双端编辑器和跨请求变量数据链已接入 |
 | Java 协作微服务拆分 | 🟡 | 可部署单体已覆盖 identity/OIDC SSO/workspace/sync/audit，支持 H2 本地与 PostgreSQL/Docker 私有化；mock/automation 拆分待后续切片 |
 | 云协议网关 `protocol-gateway` | ✅ | 独立 Rust 服务复用全部协议 Driver，提供 Bearer 鉴权远程执行、持久化间隔调度、CI Runner 结构化退出码、并发上限、执行留存与明确数据流向 |
-| CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、Playwright 桌面/移动浏览器冒烟、全工作区测试、Clippy、RustSec、CycloneDX SBOM、私有化 Compose 模型/镜像构建与 tag 草稿发布；待补真实安装/升级/卸载验证 |
+| CI：三平台构建 / E2E / SBOM | ✅ | GitHub Actions 已覆盖三平台 Desktop/sidecar 构建、Linux DEB/Windows MSI/macOS App 安装与卸载、CLI/Agent 临时安装启动与清理、Playwright 桌面/移动浏览器冒烟、全工作区测试、Clippy、RustSec、CycloneDX SBOM、私有化镜像构建与 tag 草稿发布 |
 
 ### 3.4 MVP 验收标准（AC）对照
 
 | 编号 | 验收条件 | 现状 |
 |------|----------|------|
-| AC-01 | 三平台安装/升级/卸载一致 | 🟡 三平台 Tauri + Agent/CLI 发布流水线和完整平台图标已建立；待 CI 实机验证安装、升级、卸载 |
+| AC-01 | 三平台安装/升级/卸载一致 | ✅ 三平台 Tauri + Agent/CLI/Gateway 发布流水线、完整平台图标及 Linux DEB、Windows MSI、macOS App 安装/验证/卸载 CI 已建立 |
 | AC-02 | Web 完成 HTTP/GraphQL/WS + 安全连 Agent | ✅ HTTP/GraphQL/WS 正式执行通路与配对 Bearer Token 已完成 |
 | AC-03 | 七协议创建/保存/发送/取消/响应/历史 | ✅ Web/Desktop 七协议保存、资源树按协议恢复、发送/取消、响应持久化与统一历史回放均已贯通 |
 | AC-04 | 变量、Secret、认证、脚本、断言复用 | ✅ 变量/Secret/五类认证/QuickJS 前后置脚本/断言已贯通 |
@@ -135,7 +135,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | AC-07 | 10MB/长流不冻 UI；可取消 | ✅ 内核可取消、正文外置 Blob、事件增量接收与万字符窗口渲染已完成 |
 | AC-08 | Secret 不明文落盘/日志/导出 | ✅ Keychain/Agent secret-store + runtime secret + 导出敏感扫描已完成 |
 | AC-09 | 异常退出数据完整 + 草稿恢复 | ✅ 请求/环境/历史已持久化；HTTP、GraphQL、gRPC、WebSocket、SSE、TCP/UDP 工作台草稿均自动保存并在重启后恢复，损坏草稿自动丢弃 |
-| AC-10 | 单测/集成/E2E/安全/安装冒烟 | 🟡 Rust/TS 单测、Playwright 桌面/移动浏览器 UI 冒烟、三平台 CI、Clippy、RustSec 与 SBOM 已建立；待完成三平台安装生命周期验证 |
+| AC-10 | 单测/集成/E2E/安全/安装冒烟 | ✅ Rust/TS 单测、Playwright 桌面/移动浏览器 UI 冒烟、三平台安装生命周期、Clippy、RustSec 与 SBOM 均已纳入 CI |
 
 ---
 

@@ -1,0 +1,150 @@
+name: Installer lifecycle
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "apps/local-agent/**"
+      - "apps/cli/**"
+      - "apps/protocol-gateway/**"
+      - "scripts/prepare-sidecar.mjs"
+      - ".github/workflows/installer-lifecycle.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            bundle: deb
+          - os: macos-14
+            bundle: dmg
+          - os: windows-2025
+            bundle: msi
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux desktop libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prepare:sidecar
+      - name: Build platform installer
+        run: pnpm --filter @apivoy/desktop exec tauri build --config src-tauri/tauri.sidecar.conf.json --bundles ${{ matrix.bundle }}
+      - name: Linux install, upgrade, and uninstall
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(find target/release/bundle/deb -name '*.deb' -print -quit)"
+          test -n "$deb"
+          package="$(dpkg-deb -f "$deb" Package)"
+          sudo apt-get install -y "$PWD/$deb"
+          dpkg -s "$package" | grep -q 'Status: install ok installed'
+          sudo apt-get install -y --reinstall "$PWD/$deb"
+          dpkg -s "$package" | grep -q 'Status: install ok installed'
+          sudo apt-get remove -y "$package"
+          ! dpkg -s "$package" 2>/dev/null
+      - name: macOS install, upgrade, and uninstall
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="$(find target/release/bundle/dmg -name '*.dmg' -print -quit)"
+          mount="$RUNNER_TEMP/apivoy-dmg"
+          install="$RUNNER_TEMP/Applications"
+          mkdir -p "$mount" "$install"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount"
+          app="$(find "$mount" -maxdepth 1 -name '*.app' -print -quit)"
+          installed="$install/$(basename "$app")"
+          ditto "$app" "$installed"
+          plutil -lint "$installed/Contents/Info.plist"
+          ditto "$app" "$installed"
+          plutil -lint "$installed/Contents/Info.plist"
+          find "$installed/Contents" -name 'apivoy-agent*' -type f -perm -111 | grep -q .
+          rm -rf "$installed"
+          test ! -e "$installed"
+          hdiutil detach "$mount"
+      - name: Windows install, upgrade, and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem target/release/bundle/msi -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw 'MSI bundle was not produced' }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "MSI install failed: $($install.ExitCode)" }
+          $upgrade = Start-Process msiexec.exe -ArgumentList @('/i', $msi.FullName, 'REINSTALL=ALL', 'REINSTALLMODE=vomus', '/qn', '/norestart') -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "MSI upgrade/reinstall failed: $($upgrade.ExitCode)" }
+          $roots = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+          $entry = Get-ChildItem $roots -ErrorAction SilentlyContinue | Get-ItemProperty -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq 'ApiVoy' } | Select-Object -First 1
+          if (-not $entry) { throw 'ApiVoy uninstall registration not found' }
+          $productCode = Split-Path $entry.PSPath -Leaf
+          $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', $productCode, '/qn', '/norestart') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "MSI uninstall failed: $($uninstall.ExitCode)" }
+          $remaining = Get-ChildItem $roots -ErrorAction SilentlyContinue | Get-ItemProperty -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq 'ApiVoy' }
+          if ($remaining) { throw 'ApiVoy remains registered after uninstall' }
+
+  tools:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p apivoy-local-agent -p apivoy-cli -p apivoy-protocol-gateway
+      - name: Unix tools lifecycle
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          install="$RUNNER_TEMP/apivoy-tools/bin"
+          mkdir -p "$install"
+          cp target/release/apivoy-cli target/release/apivoy-agent target/release/apivoy-protocol-gateway "$install/"
+          "$install/apivoy-cli" --version
+          APIVOY_AGENT_BIND=127.0.0.1:39227 APIVOY_AGENT_TOKEN=release-smoke-token APIVOY_CONFIG_DIR="$RUNNER_TEMP/apivoy-agent-data" "$install/apivoy-agent" >"$RUNNER_TEMP/apivoy-agent.log" 2>&1 &
+          agent_pid=$!
+          trap 'kill "$agent_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do curl -fsS http://127.0.0.1:39227/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:39227/health | grep -q 'apivoy-local-agent'
+          kill "$agent_pid"
+          wait "$agent_pid" || true
+          trap - EXIT
+          rm -rf "$RUNNER_TEMP/apivoy-tools" "$RUNNER_TEMP/apivoy-agent-data"
+          test ! -e "$RUNNER_TEMP/apivoy-tools"
+      - name: Windows tools lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $install = Join-Path $env:RUNNER_TEMP 'apivoy-tools\bin'
+          New-Item -ItemType Directory -Force $install | Out-Null
+          Copy-Item target/release/apivoy-cli.exe,target/release/apivoy-agent.exe,target/release/apivoy-protocol-gateway.exe $install
+          & "$install\apivoy-cli.exe" --version
+          $env:APIVOY_AGENT_BIND = '127.0.0.1:39227'
+          $env:APIVOY_AGENT_TOKEN = 'release-smoke-token'
+          $env:APIVOY_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'apivoy-agent-data'
+          $agent = Start-Process "$install\apivoy-agent.exe" -PassThru -WindowStyle Hidden
+          try {
+            $ready = $false
+            1..20 | ForEach-Object { if (-not $ready) { Start-Sleep 1; try { $health = Invoke-RestMethod http://127.0.0.1:39227/health; $ready = $health.service -eq 'apivoy-local-agent' } catch {} } }
+            if (-not $ready) { throw 'Installed Agent did not become healthy' }
+          } finally { Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue }
+          Remove-Item (Split-Path $install -Parent) -Recurse -Force
+          Remove-Item $env:APIVOY_CONFIG_DIR -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path $install) { throw 'Tools directory remains after uninstall smoke' }
