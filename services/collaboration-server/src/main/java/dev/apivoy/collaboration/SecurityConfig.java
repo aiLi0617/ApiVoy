@@ -3,6 +3,7 @@ package dev.apivoy.collaboration;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 import org.springframework.context.annotation.*;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -21,7 +22,13 @@ import java.util.List;
 @Configuration
 class SecurityConfig {
     @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
-    @Bean SecurityFilterChain security(HttpSecurity http, SessionRepository sessions) throws Exception {
+    @Bean @ConditionalOnProperty(name="apivoy.sso.enabled",havingValue="false",matchIfMissing=true) SecurityFilterChain security(HttpSecurity http, SessionRepository sessions) throws Exception {
+        return base(http,sessions,false).build();
+    }
+    @Bean @ConditionalOnProperty(name="apivoy.sso.enabled",havingValue="true") SecurityFilterChain ssoSecurity(HttpSecurity http,SessionRepository sessions,SsoSuccessHandler successHandler)throws Exception {
+        return base(http,sessions,true).oauth2Login(login->login.successHandler(successHandler)).build();
+    }
+    private HttpSecurity base(HttpSecurity http,SessionRepository sessions,boolean oidc) throws Exception {
         var filter = new OncePerRequestFilter() {
             @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
                 String value = request.getHeader("Authorization");
@@ -29,7 +36,7 @@ class SecurityConfig {
                 chain.doFilter(request, response);
             }
         };
-        return http.csrf(csrf -> csrf.disable()).cors(cors -> {}).sessionManagement(session -> session.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS)).authorizeHttpRequests(auth -> auth.requestMatchers("/v1/auth/**", "/actuator/health").permitAll().anyRequest().authenticated()).addFilterBefore(filter, org.springframework.security.web.authentication.AnonymousAuthenticationFilter.class).build();
+        return http.csrf(csrf -> csrf.disable()).cors(cors -> {}).sessionManagement(session -> session.sessionCreationPolicy(oidc?org.springframework.security.config.http.SessionCreationPolicy.IF_REQUIRED:org.springframework.security.config.http.SessionCreationPolicy.STATELESS)).authorizeHttpRequests(auth -> auth.requestMatchers("/v1/auth/**","/oauth2/**","/login/oauth2/**", "/actuator/health").permitAll().anyRequest().authenticated()).addFilterBefore(filter, org.springframework.security.web.authentication.AnonymousAuthenticationFilter.class);
     }
     @Bean CorsConfigurationSource corsConfigurationSource(@Value("${apivoy.allowed-origins}") String origins) {
         var configuration = new CorsConfiguration();

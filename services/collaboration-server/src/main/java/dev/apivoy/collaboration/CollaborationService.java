@@ -13,14 +13,30 @@ import java.util.*;
 
 @Service
 class CollaborationService {
-    private final UserRepository users; private final OrganizationRepository organizations; private final MembershipRepository memberships; private final SessionRepository sessions; private final WorkspaceRepository workspaces; private final ChangeRepository changes; private final AuditRepository audits; private final CommentRepository comments; private final PasswordEncoder passwords; private final ObjectMapper json; private final WorkspaceEventHub events; private final String bootstrapToken;
-    CollaborationService(UserRepository users, OrganizationRepository organizations, MembershipRepository memberships, SessionRepository sessions, WorkspaceRepository workspaces, ChangeRepository changes, AuditRepository audits, CommentRepository comments, PasswordEncoder passwords, ObjectMapper json, WorkspaceEventHub events, @Value("${apivoy.bootstrap-token}") String bootstrapToken) { this.users=users; this.organizations=organizations; this.memberships=memberships; this.sessions=sessions; this.workspaces=workspaces; this.changes=changes; this.audits=audits; this.comments=comments; this.passwords=passwords; this.json=json; this.events=events; this.bootstrapToken=bootstrapToken; }
+    private final UserRepository users; private final FederatedIdentityRepository identities; private final OrganizationRepository organizations; private final MembershipRepository memberships; private final SessionRepository sessions; private final WorkspaceRepository workspaces; private final ChangeRepository changes; private final AuditRepository audits; private final CommentRepository comments; private final PasswordEncoder passwords; private final ObjectMapper json; private final WorkspaceEventHub events; private final String bootstrapToken;
+    CollaborationService(UserRepository users, FederatedIdentityRepository identities, OrganizationRepository organizations, MembershipRepository memberships, SessionRepository sessions, WorkspaceRepository workspaces, ChangeRepository changes, AuditRepository audits, CommentRepository comments, PasswordEncoder passwords, ObjectMapper json, WorkspaceEventHub events, @Value("${apivoy.bootstrap-token}") String bootstrapToken) { this.users=users; this.identities=identities; this.organizations=organizations; this.memberships=memberships; this.sessions=sessions; this.workspaces=workspaces; this.changes=changes; this.audits=audits; this.comments=comments; this.passwords=passwords; this.json=json; this.events=events; this.bootstrapToken=bootstrapToken; }
 
     @Transactional AuthResult bootstrap(String supplied, String email, String password, String displayName, String organizationName, String deviceName) {
         if (!Objects.equals(bootstrapToken, supplied) || users.count() > 0) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "bootstrap is unavailable");
         validatePassword(password); var user=users.save(new UserAccount(normalizeEmail(email), displayName.trim(), passwords.encode(password))); var organization=organizations.save(new Organization(organizationName.trim())); memberships.save(new Membership(organization.id, user.id, Role.OWNER)); audit(organization.id,user.id,"organization.bootstrap","organization",organization.id,"{}"); return session(user,deviceName,organization.id,Role.OWNER);
     }
     @Transactional AuthResult login(String email,String password,String deviceName) { var user=users.findByEmailIgnoreCase(normalizeEmail(email)).orElseThrow(() -> unauthorized()); if(!passwords.matches(password,user.passwordHash)) throw unauthorized(); var membership=memberships.findByUserId(user.id).stream().findFirst().orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,"no organization membership")); return session(user,deviceName,membership.organizationId,membership.role); }
+    @Transactional AuthResult ssoLogin(String provider,String subject,String email,boolean emailVerified,String displayName,String organizationId,Role defaultRole,String deviceName) {
+        if(!emailVerified) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"OIDC provider did not verify the email address");
+        if(defaultRole==Role.OWNER||defaultRole==Role.ADMIN) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"SSO default role cannot grant administrative access");
+        var organization=organizations.findById(organizationId).orElseThrow(()->new ResponseStatusException(HttpStatus.FORBIDDEN,"SSO organization is unavailable"));
+        String normalized=normalizeEmail(email);
+        var identity=identities.findByProviderAndSubject(provider,subject).orElse(null);
+        UserAccount user;
+        if(identity!=null) user=users.findById(identity.userId).orElseThrow(()->new ResponseStatusException(HttpStatus.UNAUTHORIZED,"federated identity is invalid"));
+        else {
+            user=users.findByEmailIgnoreCase(normalized).orElseGet(()->users.save(new UserAccount(normalized,displayName==null||displayName.isBlank()?normalized:displayName.trim(),passwords.encode(UUID.randomUUID().toString()+UUID.randomUUID()))));
+            identities.save(new FederatedIdentity(provider,subject,user.id));
+        }
+        var membership=memberships.findByOrganizationIdAndUserId(organization.id,user.id).orElseGet(()->memberships.save(new Membership(organization.id,user.id,defaultRole)));
+        audit(organization.id,user.id,"auth.sso","federated_identity",provider,"{\"provider\":\""+provider+"\"}");
+        return session(user,deviceName,organization.id,membership.role);
+    }
     @Transactional void logout(String rawToken) { sessions.findByTokenHashAndRevokedAtIsNullAndExpiresAtAfter(SecurityConfig.hash(rawToken),Instant.now()).ifPresent(value -> value.revokedAt=Instant.now()); }
     List<OrganizationView> organizations(String userId) { return memberships.findByUserId(userId).stream().map(m -> { var org=organizations.findById(m.organizationId).orElseThrow(); return new OrganizationView(org.id,org.name,m.role); }).toList(); }
     List<MemberView> members(String actor,String organizationId) { require(actor,organizationId,Role.VIEWER); return memberships.findAll().stream().filter(m->m.organizationId.equals(organizationId)).map(m->{var u=users.findById(m.userId).orElseThrow(); return new MemberView(u.id,u.email,u.displayName,m.role);}).toList(); }

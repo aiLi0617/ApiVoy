@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.*;
 
 interface UserRepository extends JpaRepository<UserAccount, String> { Optional<UserAccount> findByEmailIgnoreCase(String email); }
+interface FederatedIdentityRepository extends JpaRepository<FederatedIdentity, String> { Optional<FederatedIdentity> findByProviderAndSubject(String provider, String subject); }
 interface OrganizationRepository extends JpaRepository<Organization, String> {}
 interface MembershipRepository extends JpaRepository<Membership, String> {
     Optional<Membership> findByOrganizationIdAndUserId(String organizationId, String userId);

@@ -17,6 +17,20 @@ class UserAccount {
     UserAccount(String email, String displayName, String passwordHash) { this.email = email; this.displayName = displayName; this.passwordHash = passwordHash; }
 }
 
+@Entity @Table(name = "federated_identities", uniqueConstraints = {
+    @UniqueConstraint(columnNames = {"provider", "subject"}),
+    @UniqueConstraint(columnNames = {"provider", "userId"})
+})
+class FederatedIdentity {
+    @Id String id = UUID.randomUUID().toString();
+    @Column(nullable = false) String provider;
+    @Column(nullable = false) String subject;
+    @Column(nullable = false) String userId;
+    @Column(nullable = false) Instant createdAt = Instant.now();
+    protected FederatedIdentity() {}
+    FederatedIdentity(String provider, String subject, String userId) { this.provider=provider; this.subject=subject; this.userId=userId; }
+}
+
 @Entity @Table(name = "organizations")
 class Organization {
     @Id String id = UUID.randomUUID().toString();

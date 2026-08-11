@@ -14,6 +14,7 @@ import {
   WorkbenchDeck,
   TeamWorkbench,
   CommentsWorkbench,
+  SsoWorkbench,
   exportTeamSnapshot,
   restoreTeamSnapshot,
   WorkspaceExplorer,
@@ -203,7 +204,7 @@ export function App() {
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId, parentId, name: segment }); id = created.id; paths.set(key, id); } parentId = id; } await invoke("save_request", { request: toInvokeRequest({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }), projectId, collectionId: parentId }); } await refreshTree(); }}
       onExportProject={async (project) => { const items = tree?.requests.filter((item) => item.projectId === project.id) ?? []; return Promise.all(items.map(async (item) => { const stored = await invoke<StoredRequest | null>("get_request", { id: item.id }); const request = stored ? fromEnvelope(stored.envelope, stored.target) : null; return { name: item.name, method: request?.method ?? item.method ?? "GET", url: request?.url ?? item.target, headers: Object.fromEntries(request?.headers ?? []), body: request?.body }; })); }}
       onDeleteRequest={async (id) => { await invoke("delete_request", { id }); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }} />}>
-      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "plugins", label: "Plugins" }, { id: "mock", label: "Mock" }, { id: "runner", label: "Runner" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }]}>
+      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "plugins", label: "Plugins" }, { id: "mock", label: "Mock" }, { id: "runner", label: "Runner" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }, { id: "sso", label: "SSO" }]}>
       <HttpWorkbench
         externalRequest={externalRequest}
         onSend={async (request, hooks) => {
@@ -413,6 +414,7 @@ export function App() {
       <CollectionRunner collectionId={selectedCollectionId} onRun={(collectionId, failFast) => invoke<CollectionRunCase[]>("run_collection", { collectionId, failFast })} />
       <TeamWorkbench onExportSnapshot={async () => { const snapshotTree = await invoke<WorkspaceTree>("get_workspace_tree"); return exportTeamSnapshot(snapshotTree, async (id) => (await invoke<StoredRequest | null>("get_request", { id }))?.envelope ?? null); }} onRestoreSnapshot={async (snapshot) => { await restoreTeamSnapshot(snapshot, { getTree: async () => invoke<WorkspaceTree>("get_workspace_tree"), createWorkspace: async (name) => invoke("create_workspace", { name, rootPath: null }), createProject: async (workspaceId, name) => invoke("create_project", { workspaceId, name }), createCollection: async (projectId, parentId, name) => invoke("create_collection", { projectId, parentId, name }), saveEnvelope: async (request, projectId, collectionId) => { await invoke("save_envelope", { request, projectId, collectionId }); } }); await refreshTree(); }} />
       <CommentsWorkbench />
+      <SsoWorkbench />
       </WorkbenchDeck>
     </AppShell>
   );

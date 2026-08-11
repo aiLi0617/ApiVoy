@@ -16,6 +16,7 @@ export { WorkbenchDeck, type WorkbenchDeckProps, type WorkbenchTab } from "./Wor
 export { CollectionRunner, type CollectionRunnerProps, type CollectionRunCase } from "./CollectionRunner";
 export { TeamWorkbench } from "./TeamWorkbench";
 export { CommentsWorkbench } from "./CommentsWorkbench";
+export { SsoWorkbench } from "./SsoWorkbench";
 export { exportTeamSnapshot, restoreTeamSnapshot, type TeamSnapshot, type TeamRestoreAdapter } from "./teamSnapshot";
 export {
   HttpWorkbench,

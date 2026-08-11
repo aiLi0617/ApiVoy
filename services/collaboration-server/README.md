@@ -10,6 +10,7 @@ ApiVoy 的 Java 21 / Spring Boot 3 可部署协作服务，支持本地 H2 与 P
 - 工作区评论主题、回复、编辑、解决/重新打开状态
 - Bearer 鉴权的组织 SSE 事件：`workspace.changed` 与 `comment.changed`
 - 成员、同步和评论操作审计
+- 可选企业 OIDC SSO、已验证邮箱校验、JIT 用户/成员创建与身份绑定
 - Secret 内容不进入同步 API，仅保留安全引用
 
 ## 本地运行
@@ -30,6 +31,25 @@ docker compose up --build
 ```
 
 生产环境必须覆盖上述密码变量，持久化数据位于 `apivoy-postgres` volume。
+
+## 企业 OIDC SSO
+
+SSO 默认关闭，现有本地账号登录不受影响。启用前先完成 Owner 引导并取得目标组织 ID，然后配置：
+
+```powershell
+$env:APIVOY_COLLAB_SSO_ENABLED="true"
+$env:APIVOY_COLLAB_SSO_ORGANIZATION_ID="organization-id"
+$env:APIVOY_COLLAB_SSO_DEFAULT_ROLE="VIEWER"
+$env:APIVOY_COLLAB_SSO_WEB_REDIRECT="http://localhost:5180"
+$env:APIVOY_COLLAB_OIDC_CLIENT_ID="client-id"
+$env:APIVOY_COLLAB_OIDC_CLIENT_SECRET="client-secret"
+$env:APIVOY_COLLAB_OIDC_AUTHORIZATION_URI="https://idp.example.com/oauth2/authorize"
+$env:APIVOY_COLLAB_OIDC_TOKEN_URI="https://idp.example.com/oauth2/token"
+$env:APIVOY_COLLAB_OIDC_JWK_SET_URI="https://idp.example.com/oauth2/jwks"
+$env:APIVOY_COLLAB_OIDC_USER_INFO_URI="https://idp.example.com/oauth2/userinfo"
+```
+
+在 IdP 中登记回调地址 `https://<collaboration-host>/login/oauth2/code/oidc`。首次登录仅在 IdP 明确确认 `email_verified=true` 时创建用户，并以配置的默认角色加入指定组织；默认角色禁止设为 `OWNER` 或 `ADMIN`。后续登录通过 `(issuer, subject)` 绑定复用身份，不会自动提升角色。前端通过 SSO 页签发起登录，服务端使用 URL fragment 返回 ApiVoy 会话，避免令牌出现在查询参数和访问日志中。
 
 ## 同步契约
 
