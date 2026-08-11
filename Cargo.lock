@@ -280,6 +280,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "apivoy-protocol-gateway"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "core-domain",
+ "driver-amqp",
+ "driver-graphql",
+ "driver-grpc",
+ "driver-http",
+ "driver-kafka",
+ "driver-mqtt",
+ "driver-redis",
+ "driver-rpc-http",
+ "driver-sql",
+ "driver-sse",
+ "driver-tcp-udp",
+ "driver-websocket",
+ "execution-engine",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6793,10 +6822,12 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
+ "http-body-util",
  "pin-project-lite",
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
  "url",
 ]
 

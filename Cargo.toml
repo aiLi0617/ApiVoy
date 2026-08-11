@@ -22,6 +22,7 @@ members = [
   "crates/local-store",
   "apps/desktop/src-tauri",
   "apps/local-agent",
+  "apps/protocol-gateway",
   "apps/cli",
 ]
 default-members = [

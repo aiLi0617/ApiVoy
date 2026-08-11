@@ -61,6 +61,24 @@ services:
       timeout: 4s
       retries: 20
 
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/gateway.Dockerfile
+    restart: unless-stopped
+    environment:
+      APIVOY_GATEWAY_BIND: 0.0.0.0:39218
+      APIVOY_GATEWAY_API_KEY: ${APIVOY_GATEWAY_API_KEY:?set APIVOY_GATEWAY_API_KEY}
+      APIVOY_GATEWAY_DATA_DIR: /var/lib/apivoy-gateway
+      APIVOY_GATEWAY_MAX_CONCURRENCY: ${APIVOY_GATEWAY_MAX_CONCURRENCY:-16}
+    volumes:
+      - gateway-data:/var/lib/apivoy-gateway
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:39218/health"]
+      interval: 10s
+      timeout: 4s
+      retries: 20
+
   web:
     build:
       context: ..
@@ -70,6 +88,8 @@ services:
       agent:
         condition: service_healthy
       collaboration:
+        condition: service_healthy
+      gateway:
         condition: service_healthy
     environment:
       APIVOY_PUBLIC_AGENT_PATH: /agent
@@ -86,3 +106,4 @@ services:
 volumes:
   postgres-data:
   agent-data:
+  gateway-data:

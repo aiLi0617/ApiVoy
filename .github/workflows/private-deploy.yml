@@ -6,6 +6,7 @@ on:
       - "deploy/**"
       - "apps/web/**"
       - "apps/local-agent/**"
+      - "apps/protocol-gateway/**"
       - "services/collaboration-server/**"
       - ".github/workflows/private-deploy.yml"
   push:
@@ -14,6 +15,7 @@ on:
       - "deploy/**"
       - "apps/web/**"
       - "apps/local-agent/**"
+      - "apps/protocol-gateway/**"
       - "services/collaboration-server/**"
       - ".github/workflows/private-deploy.yml"
 

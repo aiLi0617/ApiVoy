@@ -56,7 +56,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 |------|--------------|------|
 | 阶段 0 架构 | ~95% | 正式执行 API、SQLite、版本握手已落地 |
 | MVP / M1 内核 | ~100%（M1 退出条件） | HTTP 保存→环境→发送→断言→历史闭环；七协议属 M2 |
-| P1 / P2 | 持续推进 | P1 协议、脚本、插件、Mock、集合运行器已完成；P2 协作、AI、抓包与私有化已完成，云协议网关仍待实施 |
+| P1 / P2 | 持续推进 | P1 协议、脚本、插件、Mock、集合运行器已完成；P2 协作、AI、抓包、云协议网关与私有化均已完成 |
 
 ---
 
@@ -119,7 +119,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | `plugin-runtime` + Wasmtime | ✅ | Component-only 四类插件宿主、权限与资源限制、Ed25519 签名校验、双端插件中心已接入 |
 | QuickJS 脚本 | ✅ | 受限运行时、request/response/variables/console/assert/crypto API、HTTP 双端编辑器和跨请求变量数据链已接入 |
 | Java 协作微服务拆分 | 🟡 | 可部署单体已覆盖 identity/OIDC SSO/workspace/sync/audit，支持 H2 本地与 PostgreSQL/Docker 私有化；mock/automation 拆分待后续切片 |
-| 云协议网关 `protocol-gateway` | ❌ | P2 |
+| 云协议网关 `protocol-gateway` | ✅ | 独立 Rust 服务复用全部协议 Driver，提供 Bearer 鉴权远程执行、持久化间隔调度、CI Runner 结构化退出码、并发上限、执行留存与明确数据流向 |
 | CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、Playwright 桌面/移动浏览器冒烟、全工作区测试、Clippy、RustSec、CycloneDX SBOM、私有化 Compose 模型/镜像构建与 tag 草稿发布；待补真实安装/升级/卸载验证 |
 
 ### 3.4 MVP 验收标准（AC）对照

@@ -1,0 +1,35 @@
+[package]
+name = "apivoy-protocol-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ApiVoy authenticated remote protocol execution, scheduler, and CI runner"
+
+[[bin]]
+name = "apivoy-protocol-gateway"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+chrono = { workspace = true }
+core-domain = { workspace = true }
+driver-amqp = { workspace = true }
+driver-graphql = { workspace = true }
+driver-grpc = { workspace = true }
+driver-http = { workspace = true }
+driver-kafka = { workspace = true }
+driver-mqtt = { workspace = true }
+driver-redis = { workspace = true }
+driver-rpc-http = { workspace = true }
+driver-sql = { workspace = true }
+driver-sse = { workspace = true }
+driver-tcp-udp = { workspace = true }
+driver-websocket = { workspace = true }
+execution-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { workspace = true }
