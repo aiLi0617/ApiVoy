@@ -18,6 +18,8 @@ import type {
   MockRule,
   InstalledPlugin,
   PluginManifest,
+  AiAssistRequest,
+  AiAssistResponse,
 } from "@apivoy/ui";
 
 const runtime = (window as Window & { __APIVOY_CONFIG__?: { agentUrl?: string; agentToken?: string } }).__APIVOY_CONFIG__;
@@ -164,6 +166,8 @@ export async function putSecretViaAgent(name: string, value: string): Promise<vo
     throw new Error(await res.text());
   }
 }
+
+export async function runAiAssistViaAgent(request:AiAssistRequest):Promise<AiAssistResponse>{await checkAgentHandshake();const response=await fetch(`${AGENT_BASE}/v1/ai/assist`,{method:"POST",headers:agentHeaders(),body:JSON.stringify(request)});if(!response.ok)throw new Error(await response.text());return response.json();}
 
 export async function listCookiesViaAgent(url: string): Promise<Array<{ name: string; value: string }>> {
   await checkAgentHandshake();

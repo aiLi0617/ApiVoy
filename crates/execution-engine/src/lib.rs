@@ -1,5 +1,6 @@
 //! Unified execution pipeline shared by desktop, agent, CLI, and (later) cloud runners.
 
+mod ai;
 mod assertions;
 mod auth;
 mod driver;
@@ -9,6 +10,7 @@ mod lifecycle;
 mod scripts;
 mod variables;
 
+pub use ai::{run_ai_assistant, AiAssistRequest, AiAssistResponse, AiError, AiTask};
 pub use assertions::{run_assertions, AssertionContext};
 pub use auth::{apply_auth, AuthError};
 pub use driver::{DriverDescriptor, DriverError, ProtocolDriver, ValidationReport};

@@ -29,7 +29,10 @@ use driver_http::HttpDriver;
 use driver_sse::SseDriver;
 use driver_tcp_udp::{TcpDriver, UdpDriver};
 use driver_websocket::WebSocketDriver;
-use execution_engine::{sample_http_get, DriverDescriptor, ExecutionEngine, VariableScope};
+use execution_engine::{
+    run_ai_assistant, sample_http_get, AiAssistRequest, AiAssistResponse, DriverDescriptor,
+    ExecutionEngine, VariableScope,
+};
 use futures::stream::{self, Stream};
 use futures::{SinkExt, StreamExt};
 use local_store::{
@@ -359,6 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/executions/{id}/events", get(execution_events))
         .route("/v1/executions/{id}/cancel", post(cancel_execution))
         .route("/v1/secrets", put(put_secret))
+        .route("/v1/ai/assist", post(ai_assist))
         .route(
             "/v1/cookies",
             get(list_cookies).put(set_cookie).delete(delete_cookie),
@@ -1018,6 +1022,22 @@ async fn put_secret(
             SecretBackendKind::Keychain => "keychain",
         },
     }))
+}
+
+async fn ai_assist(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AiAssistRequest>,
+) -> Result<Json<AiAssistResponse>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    let api_key = state
+        .secrets
+        .resolve(&request.secret_ref)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    run_ai_assistant(request, &api_key)
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))
 }
 
 async fn list_cookies(

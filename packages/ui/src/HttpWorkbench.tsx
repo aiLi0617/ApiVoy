@@ -512,6 +512,8 @@ export function HttpWorkbench({
     }
   }, [externalRequest]);
 
+  useEffect(() => { const listener=(event:Event)=>{const detail=(event as CustomEvent<{request?:HttpWorkbenchRequest;aiAssertions?:string}>).detail;if(!detail?.request)return;applyRequest(detail.request);if(detail.aiAssertions)setAssertionsText(detail.aiAssertions);setResult(null);setStatusMsg("已载入 AI 生成请求，请检查后再发送");};window.addEventListener("apivoy-open-request",listener);return()=>window.removeEventListener("apivoy-open-request",listener); }, []);
+
   useAutosaveDraft("http", buildRequest);
 
   async function startPkceAuthorization() {

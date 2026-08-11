@@ -13,7 +13,10 @@ use driver_http::HttpDriver;
 use driver_sse::SseDriver;
 use driver_tcp_udp::{TcpDriver, UdpDriver};
 use driver_websocket::WebSocketDriver;
-use execution_engine::{ExecutionEngine, VariableScope};
+use execution_engine::{
+    run_ai_assistant as execute_ai_assistant, AiAssistRequest, AiAssistResponse, ExecutionEngine,
+    VariableScope,
+};
 use local_store::{
     CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore,
     ProjectRecord, StoredRequest, WorkspaceRecord,
@@ -777,6 +780,20 @@ async fn put_secret(request: PutSecretRequest, state: State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
+async fn run_ai_assistant(
+    request: AiAssistRequest,
+    state: State<'_, AppState>,
+) -> Result<AiAssistResponse, String> {
+    let api_key = state
+        .secrets
+        .resolve(&request.secret_ref)
+        .map_err(|error| error.to_string())?;
+    execute_ai_assistant(request, &api_key)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn secret_exists(name: String, state: State<'_, AppState>) -> Result<bool, String> {
     state.secrets.exists(&name).map_err(|e| e.to_string())
 }
@@ -1288,6 +1305,7 @@ pub fn run() {
             get_environment,
             save_environment,
             put_secret,
+            run_ai_assistant,
             secret_exists,
             get_workspace_tree,
             create_workspace,
