@@ -28,6 +28,9 @@ class WorkspaceEventHub {
             catch (IOException error) { emitter.completeWithError(error); }
         }
     }
+    void publishComment(String organizationId,String workspaceId,String commentId,String action,String actorId){send(organizationId,"comment.changed",commentId+":"+action,new CommentChanged(workspaceId,commentId,action,actorId,Instant.now()));}
+    private void send(String organizationId,String name,String id,Object data){for(var emitter:subscribers.getOrDefault(organizationId,new CopyOnWriteArrayList<>())){try{emitter.send(SseEmitter.event().id(id).name(name).data(data));}catch(IOException error){emitter.completeWithError(error);}}}
     int subscriberCount(String organizationId) { return subscribers.getOrDefault(organizationId, new CopyOnWriteArrayList<>()).size(); }
     record WorkspaceChanged(String workspaceId, long revision, String actorId, Instant at) {}
+    record CommentChanged(String workspaceId,String commentId,String action,String actorId,Instant at) {}
 }

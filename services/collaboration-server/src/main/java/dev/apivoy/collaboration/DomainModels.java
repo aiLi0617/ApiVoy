@@ -88,3 +88,19 @@ class AuditEvent {
     protected AuditEvent() {}
     AuditEvent(String organizationId, String actorId, String action, String resourceType, String resourceId, String detailsJson) { this.organizationId = organizationId; this.actorId = actorId; this.action = action; this.resourceType = resourceType; this.resourceId = resourceId; this.detailsJson = detailsJson; }
 }
+
+@Entity @Table(name = "workspace_comments", indexes = @Index(columnList = "organizationId,workspaceId,createdAt"))
+class WorkspaceComment {
+    @Id String id = UUID.randomUUID().toString();
+    @Column(nullable = false) String organizationId;
+    @Column(nullable = false) String workspaceId;
+    @Column(nullable = false) String actorId;
+    String parentId;
+    @Column(nullable = false, length = 4000) String body;
+    Instant resolvedAt;
+    String resolvedBy;
+    @Column(nullable = false) Instant createdAt = Instant.now();
+    @Column(nullable = false) Instant updatedAt = Instant.now();
+    protected WorkspaceComment() {}
+    WorkspaceComment(String organizationId, String workspaceId, String actorId, String parentId, String body) { this.organizationId=organizationId; this.workspaceId=workspaceId; this.actorId=actorId; this.parentId=parentId; this.body=body; }
+}

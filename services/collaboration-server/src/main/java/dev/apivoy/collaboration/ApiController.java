@@ -25,6 +25,10 @@ class ApiController {
     @GetMapping("/organizations/{organizationId}/workspaces/{workspaceId}/changes") List<CollaborationService.ChangeView> changes(Authentication auth,@PathVariable String organizationId,@PathVariable String workspaceId,@RequestParam(defaultValue="0") long afterRevision){return service.changes(actor(auth),organizationId,workspaceId,afterRevision);}
     @GetMapping("/organizations/{organizationId}/audit") List<CollaborationService.AuditView> audit(Authentication auth,@PathVariable String organizationId){return service.audits(actor(auth),organizationId);}
     @GetMapping(path="/organizations/{organizationId}/events",produces=MediaType.TEXT_EVENT_STREAM_VALUE) org.springframework.web.servlet.mvc.method.annotation.SseEmitter events(Authentication auth,@PathVariable String organizationId){return service.subscribe(actor(auth),organizationId);}
+    @GetMapping("/organizations/{organizationId}/workspaces/{workspaceId}/comments") List<CollaborationService.CommentView> comments(Authentication auth,@PathVariable String organizationId,@PathVariable String workspaceId){return service.comments(actor(auth),organizationId,workspaceId);}
+    @PostMapping("/organizations/{organizationId}/workspaces/{workspaceId}/comments") @ResponseStatus(HttpStatus.CREATED) CollaborationService.CommentView addComment(Authentication auth,@PathVariable String organizationId,@PathVariable String workspaceId,@Valid @RequestBody AddComment body){return service.addComment(actor(auth),organizationId,workspaceId,body.parentId,body.body);}
+    @PatchMapping("/organizations/{organizationId}/workspaces/{workspaceId}/comments/{commentId}") CollaborationService.CommentView editComment(Authentication auth,@PathVariable String organizationId,@PathVariable String workspaceId,@PathVariable String commentId,@Valid @RequestBody EditComment body){return service.editComment(actor(auth),organizationId,workspaceId,commentId,body.body);}
+    @PatchMapping("/organizations/{organizationId}/workspaces/{workspaceId}/comments/{commentId}/resolution") CollaborationService.CommentView resolveComment(Authentication auth,@PathVariable String organizationId,@PathVariable String workspaceId,@PathVariable String commentId,@RequestBody ResolveComment body){return service.resolveComment(actor(auth),organizationId,workspaceId,commentId,body.resolved);}
     private String actor(Authentication auth){return String.valueOf(auth.getPrincipal());}
 
     record Bootstrap(@Email String email,@Size(min=10,max=200) String password,@NotBlank String displayName,@NotBlank String organizationName,String deviceName){}
@@ -32,6 +36,9 @@ class ApiController {
     record AddMember(@Email String email,@NotNull Role role){}
     record ProvisionMember(@Email String email,@NotBlank String displayName,@Size(min=10,max=200) String password,@NotNull Role role){}
     record PushWorkspace(@Min(0) long baseRevision,@NotNull JsonNode document,JsonNode patch){}
+    record AddComment(String parentId,@NotBlank @Size(max=4000) String body){}
+    record EditComment(@NotBlank @Size(max=4000) String body){}
+    record ResolveComment(boolean resolved){}
 }
 
 @RestControllerAdvice

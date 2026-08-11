@@ -17,8 +17,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @ActiveProfiles("test")
 class CollaborationApiTests {
     @Autowired MockMvc mvc; @Autowired ObjectMapper json;
-    @Autowired AuditRepository audits; @Autowired ChangeRepository changes; @Autowired WorkspaceRepository workspaces; @Autowired SessionRepository sessions; @Autowired MembershipRepository memberships; @Autowired OrganizationRepository organizations; @Autowired UserRepository users;
-    @BeforeEach void clean(){audits.deleteAll();changes.deleteAll();workspaces.deleteAll();sessions.deleteAll();memberships.deleteAll();organizations.deleteAll();users.deleteAll();}
+    @Autowired AuditRepository audits; @Autowired ChangeRepository changes; @Autowired WorkspaceRepository workspaces; @Autowired CommentRepository comments; @Autowired SessionRepository sessions; @Autowired MembershipRepository memberships; @Autowired OrganizationRepository organizations; @Autowired UserRepository users;
+    @BeforeEach void clean(){audits.deleteAll();comments.deleteAll();changes.deleteAll();workspaces.deleteAll();sessions.deleteAll();memberships.deleteAll();organizations.deleteAll();users.deleteAll();}
 
     @Test void bootstrapProvisionSyncConflictRbacAndAudit() throws Exception {
         JsonNode owner=body(mvc.perform(post("/v1/auth/bootstrap").header("X-ApiVoy-Bootstrap-Token","test-bootstrap").contentType(MediaType.APPLICATION_JSON).content("""
@@ -44,7 +44,22 @@ class CollaborationApiTests {
         mvc.perform(put("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).contentType(MediaType.APPLICATION_JSON).content("{"+"\"baseRevision\":1,\"document\":{},\"patch\":{}"+"}")).andExpect(status().isForbidden());
         mvc.perform(put("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+ownerToken).contentType(MediaType.APPLICATION_JSON).content("{"+"\"baseRevision\":0,\"document\":{},\"patch\":{}"+"}")).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("revision_conflict")).andExpect(jsonPath("$.currentRevision").value(1));
         mvc.perform(get("/v1/organizations/{org}/workspaces/{workspace}/changes",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).param("afterRevision","0")).andExpect(status().isOk()).andExpect(jsonPath("$[0].revision").value(1));
+        JsonNode comment=body(mvc.perform(post("/v1/organizations/{org}/workspaces/{workspace}/comments",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).contentType(MediaType.APPLICATION_JSON).content("""
+          {"body":"Please verify the authentication example."}
+        """)).andExpect(status().isCreated()).andExpect(jsonPath("$.actorName").value("Viewer")).andReturn());
+        String commentId=comment.get("id").asText();
+        mvc.perform(get("/v1/organizations/{org}/workspaces/{workspace}/comments",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken)).andExpect(status().isOk()).andExpect(jsonPath("$[0].body").value("Please verify the authentication example."));
+        mvc.perform(patch("/v1/organizations/{org}/workspaces/{workspace}/comments/{comment}",organizationId,"workspace-a",commentId).header("Authorization","Bearer "+viewerToken).contentType(MediaType.APPLICATION_JSON).content("""
+          {"body":"Authentication example verified."}
+        """)).andExpect(status().isOk()).andExpect(jsonPath("$.body").value("Authentication example verified."));
+        mvc.perform(patch("/v1/organizations/{org}/workspaces/{workspace}/comments/{comment}/resolution",organizationId,"workspace-a",commentId).header("Authorization","Bearer "+viewerToken).contentType(MediaType.APPLICATION_JSON).content("""
+          {"resolved":true}
+        """)).andExpect(status().isForbidden());
+        mvc.perform(patch("/v1/organizations/{org}/workspaces/{workspace}/comments/{comment}/resolution",organizationId,"workspace-a",commentId).header("Authorization","Bearer "+ownerToken).contentType(MediaType.APPLICATION_JSON).content("""
+          {"resolved":true}
+        """)).andExpect(status().isOk()).andExpect(jsonPath("$.resolvedAt").isNotEmpty());
         mvc.perform(get("/v1/organizations/{org}/audit",organizationId).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk()).andExpect(jsonPath("$[?(@.action == 'workspace.sync')]").exists());
+        mvc.perform(get("/v1/organizations/{org}/audit",organizationId).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk()).andExpect(jsonPath("$[?(@.action == 'comment.resolve')]").exists());
         mvc.perform(get("/v1/organizations/{org}/audit",organizationId).header("Authorization","Bearer "+viewerToken)).andExpect(status().isForbidden());
     }
     private JsonNode body(org.springframework.test.web.servlet.MvcResult result)throws Exception{return json.readTree(result.getResponse().getContentAsString());}

@@ -16,3 +16,4 @@ interface SessionRepository extends JpaRepository<DeviceSession, String> {
 interface WorkspaceRepository extends JpaRepository<WorkspaceState, String> { Optional<WorkspaceState> findByOrganizationIdAndWorkspaceId(String organizationId, String workspaceId); }
 interface ChangeRepository extends JpaRepository<WorkspaceChange, String> { List<WorkspaceChange> findByOrganizationIdAndWorkspaceIdAndRevisionGreaterThanOrderByRevision(String organizationId, String workspaceId, long revision); }
 interface AuditRepository extends JpaRepository<AuditEvent, String> { List<AuditEvent> findTop200ByOrganizationIdOrderByCreatedAtDesc(String organizationId); }
+interface CommentRepository extends JpaRepository<WorkspaceComment, String> { List<WorkspaceComment> findByOrganizationIdAndWorkspaceIdOrderByCreatedAt(String organizationId, String workspaceId); }
