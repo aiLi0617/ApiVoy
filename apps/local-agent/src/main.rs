@@ -24,6 +24,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use capture_proxy::{CaptureProxy, CaptureStatus, CapturedExchange};
 use chrono::Utc;
 use core_domain::{ExecutionEvent, ExecutionId, ExecutionState, ProtocolPayload, RequestEnvelope};
+use driver_amqp::AmqpDriver;
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
@@ -340,6 +341,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.register(Arc::new(SoapDriver::default()));
     engine.register(Arc::new(RedisDriver));
     engine.register(Arc::new(MqttDriver));
+    engine.register(Arc::new(AmqpDriver));
 
     let mock_rules_path = config_dir().join("mock-rules.json");
     let mock_rules = load_mock_rules(&mock_rules_path);

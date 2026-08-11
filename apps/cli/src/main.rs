@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use core_domain::{ExecutionEvent, ExecutionState, HttpPayload, ProtocolPayload, RequestEnvelope};
+use driver_amqp::AmqpDriver;
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
@@ -314,6 +315,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.register(Arc::new(SoapDriver::default()));
     engine.register(Arc::new(RedisDriver));
     engine.register(Arc::new(MqttDriver));
+    engine.register(Arc::new(AmqpDriver));
     let engine = Arc::new(engine);
 
     match cli.command {

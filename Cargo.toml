@@ -14,6 +14,7 @@ members = [
   "crates/driver-rpc-http",
   "crates/driver-redis",
   "crates/driver-mqtt",
+  "crates/driver-amqp",
   "crates/plugin-runtime",
   "crates/capture-proxy",
   "crates/local-store",
@@ -64,6 +65,7 @@ driver-grpc = { path = "crates/driver-grpc" }
 driver-rpc-http = { path = "crates/driver-rpc-http" }
 driver-redis = { path = "crates/driver-redis" }
 driver-mqtt = { path = "crates/driver-mqtt" }
+driver-amqp = { path = "crates/driver-amqp" }
 plugin-runtime = { path = "crates/plugin-runtime" }
 capture-proxy = { path = "crates/capture-proxy" }
 local-store = { path = "crates/local-store" }

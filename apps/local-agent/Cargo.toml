@@ -24,6 +24,7 @@ driver-grpc = { workspace = true }
 driver-rpc-http = { workspace = true }
 driver-redis = { workspace = true }
 driver-mqtt = { workspace = true }
+driver-amqp = { workspace = true }
 execution-engine = { workspace = true }
 futures = { workspace = true }
 local-store = { workspace = true }

@@ -8,6 +8,7 @@ use core_domain::{
     Assertion, AuthRef, ExecutionEvent, ExecutionId, ExecutionState, ExecutionSummary, HttpPayload,
     MultipartPart, ProtocolPayload, RequestEnvelope, ResponseMeta,
 };
+use driver_amqp::AmqpDriver;
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
@@ -1320,6 +1321,7 @@ pub fn run() {
             engine.register(Arc::new(SoapDriver::default()));
             engine.register(Arc::new(RedisDriver));
             engine.register(Arc::new(MqttDriver));
+            engine.register(Arc::new(AmqpDriver));
             let plugins = PluginManager::new_from_env(
                 db_path
                     .parent()
