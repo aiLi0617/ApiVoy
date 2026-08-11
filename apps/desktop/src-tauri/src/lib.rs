@@ -11,6 +11,7 @@ use core_domain::{
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
+use driver_rpc_http::{JsonRpcDriver, SoapDriver};
 use driver_sse::SseDriver;
 use driver_tcp_udp::{TcpDriver, UdpDriver};
 use driver_websocket::WebSocketDriver;
@@ -1313,6 +1314,8 @@ pub fn run() {
             engine.register(Arc::new(TcpDriver));
             engine.register(Arc::new(UdpDriver));
             engine.register(Arc::new(WebSocketDriver));
+            engine.register(Arc::new(JsonRpcDriver::default()));
+            engine.register(Arc::new(SoapDriver::default()));
             let plugins = PluginManager::new_from_env(
                 db_path
                     .parent()

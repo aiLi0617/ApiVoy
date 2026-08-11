@@ -16,6 +16,8 @@ import {
   CommentsWorkbench,
   SsoWorkbench,
   AiWorkbench,
+  RpcWorkbench,
+  type RpcWorkbenchRequest,
   CaptureWorkbench,
   type CaptureStatus,
   type CapturedExchange,
@@ -168,6 +170,7 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState("default-project");
   const [selectedCollectionId, setSelectedCollectionId] = useState("default-collection");
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const rpcEnvelope=(request:RpcWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:request.protocol,name:request.name,target:request.url,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:request.protocol==="soap"?{version:request.soapVersion,action:request.action,envelope:request.envelope,headers:request.headers}:{method:request.rpcMethod,params:request.params,id:request.id,headers:request.headers}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const [externalRequest, setExternalRequest] = useState<HttpWorkbenchRequest | null>(null);
 
   async function refreshTree() {
@@ -210,7 +213,7 @@ export function App() {
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId, parentId, name: segment }); id = created.id; paths.set(key, id); } parentId = id; } await invoke("save_request", { request: toInvokeRequest({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }), projectId, collectionId: parentId }); } await refreshTree(); }}
       onExportProject={async (project) => { const items = tree?.requests.filter((item) => item.projectId === project.id) ?? []; return Promise.all(items.map(async (item) => { const stored = await invoke<StoredRequest | null>("get_request", { id: item.id }); const request = stored ? fromEnvelope(stored.envelope, stored.target) : null; return { name: item.name, method: request?.method ?? item.method ?? "GET", url: request?.url ?? item.target, headers: Object.fromEntries(request?.headers ?? []), body: request?.body }; })); }}
       onDeleteRequest={async (id) => { await invoke("delete_request", { id }); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }} />}>
-      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "plugins", label: "Plugins" }, { id: "mock", label: "Mock" }, { id: "runner", label: "Runner" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }, { id: "sso", label: "SSO" }, { id: "ai", label: "AI" }, { id: "capture", label: "Capture" }]}>
+      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "rpc", label: "SOAP / RPC", protocols: ["soap", "jsonrpc"] }, { id: "plugins", label: "Plugins" }, { id: "mock", label: "Mock" }, { id: "runner", label: "Runner" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }, { id: "sso", label: "SSO" }, { id: "ai", label: "AI" }, { id: "capture", label: "Capture" }]}>
       <HttpWorkbench
         externalRequest={externalRequest}
         onSend={async (request, hooks) => {
@@ -395,6 +398,7 @@ export function App() {
         onCancel={async (executionId) => { await invoke<boolean>("cancel_execution", { id: executionId }); }}
         onSave={async (request) => { const envelope: RequestEnvelope = { id: crypto.randomUUID(), protocolId: "grpc", name: request.name, target: request.target, environmentRef: "default-env", authRef: null, timeoutMs: request.timeoutMs, retryPolicy: { max_retries: 0, backoff_ms: 0 }, proxy: null, tls: { verify: true, client_cert_ref: null }, metadata: {}, payload: { type: "grpc", service: request.service, method: request.method, messageBase64: request.messageBase64, messageJson: request.messageJson, descriptorSetBase64: request.descriptorSetBase64, mode: request.mode, metadata: request.metadata }, preScripts: [], postScripts: [], assertions: [], variables: {}, createdAt: new Date().toISOString() }; await invoke("save_envelope", { request: envelope, projectId: selectedProjectId, collectionId: selectedCollectionId }); await refreshTree(); }}
       />
+      <RpcWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:rpcEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:rpcEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
       <PluginCenter
         onList={() => invoke<InstalledPlugin[]>("list_plugins")}
         onInstall={async (manifest: PluginManifest, wasmBase64: string) => {

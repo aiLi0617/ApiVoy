@@ -18,6 +18,7 @@ driver-tcp-udp = { workspace = true }
 driver-graphql = { workspace = true }
 driver-websocket = { workspace = true }
 driver-grpc = { workspace = true }
+driver-rpc-http = { workspace = true }
 core-domain = { workspace = true }
 execution-engine = { workspace = true }
 serde = { workspace = true }

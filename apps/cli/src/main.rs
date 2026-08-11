@@ -5,6 +5,7 @@ use core_domain::{ExecutionEvent, ExecutionState, HttpPayload, ProtocolPayload, 
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
+use driver_rpc_http::{JsonRpcDriver, SoapDriver};
 use driver_sse::SseDriver;
 use driver_tcp_udp::{TcpDriver, UdpDriver};
 use driver_websocket::WebSocketDriver;
@@ -307,6 +308,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.register(Arc::new(GraphqlDriver::new()));
     engine.register(Arc::new(WebSocketDriver));
     engine.register(Arc::new(GrpcDriver::new()));
+    engine.register(Arc::new(JsonRpcDriver::default()));
+    engine.register(Arc::new(SoapDriver::default()));
     let engine = Arc::new(engine);
 
     match cli.command {

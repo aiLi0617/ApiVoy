@@ -27,6 +27,7 @@ driver-tcp-udp = { workspace = true }
 driver-graphql = { workspace = true }
 driver-websocket = { workspace = true }
 driver-grpc = { workspace = true }
+driver-rpc-http = { workspace = true }
 execution-engine = { workspace = true }
 local-store = { workspace = true }
 plugin-runtime = { workspace = true }

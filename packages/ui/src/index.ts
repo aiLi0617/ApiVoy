@@ -19,6 +19,7 @@ export { CommentsWorkbench } from "./CommentsWorkbench";
 export { SsoWorkbench } from "./SsoWorkbench";
 export { AiWorkbench, type AiWorkbenchProps, type AiAssistRequest, type AiAssistResponse, type AiTask } from "./AiWorkbench";
 export { CaptureWorkbench, type CaptureWorkbenchProps, type CaptureStatus, type CapturedExchange } from "./CaptureWorkbench";
+export { RpcWorkbench, type RpcWorkbenchProps, type RpcWorkbenchRequest, type RpcProtocol } from "./RpcWorkbench";
 export { exportTeamSnapshot, restoreTeamSnapshot, type TeamSnapshot, type TeamRestoreAdapter } from "./teamSnapshot";
 export {
   HttpWorkbench,

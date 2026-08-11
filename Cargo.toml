@@ -11,6 +11,7 @@ members = [
   "crates/driver-graphql",
   "crates/driver-websocket",
   "crates/driver-grpc",
+  "crates/driver-rpc-http",
   "crates/plugin-runtime",
   "crates/capture-proxy",
   "crates/local-store",
@@ -58,6 +59,7 @@ driver-tcp-udp = { path = "crates/driver-tcp-udp" }
 driver-graphql = { path = "crates/driver-graphql" }
 driver-websocket = { path = "crates/driver-websocket" }
 driver-grpc = { path = "crates/driver-grpc" }
+driver-rpc-http = { path = "crates/driver-rpc-http" }
 plugin-runtime = { path = "crates/plugin-runtime" }
 capture-proxy = { path = "crates/capture-proxy" }
 local-store = { path = "crates/local-store" }

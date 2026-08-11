@@ -56,7 +56,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 |------|--------------|------|
 | 阶段 0 架构 | ~95% | 正式执行 API、SQLite、版本握手已落地 |
 | MVP / M1 内核 | ~100%（M1 退出条件） | HTTP 保存→环境→发送→断言→历史闭环；七协议属 M2 |
-| P1 / P2 | ~0% | README / 占位为主 |
+| P1 / P2 | 持续推进 | P1 基础能力大部分完成；协议扩展已交付 SOAP / JSON-RPC，消息队列与数据库协议继续实施 |
 
 ---
 
@@ -101,7 +101,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | TCP | ✅ Driver + 双端工作台 | 文本/Hex、固定长度/分隔符分帧、系统根/自定义 CA TLS、SNI、定时重复发送、超时、取消、响应持久化，以及经配对 Token 保护的 Agent 持久 TCP 交互桥接均已实现 |
 | UDP | ✅ Driver + 双端工作台 | 文本/Hex、重复/定时发送、接收超时、取消和响应持久化已实现 |
 
-> P1 协议（MQTT/AMQP/Kafka/Redis/SQL/SOAP…）与 P2/插件协议均未开始，符合分期。
+> P1 协议扩展已完成 SOAP 1.1/1.2 与 JSON-RPC 2.0 的 Driver、Agent/Desktop/CLI 注册和 Web/Desktop 工作台；MQTT/AMQP/Kafka/Redis/SQL 仍待实现。
 
 ### 3.3 架构文档模块缺口
 
@@ -276,7 +276,7 @@ P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 /
 |------|------|------|
 | QuickJS 脚本 | 挂载同一生命周期；受控 API（request/response/variables/crypto/assert） | M1 生命周期 |
 | WASM 插件 | ✅ Wasmtime + 四类专用 WIT、权限模型、Ed25519 信任链与插件中心均已实现 | ADR-0003 |
-| 协议扩展 | MQTT、AMQP、Kafka、Redis、SQL、SOAP/JSON-RPC | Driver SPI 稳定 |
+| 协议扩展 | 🟡 SOAP 1.1/1.2、JSON-RPC 2.0 已完成；MQTT、AMQP、Kafka、Redis、SQL 待实现 | Driver SPI 稳定；HTTP 型 RPC 共用安全、脚本、变量与执行事件主链路 |
 | Mock | 🟡 HTTP 规则、延迟、周期错误注入与 Web 管理台已完成；待补 WS、持久化和高级匹配 | 本地执行层 |
 | 集合运行器 | ✅ CLI 支持 RequestEnvelope/ApiVoy 项目 JSON、顺序/并发、失败即停、跨请求变量、JSON/CSV 数据迭代及 JSON/JUnit 报告；Desktop 提供集合报告页 | CLI + 断言 |
 | 代码生成 | 多语言片段 + 模板插件点 | 请求模型稳定 |

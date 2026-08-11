@@ -27,6 +27,7 @@ use core_domain::{ExecutionEvent, ExecutionId, ExecutionState, ProtocolPayload, 
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
+use driver_rpc_http::{JsonRpcDriver, SoapDriver};
 use driver_sse::SseDriver;
 use driver_tcp_udp::{TcpDriver, UdpDriver};
 use driver_websocket::WebSocketDriver;
@@ -333,6 +334,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.register(Arc::new(TcpDriver));
     engine.register(Arc::new(UdpDriver));
     engine.register(Arc::new(WebSocketDriver));
+    engine.register(Arc::new(JsonRpcDriver::default()));
+    engine.register(Arc::new(SoapDriver::default()));
 
     let mock_rules_path = config_dir().join("mock-rules.json");
     let mock_rules = load_mock_rules(&mock_rules_path);
