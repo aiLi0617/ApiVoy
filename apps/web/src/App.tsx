@@ -1,4 +1,4 @@
-import { AiWorkbench, AppShell, CommentsWorkbench, exportTeamSnapshot, GraphqlWorkbench, GrpcWorkbench, HttpWorkbench, MockWorkbench, PluginCenter, restoreTeamSnapshot, SocketWorkbench, SseWorkbench, SsoWorkbench, TeamWorkbench, WebSocketWorkbench, WorkbenchDeck, WorkspaceExplorer, type HttpWorkbenchRequest, type WorkspaceTree } from "@apivoy/ui";
+import { AiWorkbench, AppShell, CaptureWorkbench, CommentsWorkbench, exportTeamSnapshot, GraphqlWorkbench, GrpcWorkbench, HttpWorkbench, MockWorkbench, PluginCenter, restoreTeamSnapshot, SocketWorkbench, SseWorkbench, SsoWorkbench, TeamWorkbench, WebSocketWorkbench, WorkbenchDeck, WorkspaceExplorer, type HttpWorkbenchRequest, type WorkspaceTree } from "@apivoy/ui";
 import {
   cancelViaAgent,
   createCollectionViaAgent,
@@ -41,6 +41,11 @@ import {
   setCookieViaAgent,
   deleteCookieViaAgent,
   runAiAssistViaAgent,
+  captureStatusViaAgent,
+  startCaptureViaAgent,
+  stopCaptureViaAgent,
+  listCapturesViaAgent,
+  clearCapturesViaAgent,
 } from "./agentClient";
 import { useEffect, useState } from "react";
 
@@ -77,7 +82,7 @@ export function App() {
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await createCollectionViaAgent(projectId, parentId, segment); id = created.id; paths.set(key, id); } parentId = id; } await saveRequestViaAgent({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }, projectId, parentId); } await refreshTree(); }}
       onExportProject={async (project) => { const items = tree?.requests.filter((item) => item.projectId === project.id) ?? []; return Promise.all(items.map(async (item) => { const request = await loadRequestViaAgent(item.id); return { name: item.name, method: request?.method ?? item.method ?? "GET", url: request?.url ?? item.target, headers: Object.fromEntries(request?.headers ?? []), body: request?.body }; })); }}
       onDeleteRequest={async (id) => { await deleteRequestViaAgent(id); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }} />}>
-      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "mock", label: "Mock" }, { id: "plugins", label: "Plugins" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }, { id: "sso", label: "SSO" }, { id: "ai", label: "AI" }]}>
+      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "mock", label: "Mock" }, { id: "plugins", label: "Plugins" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }, { id: "sso", label: "SSO" }, { id: "ai", label: "AI" }, { id: "capture", label: "Capture" }]}>
       <HttpWorkbench
         externalRequest={externalRequest}
         onSend={executeViaAgent}
@@ -104,6 +109,7 @@ export function App() {
       <CommentsWorkbench />
       <SsoWorkbench />
       <AiWorkbench onAssist={runAiAssistViaAgent} onPutSecret={putSecretViaAgent} />
+      <CaptureWorkbench onStatus={captureStatusViaAgent} onStart={startCaptureViaAgent} onStop={stopCaptureViaAgent} onList={listCapturesViaAgent} onClear={clearCapturesViaAgent} />
       <p style={{ color: "var(--apivoy-muted)", fontSize: 13, marginTop: 24 }}>
         请先运行 <code>cargo run -p apivoy-local-agent</code>，并设置{" "}
         <code>VITE_APIVOY_AGENT_TOKEN</code> 为 Agent 配对令牌。环境/历史经 Agent 写入本地 SQLite；密钥经{" "}

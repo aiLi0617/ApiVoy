@@ -73,6 +73,8 @@ Smoke checklist: [`docs/SMOKE_CHECKLIST.md`](docs/SMOKE_CHECKLIST.md).
 - **P2**: OIDC/team collaboration and a complete private Docker deployment under [`deploy/`](./deploy/README.md)
 
 The Web and Desktop apps also include a local-first AI workbench. It supports OpenAI-compatible providers and local models, stores API keys only through the existing secret store, and never executes generated requests without an explicit preview/apply step.
+
+An opt-in [traffic capture proxy](./docs/TRAFFIC_CAPTURE.md) records inspectable HTTP exchanges and HTTPS CONNECT metadata with loopback-only defaults and sensitive-header masking.
 - **P2**: team sync, Java collaboration services, enterprise features (closed-source)
 
 See [`docs/PHASE_PLAN.md`](docs/PHASE_PLAN.md) and [`docs/BRANDING.md`](docs/BRANDING.md).

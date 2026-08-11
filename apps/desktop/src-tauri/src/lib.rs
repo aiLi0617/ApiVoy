@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use capture_proxy::{CaptureProxy, CaptureStatus, CapturedExchange};
 use core_domain::{
     Assertion, AuthRef, ExecutionEvent, ExecutionId, ExecutionState, ExecutionSummary, HttpPayload,
     MultipartPart, ProtocolPayload, RequestEnvelope, ResponseMeta,
@@ -37,6 +38,7 @@ struct AppState {
     store: Mutex<LocalStore>,
     secrets: SecretStore,
     plugins: Arc<PluginManager>,
+    capture: CaptureProxy,
 }
 
 #[derive(Deserialize)]
@@ -290,6 +292,13 @@ struct SaveEnvironmentRequest {
 struct PutSecretRequest {
     name: String,
     value: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartCaptureRequest {
+    bind: Option<String>,
+    allow_remote: Option<bool>,
 }
 
 #[tauri::command]
@@ -794,6 +803,39 @@ async fn run_ai_assistant(
 }
 
 #[tauri::command]
+async fn capture_status(state: State<'_, AppState>) -> Result<CaptureStatus, String> {
+    Ok(state.capture.status().await)
+}
+#[tauri::command]
+async fn start_capture(
+    request: StartCaptureRequest,
+    state: State<'_, AppState>,
+) -> Result<CaptureStatus, String> {
+    let bind = request
+        .bind
+        .unwrap_or_else(|| "127.0.0.1:39219".into())
+        .parse::<std::net::SocketAddr>()
+        .map_err(|error| error.to_string())?;
+    state
+        .capture
+        .start(bind, request.allow_remote.unwrap_or(false))
+        .await
+}
+#[tauri::command]
+async fn stop_capture(state: State<'_, AppState>) -> Result<CaptureStatus, String> {
+    Ok(state.capture.stop().await)
+}
+#[tauri::command]
+async fn capture_exchanges(state: State<'_, AppState>) -> Result<Vec<CapturedExchange>, String> {
+    Ok(state.capture.exchanges().await)
+}
+#[tauri::command]
+async fn clear_capture(state: State<'_, AppState>) -> Result<(), String> {
+    state.capture.clear().await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn secret_exists(name: String, state: State<'_, AppState>) -> Result<bool, String> {
     state.secrets.exists(&name).map_err(|e| e.to_string())
 }
@@ -1285,6 +1327,7 @@ pub fn run() {
                 store: Mutex::new(store),
                 secrets: SecretStore::with_keychain(),
                 plugins: Arc::new(plugins),
+                capture: CaptureProxy::new(),
             });
             Ok(())
         })
@@ -1306,6 +1349,11 @@ pub fn run() {
             save_environment,
             put_secret,
             run_ai_assistant,
+            capture_status,
+            start_capture,
+            stop_capture,
+            capture_exchanges,
+            clear_capture,
             secret_exists,
             get_workspace_tree,
             create_workspace,

@@ -20,6 +20,8 @@ import type {
   PluginManifest,
   AiAssistRequest,
   AiAssistResponse,
+  CaptureStatus,
+  CapturedExchange,
 } from "@apivoy/ui";
 
 const runtime = (window as Window & { __APIVOY_CONFIG__?: { agentUrl?: string; agentToken?: string } }).__APIVOY_CONFIG__;
@@ -168,6 +170,12 @@ export async function putSecretViaAgent(name: string, value: string): Promise<vo
 }
 
 export async function runAiAssistViaAgent(request:AiAssistRequest):Promise<AiAssistResponse>{await checkAgentHandshake();const response=await fetch(`${AGENT_BASE}/v1/ai/assist`,{method:"POST",headers:agentHeaders(),body:JSON.stringify(request)});if(!response.ok)throw new Error(await response.text());return response.json();}
+async function captureRequest<T>(path:string,method="GET",body?:unknown):Promise<T>{await checkAgentHandshake();const response=await fetch(`${AGENT_BASE}${path}`,{method,headers:agentHeaders(),body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)throw new Error(await response.text());return response.status===204?undefined as T:response.json();}
+export const captureStatusViaAgent=()=>captureRequest<CaptureStatus>("/v1/capture/status");
+export const startCaptureViaAgent=(bind:string)=>captureRequest<CaptureStatus>("/v1/capture/start","POST",{bind,allowRemote:false});
+export const stopCaptureViaAgent=()=>captureRequest<CaptureStatus>("/v1/capture/stop","POST");
+export const listCapturesViaAgent=()=>captureRequest<CapturedExchange[]>("/v1/capture/exchanges");
+export const clearCapturesViaAgent=()=>captureRequest<void>("/v1/capture/exchanges","DELETE");
 
 export async function listCookiesViaAgent(url: string): Promise<Array<{ name: string; value: string }>> {
   await checkAgentHandshake();

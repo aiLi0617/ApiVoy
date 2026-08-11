@@ -12,6 +12,7 @@ members = [
   "crates/driver-websocket",
   "crates/driver-grpc",
   "crates/plugin-runtime",
+  "crates/capture-proxy",
   "crates/local-store",
   "apps/desktop/src-tauri",
   "apps/local-agent",
@@ -58,6 +59,7 @@ driver-graphql = { path = "crates/driver-graphql" }
 driver-websocket = { path = "crates/driver-websocket" }
 driver-grpc = { path = "crates/driver-grpc" }
 plugin-runtime = { path = "crates/plugin-runtime" }
+capture-proxy = { path = "crates/capture-proxy" }
 local-store = { path = "crates/local-store" }
 
 [profile.release]

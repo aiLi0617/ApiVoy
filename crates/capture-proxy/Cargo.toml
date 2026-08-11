@@ -1,0 +1,18 @@
+[package]
+name = "capture-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Explicit HTTP proxy and HTTPS CONNECT metadata capture for ApiVoy"
+
+[dependencies]
+bytes = { workspace = true }
+chrono = { workspace = true }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+reqwest = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util"] }
+tokio-util = { workspace = true }
+uuid = { workspace = true }

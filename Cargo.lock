@@ -150,6 +150,7 @@ name = "apivoy-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "capture-proxy",
  "chrono",
  "core-domain",
  "driver-graphql",
@@ -176,6 +177,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "capture-proxy",
  "chrono",
  "core-domain",
  "driver-graphql",
@@ -463,6 +465,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb1307f12aa967b5a58416e87b3653360e0fd614a016b6e970db08fecbb1b80d"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "capture-proxy"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest 0.12.28",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

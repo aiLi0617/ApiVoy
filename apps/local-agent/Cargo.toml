@@ -13,6 +13,7 @@ path = "src/main.rs"
 axum = { version = "0.8", features = ["ws"] }
 base64 = { workspace = true }
 chrono = { workspace = true }
+capture-proxy = { workspace = true }
 core-domain = { workspace = true }
 driver-http = { workspace = true }
 driver-sse = { workspace = true }

@@ -86,7 +86,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | F-016 | 团队协作 | P1 | **P2** | ✅ | Java 21 / Spring Boot 3 协作服务与双端 Team/Comments/SSO 工作台已覆盖 Owner 引导、邮箱密码及企业 OIDC 登录、已验证邮箱 JIT 入组、联合身份绑定、设备会话、组织成员、五级 RBAC、脱敏资源树快照、幂等层级恢复、revision/增量同步、冲突合并 UI、评论主题/回复/解决状态、SSE 实时变更与审计 |
 | F-017 | 插件中心 | P1 | P1 | ✅ | Wasmtime Component-only 宿主、Transformer/Protocol/Auth/Importer 专用 WIT 入口、权限校验、SHA-256、防篡改、Ed25519 发布者信任链、内存/fuel 限制、Agent/Desktop 安装/启停/卸载/按类型调用 API 与 Web/Desktop 插件中心已实现 |
 | F-018 | AI 辅助 | P2 | P2 | ✅ | Web/Desktop AI 工作台支持自然语言生成 HTTP 请求、响应解释、断言与文档生成；OpenAI-compatible/Ollama BYOK，密钥仅进入 Keychain/Agent secret-store，远程 HTTPS 强制、结果预览后应用、双端共享 Rust 客户端与 Provider 契约测试均已完成 |
-| F-019 | 流量代理抓包 | P2 | P2 | ❌ | — |
+| F-019 | 流量代理抓包 | P2 | P2 | ✅ | Web/Desktop Capture 工作台与共享 Rust 显式代理已完成；HTTP 请求/响应 Header 与 64KB 正文预览、HTTPS CONNECT 加密隧道元数据、loopback 安全默认、敏感 Header 脱敏、500 条环形保留、生命周期控制及一键生成 HTTP 请求均已实现 |
 | F-020 | 私有化部署 | P2 | P2 | ✅ | 单入口 Nginx + Web + Rust Agent + Java 协作/OIDC + PostgreSQL Compose 编排；运行时前端配置、内部反向代理、最小端口暴露、健康检查、持久化卷、环境模板、部署文档与镜像构建 CI 已完成 |
 
 ### 3.2 MVP 协议矩阵（G1 / AC-03）

@@ -21,6 +21,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, patch, post, put};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use capture_proxy::{CaptureProxy, CaptureStatus, CapturedExchange};
 use chrono::Utc;
 use core_domain::{ExecutionEvent, ExecutionId, ExecutionState, ProtocolPayload, RequestEnvelope};
 use driver_graphql::GraphqlDriver;
@@ -68,6 +69,7 @@ struct AppState {
     mock_rules: Arc<Mutex<HashMap<Uuid, MockRuleState>>>,
     mock_rules_path: Arc<PathBuf>,
     plugins: Arc<PluginManager>,
+    capture: CaptureProxy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +189,13 @@ struct PutSecretBody {
 struct PutSecretResponse {
     name: String,
     backend: &'static str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartCaptureBody {
+    bind: Option<String>,
+    allow_remote: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -341,6 +350,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mock_rules: Arc::new(Mutex::new(mock_rules)),
         mock_rules_path: Arc::new(mock_rules_path),
         plugins: Arc::new(plugins),
+        capture: CaptureProxy::new(),
     };
 
     let origins = allowed_origins()?;
@@ -363,6 +373,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/executions/{id}/cancel", post(cancel_execution))
         .route("/v1/secrets", put(put_secret))
         .route("/v1/ai/assist", post(ai_assist))
+        .route("/v1/capture/status", get(capture_status))
+        .route("/v1/capture/start", post(start_capture))
+        .route("/v1/capture/stop", post(stop_capture))
+        .route(
+            "/v1/capture/exchanges",
+            get(capture_exchanges).delete(clear_capture),
+        )
         .route(
             "/v1/cookies",
             get(list_cookies).put(set_cookie).delete(delete_cookie),
@@ -1038,6 +1055,36 @@ async fn ai_assist(
         .await
         .map(Json)
         .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))
+}
+
+async fn capture_status(State(state): State<AppState>) -> Json<CaptureStatus> {
+    Json(state.capture.status().await)
+}
+async fn start_capture(
+    State(state): State<AppState>,
+    Json(body): Json<StartCaptureBody>,
+) -> Result<Json<CaptureStatus>, (StatusCode, String)> {
+    let bind = body
+        .bind
+        .unwrap_or_else(|| "127.0.0.1:39219".into())
+        .parse()
+        .map_err(|error: std::net::AddrParseError| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    state
+        .capture
+        .start(bind, body.allow_remote.unwrap_or(false))
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))
+}
+async fn stop_capture(State(state): State<AppState>) -> Json<CaptureStatus> {
+    Json(state.capture.stop().await)
+}
+async fn capture_exchanges(State(state): State<AppState>) -> Json<Vec<CapturedExchange>> {
+    Json(state.capture.exchanges().await)
+}
+async fn clear_capture(State(state): State<AppState>) -> StatusCode {
+    state.capture.clear().await;
+    StatusCode::NO_CONTENT
 }
 
 async fn list_cookies(
