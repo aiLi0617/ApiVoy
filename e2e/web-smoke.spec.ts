@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.clear());
   await page.route("http://127.0.0.1:39217/**", (route) => route.abort());
   await page.goto("/");
 });
@@ -22,6 +21,7 @@ test("opens on the primary HTTP workbench and exposes every protocol", async ({ 
 test("switches workbenches and persists the selection", async ({ page }) => {
   await page.getByRole("tab", { name: "Redis", exact: true }).click();
   await expect(page.getByRole("tab", { name: "Redis", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("apivoy:active-workbench"))).toBe("redis");
   await page.reload();
   await expect(page.getByRole("tab", { name: "Redis", exact: true })).toHaveAttribute("aria-selected", "true");
 });
