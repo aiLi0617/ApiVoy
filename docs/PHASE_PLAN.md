@@ -101,7 +101,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | TCP | ✅ Driver + 双端工作台 | 文本/Hex、固定长度/分隔符分帧、系统根/自定义 CA TLS、SNI、定时重复发送、超时、取消、响应持久化，以及经配对 Token 保护的 Agent 持久 TCP 交互桥接均已实现 |
 | UDP | ✅ Driver + 双端工作台 | 文本/Hex、重复/定时发送、接收超时、取消和响应持久化已实现 |
 
-> P1 协议扩展已完成 SOAP、JSON-RPC、Redis；MQTT 3.1.1 发布/订阅与 AMQP 0-9-1 发布/消费已落地。MQTTS/QoS 2 及 Kafka/SQL 继续实施。
+> P1 协议扩展已完成 SOAP、JSON-RPC、Redis、AMQP 与 Kafka；MQTT 3.1.1 发布/订阅已落地。MQTTS/QoS 2 及 SQL 继续实施。
 
 ### 3.3 架构文档模块缺口
 
@@ -276,7 +276,7 @@ P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 /
 |------|------|------|
 | QuickJS 脚本 | 挂载同一生命周期；受控 API（request/response/variables/crypto/assert） | M1 生命周期 |
 | WASM 插件 | ✅ Wasmtime + 四类专用 WIT、权限模型、Ed25519 信任链与插件中心均已实现 | ADR-0003 |
-| 协议扩展 | 🟡 SOAP、JSON-RPC、Redis、AMQP 0-9-1 已完成；MQTT 发布/订阅已完成，MQTTS/QoS 2、Kafka、SQL 待实现 | AMQP 覆盖 AMQPS、拓扑声明/绑定、Publisher Confirm、手动/自动 ACK、Secret 认证、超时与取消 |
+| 协议扩展 | 🟡 SOAP、JSON-RPC、Redis、AMQP、Kafka 已完成；MQTT 发布/订阅已完成，MQTTS/QoS 2、SQL 待实现 | Kafka 覆盖 Produce、Consumer Group、同步提交、分区/Offset、TLS/mTLS、SASL PLAIN/SCRAM 与 Secret PEM |
 | Mock | 🟡 HTTP 规则、延迟、周期错误注入与 Web 管理台已完成；待补 WS、持久化和高级匹配 | 本地执行层 |
 | 集合运行器 | ✅ CLI 支持 RequestEnvelope/ApiVoy 项目 JSON、顺序/并发、失败即停、跨请求变量、JSON/CSV 数据迭代及 JSON/JUnit 报告；Desktop 提供集合报告页 | CLI + 断言 |
 | 代码生成 | 多语言片段 + 模板插件点 | 请求模型稳定 |

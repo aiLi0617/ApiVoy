@@ -12,6 +12,7 @@ use driver_amqp::AmqpDriver;
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
+use driver_kafka::KafkaDriver;
 use driver_mqtt::MqttDriver;
 use driver_redis::RedisDriver;
 use driver_rpc_http::{JsonRpcDriver, SoapDriver};
@@ -1322,6 +1323,7 @@ pub fn run() {
             engine.register(Arc::new(RedisDriver));
             engine.register(Arc::new(MqttDriver));
             engine.register(Arc::new(AmqpDriver));
+            engine.register(Arc::new(KafkaDriver));
             let plugins = PluginManager::new_from_env(
                 db_path
                     .parent()

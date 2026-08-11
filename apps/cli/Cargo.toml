@@ -22,6 +22,7 @@ driver-rpc-http = { workspace = true }
 driver-redis = { workspace = true }
 driver-mqtt = { workspace = true }
 driver-amqp = { workspace = true }
+driver-kafka = { workspace = true }
 core-domain = { workspace = true }
 execution-engine = { workspace = true }
 serde = { workspace = true }

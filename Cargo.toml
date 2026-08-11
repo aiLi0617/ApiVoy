@@ -15,6 +15,7 @@ members = [
   "crates/driver-redis",
   "crates/driver-mqtt",
   "crates/driver-amqp",
+  "crates/driver-kafka",
   "crates/plugin-runtime",
   "crates/capture-proxy",
   "crates/local-store",
@@ -66,6 +67,7 @@ driver-rpc-http = { path = "crates/driver-rpc-http" }
 driver-redis = { path = "crates/driver-redis" }
 driver-mqtt = { path = "crates/driver-mqtt" }
 driver-amqp = { path = "crates/driver-amqp" }
+driver-kafka = { path = "crates/driver-kafka" }
 plugin-runtime = { path = "crates/plugin-runtime" }
 capture-proxy = { path = "crates/capture-proxy" }
 local-store = { path = "crates/local-store" }
