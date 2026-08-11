@@ -24,6 +24,7 @@ export { RedisWorkbench, type RedisWorkbenchProps, type RedisWorkbenchRequest } 
 export { MqttWorkbench, type MqttWorkbenchProps, type MqttWorkbenchRequest } from "./MqttWorkbench";
 export { AmqpWorkbench, type AmqpWorkbenchProps, type AmqpWorkbenchRequest } from "./AmqpWorkbench";
 export { KafkaWorkbench, type KafkaWorkbenchProps, type KafkaWorkbenchRequest } from "./KafkaWorkbench";
+export { SqlWorkbench, type SqlWorkbenchProps, type SqlWorkbenchRequest } from "./SqlWorkbench";
 export { exportTeamSnapshot, restoreTeamSnapshot, type TeamSnapshot, type TeamRestoreAdapter } from "./teamSnapshot";
 export {
   HttpWorkbench,

@@ -26,6 +26,7 @@ driver-redis = { workspace = true }
 driver-mqtt = { workspace = true }
 driver-amqp = { workspace = true }
 driver-kafka = { workspace = true }
+driver-sql = { workspace = true }
 execution-engine = { workspace = true }
 futures = { workspace = true }
 local-store = { workspace = true }

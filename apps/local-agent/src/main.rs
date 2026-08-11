@@ -32,6 +32,7 @@ use driver_kafka::KafkaDriver;
 use driver_mqtt::MqttDriver;
 use driver_redis::RedisDriver;
 use driver_rpc_http::{JsonRpcDriver, SoapDriver};
+use driver_sql::SqlDriver;
 use driver_sse::SseDriver;
 use driver_tcp_udp::{TcpDriver, UdpDriver};
 use driver_websocket::WebSocketDriver;
@@ -344,6 +345,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.register(Arc::new(MqttDriver));
     engine.register(Arc::new(AmqpDriver));
     engine.register(Arc::new(KafkaDriver));
+    engine.register(Arc::new(SqlDriver));
 
     let mock_rules_path = config_dir().join("mock-rules.json");
     let mock_rules = load_mock_rules(&mock_rules_path);

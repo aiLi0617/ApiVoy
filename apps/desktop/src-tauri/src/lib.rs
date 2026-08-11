@@ -16,6 +16,7 @@ use driver_kafka::KafkaDriver;
 use driver_mqtt::MqttDriver;
 use driver_redis::RedisDriver;
 use driver_rpc_http::{JsonRpcDriver, SoapDriver};
+use driver_sql::SqlDriver;
 use driver_sse::SseDriver;
 use driver_tcp_udp::{TcpDriver, UdpDriver};
 use driver_websocket::WebSocketDriver;
@@ -1324,6 +1325,7 @@ pub fn run() {
             engine.register(Arc::new(MqttDriver));
             engine.register(Arc::new(AmqpDriver));
             engine.register(Arc::new(KafkaDriver));
+            engine.register(Arc::new(SqlDriver));
             let plugins = PluginManager::new_from_env(
                 db_path
                     .parent()
