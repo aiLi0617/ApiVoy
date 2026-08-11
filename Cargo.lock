@@ -134,6 +134,7 @@ dependencies = [
  "driver-graphql",
  "driver-grpc",
  "driver-http",
+ "driver-mqtt",
  "driver-redis",
  "driver-rpc-http",
  "driver-sse",
@@ -158,6 +159,7 @@ dependencies = [
  "driver-graphql",
  "driver-grpc",
  "driver-http",
+ "driver-mqtt",
  "driver-redis",
  "driver-rpc-http",
  "driver-sse",
@@ -187,6 +189,7 @@ dependencies = [
  "driver-graphql",
  "driver-grpc",
  "driver-http",
+ "driver-mqtt",
  "driver-redis",
  "driver-rpc-http",
  "driver-sse",
@@ -1301,6 +1304,21 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "driver-mqtt"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "core-domain",
+ "event-stream",
+ "execution-engine",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

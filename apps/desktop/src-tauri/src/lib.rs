@@ -11,6 +11,7 @@ use core_domain::{
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
+use driver_mqtt::MqttDriver;
 use driver_redis::RedisDriver;
 use driver_rpc_http::{JsonRpcDriver, SoapDriver};
 use driver_sse::SseDriver;
@@ -1318,6 +1319,7 @@ pub fn run() {
             engine.register(Arc::new(JsonRpcDriver::default()));
             engine.register(Arc::new(SoapDriver::default()));
             engine.register(Arc::new(RedisDriver));
+            engine.register(Arc::new(MqttDriver));
             let plugins = PluginManager::new_from_env(
                 db_path
                     .parent()

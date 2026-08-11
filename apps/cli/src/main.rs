@@ -5,6 +5,7 @@ use core_domain::{ExecutionEvent, ExecutionState, HttpPayload, ProtocolPayload, 
 use driver_graphql::GraphqlDriver;
 use driver_grpc::GrpcDriver;
 use driver_http::HttpDriver;
+use driver_mqtt::MqttDriver;
 use driver_redis::RedisDriver;
 use driver_rpc_http::{JsonRpcDriver, SoapDriver};
 use driver_sse::SseDriver;
@@ -312,6 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.register(Arc::new(JsonRpcDriver::default()));
     engine.register(Arc::new(SoapDriver::default()));
     engine.register(Arc::new(RedisDriver));
+    engine.register(Arc::new(MqttDriver));
     let engine = Arc::new(engine);
 
     match cli.command {
