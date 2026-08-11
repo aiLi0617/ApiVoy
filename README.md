@@ -69,7 +69,7 @@ Smoke checklist: [`docs/SMOKE_CHECKLIST.md`](docs/SMOKE_CHECKLIST.md).
 ## Phase focus
 
 - **P0 / MVP**: local-first Desktop + Web + Agent; seven protocols; no cloud sync
-- **P1**: WASM plugins, QuickJS scripts, SOAP 1.1/1.2 and JSON-RPC 2.0, expanding MQ/DB drivers, Mock, CLI automation
+- **P1**: WASM plugins, QuickJS scripts, SOAP 1.1/1.2, JSON-RPC 2.0 and Redis RESP2/RESP3, expanding MQ/DB drivers, Mock, CLI automation
 - **P2**: OIDC/team collaboration and a complete private Docker deployment under [`deploy/`](./deploy/README.md)
 
 The Web and Desktop apps also include a local-first AI workbench. It supports OpenAI-compatible providers and local models, stores API keys only through the existing secret store, and never executes generated requests without an explicit preview/apply step.

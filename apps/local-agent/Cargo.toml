@@ -22,6 +22,7 @@ driver-graphql = { workspace = true }
 driver-websocket = { workspace = true }
 driver-grpc = { workspace = true }
 driver-rpc-http = { workspace = true }
+driver-redis = { workspace = true }
 execution-engine = { workspace = true }
 futures = { workspace = true }
 local-store = { workspace = true }
