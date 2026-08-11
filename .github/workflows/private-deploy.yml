@@ -1,0 +1,31 @@
+name: Private deployment images
+
+on:
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "apps/web/**"
+      - "apps/local-agent/**"
+      - "services/collaboration-server/**"
+      - ".github/workflows/private-deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "apps/web/**"
+      - "apps/local-agent/**"
+      - "services/collaboration-server/**"
+      - ".github/workflows/private-deploy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose model
+        run: docker compose --env-file deploy/.env.example -f deploy/compose.yaml config --quiet
+      - name: Build private deployment images
+        run: docker compose --env-file deploy/.env.example -f deploy/compose.yaml build

@@ -70,6 +70,7 @@ Smoke checklist: [`docs/SMOKE_CHECKLIST.md`](docs/SMOKE_CHECKLIST.md).
 
 - **P0 / MVP**: local-first Desktop + Web + Agent; seven protocols; no cloud sync
 - **P1**: WASM plugins, QuickJS scripts, MQ/DB drivers, Mock, CLI automation
+- **P2**: OIDC/team collaboration and a complete private Docker deployment under [`deploy/`](./deploy/README.md)
 - **P2**: team sync, Java collaboration services, enterprise features (closed-source)
 
 See [`docs/PHASE_PLAN.md`](docs/PHASE_PLAN.md) and [`docs/BRANDING.md`](docs/BRANDING.md).

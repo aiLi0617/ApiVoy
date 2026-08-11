@@ -1,10 +1,11 @@
 import { useEffect, useState, type CSSProperties } from "react";
+import { defaultCollaborationUrl } from "./runtimeConfig";
 
 type Auth = { token: string; expiresAt: string; organizationId: string; role: string; user: { id: string; email: string; displayName: string } };
 type Config = { enabled: boolean; loginPath?: string };
 
 export function SsoWorkbench() {
-  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? "http://localhost:8088");
+  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? defaultCollaborationUrl());
   const [config, setConfig] = useState<Config | null>(null);
   const [message, setMessage] = useState("");
   const [connected, setConnected] = useState<Auth | null>(null);

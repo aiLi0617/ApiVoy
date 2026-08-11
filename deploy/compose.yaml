@@ -1,0 +1,88 @@
+name: apivoy
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: apivoy
+      POSTGRES_USER: apivoy
+      POSTGRES_PASSWORD: ${APIVOY_DATABASE_PASSWORD:?set APIVOY_DATABASE_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apivoy"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  collaboration:
+    build:
+      context: ../services/collaboration-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APIVOY_COLLAB_DATABASE_URL: jdbc:postgresql://postgres:5432/apivoy
+      APIVOY_COLLAB_DATABASE_USER: apivoy
+      APIVOY_COLLAB_DATABASE_PASSWORD: ${APIVOY_DATABASE_PASSWORD}
+      APIVOY_COLLAB_BOOTSTRAP_TOKEN: ${APIVOY_BOOTSTRAP_TOKEN:?set APIVOY_BOOTSTRAP_TOKEN}
+      APIVOY_COLLAB_ALLOWED_ORIGINS: ${APIVOY_PUBLIC_ORIGIN:-http://localhost:8080}
+      APIVOY_COLLAB_SSO_ENABLED: ${APIVOY_SSO_ENABLED:-false}
+      APIVOY_COLLAB_SSO_ORGANIZATION_ID: ${APIVOY_SSO_ORGANIZATION_ID:-}
+      APIVOY_COLLAB_SSO_WEB_REDIRECT: ${APIVOY_PUBLIC_ORIGIN:-http://localhost:8080}
+      APIVOY_COLLAB_OIDC_CLIENT_ID: ${APIVOY_OIDC_CLIENT_ID:-disabled}
+      APIVOY_COLLAB_OIDC_CLIENT_SECRET: ${APIVOY_OIDC_CLIENT_SECRET:-disabled}
+      APIVOY_COLLAB_OIDC_AUTHORIZATION_URI: ${APIVOY_OIDC_AUTHORIZATION_URI:-https://invalid.local/authorize}
+      APIVOY_COLLAB_OIDC_TOKEN_URI: ${APIVOY_OIDC_TOKEN_URI:-https://invalid.local/token}
+      APIVOY_COLLAB_OIDC_JWK_SET_URI: ${APIVOY_OIDC_JWK_SET_URI:-https://invalid.local/jwks}
+      APIVOY_COLLAB_OIDC_USER_INFO_URI: ${APIVOY_OIDC_USER_INFO_URI:-https://invalid.local/userinfo}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/actuator/health"]
+      interval: 10s
+      timeout: 4s
+      retries: 20
+
+  agent:
+    build:
+      context: ..
+      dockerfile: deploy/agent.Dockerfile
+    restart: unless-stopped
+    environment:
+      APIVOY_AGENT_BIND: 0.0.0.0:39217
+      APIVOY_AGENT_TOKEN: ${APIVOY_AGENT_TOKEN:?set APIVOY_AGENT_TOKEN}
+      APIVOY_CONFIG_DIR: /var/lib/apivoy
+      APIVOY_ALLOWED_ORIGINS: ${APIVOY_PUBLIC_ORIGIN:-http://localhost:8080}
+    volumes:
+      - agent-data:/var/lib/apivoy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:39217/health"]
+      interval: 10s
+      timeout: 4s
+      retries: 20
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      agent:
+        condition: service_healthy
+      collaboration:
+        condition: service_healthy
+    environment:
+      APIVOY_PUBLIC_AGENT_PATH: /agent
+      APIVOY_PUBLIC_COLLABORATION_PATH: /collaboration
+      APIVOY_AGENT_TOKEN: ${APIVOY_AGENT_TOKEN}
+    ports:
+      - "${APIVOY_WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 4s
+      retries: 10
+
+volumes:
+  postgres-data:
+  agent-data:

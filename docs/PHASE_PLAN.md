@@ -87,7 +87,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | F-017 | 插件中心 | P1 | P1 | ✅ | Wasmtime Component-only 宿主、Transformer/Protocol/Auth/Importer 专用 WIT 入口、权限校验、SHA-256、防篡改、Ed25519 发布者信任链、内存/fuel 限制、Agent/Desktop 安装/启停/卸载/按类型调用 API 与 Web/Desktop 插件中心已实现 |
 | F-018 | AI 辅助 | P2 | P2 | ❌ | — |
 | F-019 | 流量代理抓包 | P2 | P2 | ❌ | — |
-| F-020 | 私有化部署 | P2 | P2 | ❌ | — |
+| F-020 | 私有化部署 | P2 | P2 | ✅ | 单入口 Nginx + Web + Rust Agent + Java 协作/OIDC + PostgreSQL Compose 编排；运行时前端配置、内部反向代理、最小端口暴露、健康检查、持久化卷、环境模板、部署文档与镜像构建 CI 已完成 |
 
 ### 3.2 MVP 协议矩阵（G1 / AC-03）
 
@@ -120,7 +120,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | QuickJS 脚本 | ✅ | 受限运行时、request/response/variables/console/assert/crypto API、HTTP 双端编辑器和跨请求变量数据链已接入 |
 | Java 协作微服务拆分 | 🟡 | 可部署单体已覆盖 identity/OIDC SSO/workspace/sync/audit，支持 H2 本地与 PostgreSQL/Docker 私有化；mock/automation 拆分待后续切片 |
 | 云协议网关 `protocol-gateway` | ❌ | P2 |
-| CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、全工作区测试、Clippy、RustSec、CycloneDX SBOM 与 tag 草稿发布；待补真实安装/升级/卸载和浏览器 E2E 冒烟 |
+| CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、全工作区测试、Clippy、RustSec、CycloneDX SBOM、私有化 Compose 模型/镜像构建与 tag 草稿发布；待补真实安装/升级/卸载和浏览器 E2E 冒烟 |
 
 ### 3.4 MVP 验收标准（AC）对照
 

@@ -20,10 +20,11 @@ import type {
   PluginManifest,
 } from "@apivoy/ui";
 
-const AGENT_BASE =
+const runtime = (window as Window & { __APIVOY_CONFIG__?: { agentUrl?: string; agentToken?: string } }).__APIVOY_CONFIG__;
+const AGENT_BASE = runtime?.agentUrl ??
   (import.meta.env.VITE_APIVOY_AGENT_URL as string | undefined) ?? "http://127.0.0.1:39217";
 
-const AGENT_TOKEN = import.meta.env.VITE_APIVOY_AGENT_TOKEN as string | undefined;
+const AGENT_TOKEN = runtime?.agentToken ?? import.meta.env.VITE_APIVOY_AGENT_TOKEN as string | undefined;
 let activeAgentToken = AGENT_TOKEN;
 let sessionPromise: Promise<void> | null = null;
 if (AGENT_TOKEN) localStorage.setItem("apivoy-agent-token", AGENT_TOKEN);

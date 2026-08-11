@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { defaultCollaborationUrl } from "./runtimeConfig";
 
 type Auth = { token: string; organizationId: string; role: string; user: { id: string; displayName: string } };
 type Comment = { id: string; workspaceId: string; actorId: string; actorName: string; parentId: string | null; body: string; resolvedAt: string | null; resolvedBy: string | null; createdAt: string; updatedAt: string };
 
 export function CommentsWorkbench() {
   const [auth, setAuth] = useState<Auth | null>(() => readAuth());
-  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? "http://localhost:8088");
+  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? defaultCollaborationUrl());
   const [workspaceId, setWorkspaceId] = useState("shared-workspace");
   const [comments, setComments] = useState<Comment[]>([]);
   const [body, setBody] = useState("");
@@ -14,7 +15,7 @@ export function CommentsWorkbench() {
   const [loading, setLoading] = useState(false);
   const canResolve = auth ? ["OWNER", "ADMIN", "EDITOR"].includes(auth.role) : false;
 
-  useEffect(() => { const sync = () => { setAuth(readAuth()); setBaseUrl(localStorage.getItem("apivoy:collaboration-url") ?? "http://localhost:8088"); }; window.addEventListener("storage", sync); window.addEventListener("focus", sync); return () => { window.removeEventListener("storage", sync); window.removeEventListener("focus", sync); }; }, []);
+  useEffect(() => { const sync = () => { setAuth(readAuth()); setBaseUrl(localStorage.getItem("apivoy:collaboration-url") ?? defaultCollaborationUrl()); }; window.addEventListener("storage", sync); window.addEventListener("focus", sync); return () => { window.removeEventListener("storage", sync); window.removeEventListener("focus", sync); }; }, []);
   const request = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
     if (!auth) throw new Error("请先在 Team 页签登录团队空间");
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}`, ...(init?.headers ?? {}) } });

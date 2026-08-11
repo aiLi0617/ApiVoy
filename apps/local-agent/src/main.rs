@@ -1,6 +1,6 @@
 //! ApiVoy Local Agent.
 //!
-//! Listens on 127.0.0.1 only. Requires a pairing Bearer token on protected routes.
+//! Listens on 127.0.0.1 by default. Container deployments may explicitly override the bind address.
 //! Shares the same protocol-core crates as Desktop; ships as an independent binary.
 
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use axum::body::Body;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, HeaderName, Method, StatusCode};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -151,7 +151,7 @@ struct HealthResponse {
     service: &'static str,
     version: &'static str,
     agent_version: &'static str,
-    bind: &'static str,
+    bind: String,
     protocol_api_version: &'static str,
     min_protocol_api_version: &'static str,
     max_protocol_api_version: &'static str,
@@ -340,10 +340,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         plugins: Arc::new(plugins),
     };
 
+    let origins = allowed_origins()?;
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::exact(
-            "http://localhost:5180".parse().expect("origin"),
-        ))
+        .allow_origin(AllowOrigin::list(origins))
         .allow_headers(AllowHeaders::list([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
@@ -421,7 +420,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(cors)
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 39217));
+    let addr = agent_bind_addr()?;
     info!("ApiVoy Local Agent listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -442,6 +441,22 @@ fn config_dir() -> PathBuf {
         return PathBuf::from(home).join(".config").join("apivoy");
     }
     PathBuf::from(".apivoy")
+}
+
+fn agent_bind_addr() -> Result<SocketAddr, Box<dyn std::error::Error>> {
+    Ok(std::env::var("APIVOY_AGENT_BIND")
+        .unwrap_or_else(|_| "127.0.0.1:39217".to_string())
+        .parse()?)
+}
+
+fn allowed_origins() -> Result<Vec<HeaderValue>, Box<dyn std::error::Error>> {
+    std::env::var("APIVOY_ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:5180".to_string())
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse().map_err(Into::into))
+        .collect()
 }
 
 fn plugin_permission_grants() -> Vec<PluginPermission> {
@@ -553,7 +568,7 @@ async fn health() -> Json<HealthResponse> {
         service: "apivoy-agent",
         version: env!("CARGO_PKG_VERSION"),
         agent_version: env!("CARGO_PKG_VERSION"),
-        bind: "127.0.0.1",
+        bind: std::env::var("APIVOY_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:39217".into()),
         protocol_api_version: PROTOCOL_API_VERSION,
         min_protocol_api_version: PROTOCOL_API_VERSION,
         max_protocol_api_version: PROTOCOL_API_VERSION,

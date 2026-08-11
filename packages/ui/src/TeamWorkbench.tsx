@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { defaultCollaborationUrl } from "./runtimeConfig";
 
 type Auth = { token: string; expiresAt: string; organizationId: string; role: string; user: { id: string; email: string; displayName: string } };
 type Member = { id: string; email: string; displayName: string; role: string };
@@ -7,7 +8,7 @@ type Conflict = { currentRevision: number; currentDocument: unknown };
 
 export interface TeamWorkbenchProps { onExportSnapshot?: () => Promise<unknown>; onRestoreSnapshot?: (snapshot: unknown) => Promise<void> }
 export function TeamWorkbench({ onExportSnapshot, onRestoreSnapshot }: TeamWorkbenchProps = {}) {
-  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? "http://localhost:8088");
+  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? defaultCollaborationUrl());
   const [auth, setAuth] = useState<Auth | null>(() => { try { return JSON.parse(localStorage.getItem("apivoy:collaboration-auth") ?? "null"); } catch { return null; } });
   const [mode, setMode] = useState<"login" | "bootstrap">("login");
   const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [displayName, setDisplayName] = useState(""); const [organizationName, setOrganizationName] = useState(""); const [bootstrapToken, setBootstrapToken] = useState("");
