@@ -13,6 +13,8 @@ import {
   CollectionRunner,
   WorkbenchDeck,
   TeamWorkbench,
+  exportTeamSnapshot,
+  restoreTeamSnapshot,
   WorkspaceExplorer,
   type HistoryFilter,
   type HttpWorkbenchRequest,
@@ -408,7 +410,7 @@ export function App() {
         onDelete={async (id) => { await agentJson<void>(`/v1/mock-rules/${id}`, { method: "DELETE" }); }}
       />
       <CollectionRunner collectionId={selectedCollectionId} onRun={(collectionId, failFast) => invoke<CollectionRunCase[]>("run_collection", { collectionId, failFast })} />
-      <TeamWorkbench />
+      <TeamWorkbench onExportSnapshot={async () => { const snapshotTree = await invoke<WorkspaceTree>("get_workspace_tree"); return exportTeamSnapshot(snapshotTree, async (id) => (await invoke<StoredRequest | null>("get_request", { id }))?.envelope ?? null); }} onRestoreSnapshot={async (snapshot) => { await restoreTeamSnapshot(snapshot, { getTree: async () => invoke<WorkspaceTree>("get_workspace_tree"), createWorkspace: async (name) => invoke("create_workspace", { name, rootPath: null }), createProject: async (workspaceId, name) => invoke("create_project", { workspaceId, name }), createCollection: async (projectId, parentId, name) => invoke("create_collection", { projectId, parentId, name }), saveEnvelope: async (request, projectId, collectionId) => { await invoke("save_envelope", { request, projectId, collectionId }); } }); await refreshTree(); }} />
       </WorkbenchDeck>
     </AppShell>
   );

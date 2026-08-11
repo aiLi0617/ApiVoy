@@ -10,6 +10,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 
 @SpringBootTest(properties={"apivoy.bootstrap-token=test-bootstrap","spring.datasource.url=jdbc:h2:mem:collaboration;DB_CLOSE_DELAY=-1","spring.jpa.hibernate.ddl-auto=create-drop"})
 @AutoConfigureMockMvc
@@ -24,6 +25,9 @@ class CollaborationApiTests {
           {"email":"owner@apivoy.dev","password":"correct-horse-battery","displayName":"Owner","organizationName":"Voyagers","deviceName":"test"}
         """)).andExpect(status().isOk()).andReturn());
         String ownerToken=owner.get("token").asText(), organizationId=owner.get("organizationId").asText();
+
+        mvc.perform(options("/v1/auth/login").header("Origin","http://localhost:5180").header("Access-Control-Request-Method","POST")).andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Origin","http://localhost:5180"));
+        mvc.perform(get("/v1/organizations/{org}/events",organizationId).header("Authorization","Bearer "+ownerToken)).andExpect(request().asyncStarted());
 
         mvc.perform(post("/v1/organizations/{id}/members/provision",organizationId).header("Authorization","Bearer "+ownerToken).contentType(MediaType.APPLICATION_JSON).content("""
           {"email":"viewer@apivoy.dev","password":"viewer-password","displayName":"Viewer","role":"VIEWER"}

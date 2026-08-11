@@ -24,6 +24,7 @@ class ApiController {
     @PutMapping("/organizations/{organizationId}/workspaces/{workspaceId}") CollaborationService.WorkspaceView push(Authentication auth,@PathVariable String organizationId,@PathVariable String workspaceId,@Valid @RequestBody PushWorkspace body){return service.push(actor(auth),organizationId,workspaceId,body.baseRevision,body.document,body.patch);}
     @GetMapping("/organizations/{organizationId}/workspaces/{workspaceId}/changes") List<CollaborationService.ChangeView> changes(Authentication auth,@PathVariable String organizationId,@PathVariable String workspaceId,@RequestParam(defaultValue="0") long afterRevision){return service.changes(actor(auth),organizationId,workspaceId,afterRevision);}
     @GetMapping("/organizations/{organizationId}/audit") List<CollaborationService.AuditView> audit(Authentication auth,@PathVariable String organizationId){return service.audits(actor(auth),organizationId);}
+    @GetMapping(path="/organizations/{organizationId}/events",produces=MediaType.TEXT_EVENT_STREAM_VALUE) org.springframework.web.servlet.mvc.method.annotation.SseEmitter events(Authentication auth,@PathVariable String organizationId){return service.subscribe(actor(auth),organizationId);}
     private String actor(Authentication auth){return String.valueOf(auth.getPrincipal());}
 
     record Bootstrap(@Email String email,@Size(min=10,max=200) String password,@NotBlank String displayName,@NotBlank String organizationName,String deviceName){}

@@ -296,7 +296,7 @@ async function createWorkspaceRecord<T>(path: string, body: unknown): Promise<T>
   return res.json() as Promise<T>;
 }
 
-export const createProjectViaAgent = (workspaceId: string, name: string) => mutateWorkspace("/v1/projects", "POST", { workspaceId, name });
+export const createProjectViaAgent = (workspaceId: string, name: string) => createWorkspaceRecord<WorkspaceTree["projects"][number]>("/v1/projects", { workspaceId, name });
 export const createWorkspaceViaAgent = (name: string) => createWorkspaceRecord<WorkspaceTree["workspaces"][number]>("/v1/workspaces", { name });
 export const renameWorkspaceViaAgent = (id: string, name: string) => mutateWorkspace(`/v1/workspaces/${id}`, "PATCH", { name });
 export const archiveWorkspaceViaAgent = (id: string, archived: boolean) => mutateWorkspace(`/v1/workspaces/${id}/archive`, "PATCH", { archived });

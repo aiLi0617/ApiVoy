@@ -7,6 +7,7 @@ P2 团队协作服务的可部署单体基线，使用 Java 21、Spring Boot 3.5
 - 首位 Owner 安全引导、邮箱密码登录、30 天设备会话与注销；
 - 组织成员和 `OWNER / ADMIN / EDITOR / RUNNER / VIEWER` 五级 RBAC；
 - 工作区快照、单调 revision、增量 change feed 与 `409 revision_conflict` 冲突响应；
+- 授权成员可通过组织事件 SSE 实时接收 `workspace.changed` 通知；
 - 高风险成员操作和同步写入的不可变审计记录；
 - H2 本地运行及 PostgreSQL 私有化部署配置；Secret 内容不进入同步 API。
 
@@ -32,3 +33,5 @@ docker compose up --build
 ## 同步契约
 
 客户端先读取工作区当前 `revision`，再将完整无 Secret 快照和增量 patch 发送至 `PUT /v1/organizations/{organizationId}/workspaces/{workspaceId}`。`baseRevision` 不等于服务端 revision 时返回 `409`，响应携带 `currentRevision` 和 `currentDocument`，由客户端执行人工或自动合并后重试。
+
+`GET /v1/organizations/{organizationId}/events` 提供经过 Bearer 鉴权的 SSE 变更流。跨域来源默认仅允许本地 Web 与 Tauri，可通过 `APIVOY_COLLAB_ALLOWED_ORIGINS` 显式配置。

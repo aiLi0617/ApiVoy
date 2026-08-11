@@ -15,6 +15,7 @@ export { getLocale, setLocale, translate, useI18n, type Locale } from "./i18n";
 export { WorkbenchDeck, type WorkbenchDeckProps, type WorkbenchTab } from "./WorkbenchDeck";
 export { CollectionRunner, type CollectionRunnerProps, type CollectionRunCase } from "./CollectionRunner";
 export { TeamWorkbench } from "./TeamWorkbench";
+export { exportTeamSnapshot, restoreTeamSnapshot, type TeamSnapshot, type TeamRestoreAdapter } from "./teamSnapshot";
 export {
   HttpWorkbench,
   type HttpWorkbenchProps,
