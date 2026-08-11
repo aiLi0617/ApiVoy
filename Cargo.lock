@@ -1759,9 +1759,13 @@ dependencies = [
  "core-domain",
  "event-stream",
  "execution-engine",
+ "rustls",
+ "rustls-pemfile",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]

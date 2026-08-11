@@ -13,8 +13,12 @@ core-domain = { workspace = true }
 event-stream = { workspace = true }
 execution-engine = { workspace = true }
 serde_json = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 tokio = { workspace = true, features = ["io-util", "net", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio-util = { workspace = true }
+webpki-roots = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }

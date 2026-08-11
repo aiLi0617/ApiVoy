@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{io::BufReader, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -10,10 +10,14 @@ use core_domain::{
 use event_stream::EventSink;
 use execution_engine::{DriverDescriptor, DriverError, ProtocolDriver, ValidationReport};
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration};
+use tokio_rustls::{rustls, TlsConnector};
 use tokio_util::sync::CancellationToken;
+
+trait AsyncSocket: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> AsyncSocket for T {}
 
 #[derive(Debug, Default)]
 pub struct MqttDriver;
@@ -31,6 +35,8 @@ struct MqttRequest {
     qos: u8,
     retain: bool,
     receive_limit: usize,
+    ca_pem: Option<String>,
+    server_name: Option<String>,
 }
 
 fn raw(value: &Value) -> &Value {
@@ -114,17 +120,34 @@ fn request_payload(request: &RequestEnvelope) -> Result<MqttRequest, DriverError
             .and_then(Value::as_u64)
             .unwrap_or(1)
             .clamp(1, 10_000) as usize,
+        ca_pem: value
+            .get("caPemRef")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(|secret_ref| {
+                request
+                    .runtime_secrets
+                    .get(secret_ref)
+                    .cloned()
+                    .ok_or_else(|| {
+                        DriverError::Validation(format!(
+                            "MQTT CA secret `{secret_ref}` is unavailable"
+                        ))
+                    })
+            })
+            .transpose()?,
+        server_name: value
+            .get("serverName")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
     })
 }
 
-fn address(target: &str) -> Result<String, DriverError> {
-    if target.starts_with("mqtts://") {
-        return Err(DriverError::Validation(
-            "MQTTS is not enabled in this build; use mqtt:// or a TLS tunnel".into(),
-        ));
-    }
+fn target(target: &str) -> Result<(String, bool), DriverError> {
+    let tls = target.starts_with("mqtts://");
     let value = target
-        .strip_prefix("mqtt://")
+        .strip_prefix(if tls { "mqtts://" } else { "mqtt://" })
         .unwrap_or(target)
         .split('/')
         .next()
@@ -132,11 +155,74 @@ fn address(target: &str) -> Result<String, DriverError> {
     if value.is_empty() {
         return Err(DriverError::Validation("MQTT target is required".into()));
     }
-    Ok(if value.contains(':') {
-        value.to_owned()
-    } else {
-        format!("{value}:1883")
-    })
+    Ok((
+        if value.contains(':') {
+            value.to_owned()
+        } else {
+            format!("{value}:{}", if tls { 8883 } else { 1883 })
+        },
+        tls,
+    ))
+}
+
+fn target_host(address: &str) -> String {
+    address
+        .strip_prefix('[')
+        .and_then(|value| value.split_once(']'))
+        .map(|(host, _)| host.to_owned())
+        .or_else(|| address.rsplit_once(':').map(|(host, _)| host.to_owned()))
+        .unwrap_or_else(|| address.to_owned())
+}
+
+async fn connect(
+    target_value: &str,
+    payload: &MqttRequest,
+    request: &RequestEnvelope,
+) -> Result<Box<dyn AsyncSocket>, DriverError> {
+    let (address, tls) = target(target_value)?;
+    let stream = TcpStream::connect(&address)
+        .await
+        .map_err(|error| DriverError::Connection(error.to_string()))?;
+    if !tls {
+        return Ok(Box::new(stream));
+    }
+    if !request.tls.verify {
+        return Err(DriverError::Validation(
+            "MQTTS certificate verification cannot be disabled".into(),
+        ));
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    if let Some(pem) = &payload.ca_pem {
+        let mut reader = BufReader::new(pem.as_bytes());
+        let certificates = rustls_pemfile::certs(&mut reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| DriverError::Validation(format!("invalid MQTT CA PEM: {error}")))?;
+        if certificates.is_empty() {
+            return Err(DriverError::Validation(
+                "MQTT CA PEM contains no certificates".into(),
+            ));
+        }
+        for certificate in certificates {
+            roots.add(certificate).map_err(|error| {
+                DriverError::Validation(format!("invalid MQTT CA certificate: {error}"))
+            })?;
+        }
+    }
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let name = payload
+        .server_name
+        .clone()
+        .unwrap_or_else(|| target_host(&address));
+    let server_name = rustls::pki_types::ServerName::try_from(name)
+        .map_err(|error| DriverError::Validation(format!("invalid MQTTS server name: {error}")))?;
+    let tls = TlsConnector::from(Arc::new(config))
+        .connect(server_name, stream)
+        .await
+        .map_err(|error| DriverError::Tls(error.to_string()))?;
+    Ok(Box::new(tls))
 }
 
 fn push_utf8(output: &mut Vec<u8>, value: &str) -> Result<(), DriverError> {
@@ -217,7 +303,7 @@ fn subscribe_packet(topic: &str, qos: u8, packet_id: u16) -> Result<Vec<u8>, Dri
 }
 
 async fn read_packet(
-    stream: &mut TcpStream,
+    stream: &mut dyn AsyncSocket,
     timeout_ms: u64,
     cancel: &CancellationToken,
 ) -> Result<(u8, Vec<u8>), DriverError> {
@@ -309,6 +395,8 @@ impl ProtocolDriver for MqttDriver {
                 "subscribe".into(),
                 "qos0".into(),
                 "qos1".into(),
+                "qos2".into(),
+                "tls".into(),
                 "auth".into(),
                 "retain".into(),
                 "cancel".into(),
@@ -317,7 +405,7 @@ impl ProtocolDriver for MqttDriver {
     }
     fn validate(&self, request: &RequestEnvelope) -> ValidationReport {
         let mut report = ValidationReport::ok();
-        if let Err(error) = address(&request.target) {
+        if let Err(error) = target(&request.target) {
             report.errors.push(error.to_string());
         }
         match request_payload(request) {
@@ -330,10 +418,8 @@ impl ProtocolDriver for MqttDriver {
                 if payload.topic.is_empty() {
                     report.errors.push("MQTT topic is required".into());
                 }
-                if payload.qos > 1 {
-                    report
-                        .errors
-                        .push("this MQTT driver supports QoS 0 or 1".into());
+                if payload.qos > 2 {
+                    report.errors.push("MQTT QoS must be 0, 1, or 2".into());
                 }
             }
             Err(error) => report.errors.push(error.to_string()),
@@ -350,19 +436,19 @@ impl ProtocolDriver for MqttDriver {
         let started_at = Utc::now();
         let wall = Instant::now();
         let payload = request_payload(&request)?;
-        let address = address(&request.target)?;
+        target(&request.target)?;
         events
             .emit(ExecutionEvent::StateChanged {
                 state: ExecutionState::Running,
                 phase: Some(ExecutionPhase::Connect),
             })
             .await;
-        let mut stream = tokio::select! { _ = cancel.cancelled() => return Err(DriverError::Cancelled), result = timeout(Duration::from_millis(request.timeout_ms.max(1)), TcpStream::connect(address)) => result.map_err(|_| DriverError::Timeout("MQTT connection timed out".into()))?.map_err(|error| DriverError::Connection(error.to_string()))? };
+        let mut stream = tokio::select! { _ = cancel.cancelled() => return Err(DriverError::Cancelled), result = timeout(Duration::from_millis(request.timeout_ms.max(1)), connect(&request.target, &payload, &request)) => result.map_err(|_| DriverError::Timeout("MQTT connection timed out".into()))?? };
         stream
             .write_all(&connect_packet(&payload)?)
             .await
             .map_err(|error| DriverError::Connection(error.to_string()))?;
-        let (header, connack) = read_packet(&mut stream, request.timeout_ms, &cancel).await?;
+        let (header, connack) = read_packet(&mut *stream, request.timeout_ms, &cancel).await?;
         if header >> 4 != 2 || connack.len() != 2 {
             return Err(DriverError::Protocol("expected MQTT CONNACK".into()));
         }
@@ -394,10 +480,28 @@ impl ProtocolDriver for MqttDriver {
                 .await
                 .map_err(|error| DriverError::Connection(error.to_string()))?;
             if payload.qos == 1 {
-                let (header, body) = read_packet(&mut stream, request.timeout_ms, &cancel).await?;
+                let (header, body) = read_packet(&mut *stream, request.timeout_ms, &cancel).await?;
                 if header >> 4 != 4 || body != [0, 1] {
                     return Err(DriverError::Protocol(
                         "expected matching MQTT PUBACK".into(),
+                    ));
+                }
+            }
+            if payload.qos == 2 {
+                let (header, body) = read_packet(&mut *stream, request.timeout_ms, &cancel).await?;
+                if header >> 4 != 5 || body != [0, 1] {
+                    return Err(DriverError::Protocol(
+                        "expected matching MQTT PUBREC".into(),
+                    ));
+                }
+                stream
+                    .write_all(&packet(0x62, vec![0, 1]))
+                    .await
+                    .map_err(|error| DriverError::Connection(error.to_string()))?;
+                let (header, body) = read_packet(&mut *stream, request.timeout_ms, &cancel).await?;
+                if header >> 4 != 7 || body != [0, 1] {
+                    return Err(DriverError::Protocol(
+                        "expected matching MQTT PUBCOMP".into(),
                     ));
                 }
             }
@@ -407,21 +511,38 @@ impl ProtocolDriver for MqttDriver {
                 .write_all(&subscribe_packet(&payload.topic, payload.qos, 1)?)
                 .await
                 .map_err(|error| DriverError::Connection(error.to_string()))?;
-            let (header, body) = read_packet(&mut stream, request.timeout_ms, &cancel).await?;
+            let (header, body) = read_packet(&mut *stream, request.timeout_ms, &cancel).await?;
             if header >> 4 != 9 || body.len() < 3 || body[..2] != [0, 1] || body[2] == 0x80 {
                 return Err(DriverError::Protocol(
                     "MQTT subscription was rejected".into(),
                 ));
             }
             for index in 0..payload.receive_limit {
-                let (header, body) = read_packet(&mut stream, request.timeout_ms, &cancel).await?;
+                let (header, body) = read_packet(&mut *stream, request.timeout_ms, &cancel).await?;
                 if header >> 4 != 3 {
                     continue;
                 }
                 let (topic, data, packet_id) = incoming_publish(header, &body)?;
-                if let Some(id) = packet_id {
+                if let Some(id) = packet_id.filter(|_| ((header >> 1) & 3) == 1) {
                     stream
                         .write_all(&packet(0x40, id.to_be_bytes().to_vec()))
+                        .await
+                        .map_err(|error| DriverError::Connection(error.to_string()))?;
+                }
+                if let Some(id) = packet_id.filter(|_| ((header >> 1) & 3) == 2) {
+                    stream
+                        .write_all(&packet(0x50, id.to_be_bytes().to_vec()))
+                        .await
+                        .map_err(|error| DriverError::Connection(error.to_string()))?;
+                    let (reply_header, reply_body) =
+                        read_packet(&mut *stream, request.timeout_ms, &cancel).await?;
+                    if reply_header != 0x62 || reply_body != id.to_be_bytes() {
+                        return Err(DriverError::Protocol(
+                            "expected matching MQTT PUBREL".into(),
+                        ));
+                    }
+                    stream
+                        .write_all(&packet(0x70, id.to_be_bytes().to_vec()))
                         .await
                         .map_err(|error| DriverError::Connection(error.to_string()))?;
                 }
@@ -530,5 +651,85 @@ mod tests {
             .unwrap();
         while receiver.recv().await.is_some() {}
         assert!(summary.bytes_received > 0);
+    }
+
+    #[tokio::test]
+    async fn completes_qos_two_publish_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_packet(&mut socket, 1000, &CancellationToken::new())
+                .await
+                .unwrap();
+            socket.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+            let (header, _) = read_packet(&mut socket, 1000, &CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!((header >> 1) & 3, 2);
+            socket.write_all(&[0x50, 2, 0, 1]).await.unwrap();
+            let (header, body) = read_packet(&mut socket, 1000, &CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(header, 0x62);
+            assert_eq!(body, [0, 1]);
+            socket.write_all(&[0x70, 2, 0, 1]).await.unwrap();
+        });
+        let mut request = RequestEnvelope::http_get("MQTT QoS2", format!("mqtt://{address}"));
+        request.protocol_id = ProtocolId("mqtt".into());
+        request.payload = ProtocolPayload::Raw(
+            serde_json::json!({"mode":"publish","topic":"demo/qos2","payload":"exactly once","qos":2}),
+        );
+        let (sink, mut receiver) = EventSink::channel();
+        MqttDriver
+            .execute(request, sink, CancellationToken::new(), ExecutionId::new())
+            .await
+            .unwrap();
+        while receiver.recv().await.is_some() {}
+    }
+
+    #[tokio::test]
+    async fn completes_qos_two_subscriber_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_packet(&mut socket, 1000, &CancellationToken::new())
+                .await
+                .unwrap();
+            socket.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+            read_packet(&mut socket, 1000, &CancellationToken::new())
+                .await
+                .unwrap();
+            socket.write_all(&[0x90, 3, 0, 1, 2]).await.unwrap();
+            let mut body = Vec::new();
+            push_utf8(&mut body, "demo/qos2").unwrap();
+            body.extend_from_slice(&9u16.to_be_bytes());
+            body.extend_from_slice(b"once");
+            socket.write_all(&packet(0x34, body)).await.unwrap();
+            let (header, body) = read_packet(&mut socket, 1000, &CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(header >> 4, 5);
+            assert_eq!(body, [0, 9]);
+            socket.write_all(&[0x62, 2, 0, 9]).await.unwrap();
+            let (header, body) = read_packet(&mut socket, 1000, &CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(header >> 4, 7);
+            assert_eq!(body, [0, 9]);
+        });
+        let mut request =
+            RequestEnvelope::http_get("MQTT QoS2 subscribe", format!("mqtt://{address}"));
+        request.protocol_id = ProtocolId("mqtt".into());
+        request.payload = ProtocolPayload::Raw(
+            serde_json::json!({"mode":"subscribe","topic":"demo/qos2","qos":2,"receiveLimit":1}),
+        );
+        let (sink, mut receiver) = EventSink::channel();
+        MqttDriver
+            .execute(request, sink, CancellationToken::new(), ExecutionId::new())
+            .await
+            .unwrap();
+        while receiver.recv().await.is_some() {}
     }
 }
