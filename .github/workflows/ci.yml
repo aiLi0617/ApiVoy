@@ -61,11 +61,14 @@ jobs:
 
   security:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Audit Rust dependencies
+        run: cargo audit
       - uses: anchore/sbom-action@v0
         with:
           path: .
