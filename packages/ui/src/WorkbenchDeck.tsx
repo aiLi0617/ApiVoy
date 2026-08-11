@@ -1,4 +1,6 @@
-import { Children, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { Children, useEffect, type CSSProperties, type ReactNode } from "react";
+import { useAppStore } from "./appStore";
+import { translateWorkbench, useI18n } from "./i18n";
 
 export interface WorkbenchTab { id: string; label: string; protocol?: string; protocols?: string[] }
 export interface WorkbenchDeckProps { tabs: WorkbenchTab[]; children: ReactNode }
@@ -9,10 +11,9 @@ export function resolveWorkbenchId(tabs: WorkbenchTab[], stored: string | null) 
 
 export function WorkbenchDeck({ tabs, children }: WorkbenchDeckProps) {
   const items = Children.toArray(children);
-  const [active, setActive] = useState(() => {
-    try { return resolveWorkbenchId(tabs, localStorage.getItem("apivoy:active-workbench")); }
-    catch { return tabs[0]?.id ?? ""; }
-  });
+  const { t } = useI18n();
+  const active = useAppStore((state) => state.activeWorkbench);
+  const setActive = useAppStore((state) => state.setActiveWorkbench);
   const selected = resolveWorkbenchId(tabs, active);
   useEffect(() => {
     const listener = (event: Event) => {
@@ -23,8 +24,8 @@ export function WorkbenchDeck({ tabs, children }: WorkbenchDeckProps) {
     window.addEventListener("apivoy-open-request", listener);
     return () => window.removeEventListener("apivoy-open-request", listener);
   }, [tabs]);
-  useEffect(() => { try { localStorage.setItem("apivoy:active-workbench", selected); } catch { /* optional */ } }, [selected]);
-  return <div style={styles.root}><div className="workbench-tabs" role="tablist" aria-label="Protocol workbenches" style={styles.tabs}>{tabs.map((tab) => <button className="workbench-tab" key={tab.id} role="tab" aria-selected={tab.id === selected} style={{ ...styles.tab, ...(tab.id === selected ? styles.active : {}) }} onClick={() => setActive(tab.id)}>{tab.label}</button>)}</div><div style={styles.content}>{items.map((item, index) => index < tabs.length ? <div key={tabs[index].id} role="tabpanel" hidden={tabs[index].id !== selected} style={tabs[index].id === selected ? styles.panel : undefined}>{item}</div> : item)}</div></div>;
+  useEffect(() => { if (selected !== active) setActive(selected); }, [active, selected, setActive]);
+  return <div style={styles.root}><div className="workbench-tabs" role="tablist" aria-label={t("workbench.navigation")} style={styles.tabs}>{tabs.map((tab) => <button className="workbench-tab" key={tab.id} role="tab" aria-selected={tab.id === selected} style={{ ...styles.tab, ...(tab.id === selected ? styles.active : {}) }} onClick={() => setActive(tab.id)}>{translateWorkbench(tab.id, tab.label)}</button>)}</div><div style={styles.content}>{items.map((item, index) => index < tabs.length ? <div key={tabs[index].id} role="tabpanel" hidden={tabs[index].id !== selected} style={tabs[index].id === selected ? styles.panel : undefined}>{item}</div> : item)}</div></div>;
 }
 
 const styles: Record<string, CSSProperties> = {

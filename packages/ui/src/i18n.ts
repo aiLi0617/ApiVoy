@@ -34,6 +34,28 @@ const zhCN = {
   "status.connected": "已连接",
   "codegen.title": "代码生成",
   "codegen.plugin": "插件",
+  "workbench.http": "HTTP",
+  "workbench.sse": "SSE",
+  "workbench.socket": "TCP / UDP",
+  "workbench.graphql": "GraphQL",
+  "workbench.websocket": "WebSocket",
+  "workbench.grpc": "gRPC",
+  "workbench.rpc": "SOAP / RPC",
+  "workbench.redis": "Redis",
+  "workbench.mqtt": "MQTT",
+  "workbench.amqp": "AMQP",
+  "workbench.kafka": "Kafka",
+  "workbench.sql": "SQL",
+  "workbench.mock": "Mock",
+  "workbench.plugins": "插件",
+  "workbench.runner": "集合运行",
+  "workbench.gateway": "云网关",
+  "workbench.team": "团队",
+  "workbench.comments": "评论",
+  "workbench.sso": "SSO",
+  "workbench.ai": "AI",
+  "workbench.capture": "抓包",
+  "workbench.navigation": "协议工作台",
 } as const;
 
 const enUS: Record<MessageKey, string> = {
@@ -67,6 +89,28 @@ const enUS: Record<MessageKey, string> = {
   "status.connected": "Connected",
   "codegen.title": "Code generation",
   "codegen.plugin": "Plugin",
+  "workbench.http": "HTTP",
+  "workbench.sse": "SSE",
+  "workbench.socket": "TCP / UDP",
+  "workbench.graphql": "GraphQL",
+  "workbench.websocket": "WebSocket",
+  "workbench.grpc": "gRPC",
+  "workbench.rpc": "SOAP / RPC",
+  "workbench.redis": "Redis",
+  "workbench.mqtt": "MQTT",
+  "workbench.amqp": "AMQP",
+  "workbench.kafka": "Kafka",
+  "workbench.sql": "SQL",
+  "workbench.mock": "Mock",
+  "workbench.plugins": "Plugins",
+  "workbench.runner": "Runner",
+  "workbench.gateway": "Gateway",
+  "workbench.team": "Team",
+  "workbench.comments": "Comments",
+  "workbench.sso": "SSO",
+  "workbench.ai": "AI",
+  "workbench.capture": "Capture",
+  "workbench.navigation": "Protocol workbenches",
 };
 
 const resources: Record<Locale, Record<MessageKey, string>> = { "zh-CN": zhCN, "en-US": enUS };
@@ -93,6 +137,11 @@ export function setLocale(next: Locale): void {
 
 export function translate(key: MessageKey, variables: Record<string, string | number> = {}): string {
   return resources[locale][key].replace(/\{(\w+)\}/g, (_, name: string) => String(variables[name] ?? `{${name}}`));
+}
+
+export function translateWorkbench(id: string, fallback: string): string {
+  const key = `workbench.${id}` as MessageKey;
+  return key in resources[locale] ? resources[locale][key] : fallback;
 }
 
 export function useI18n() {

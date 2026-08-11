@@ -1,4 +1,5 @@
 export { AppShell } from "./AppShell";
+export { ApiVoyProviders } from "./ApiVoyProviders";
 export { WorkspaceExplorer, type WorkspaceTree, type WorkspaceExplorerProps } from "./WorkspaceExplorer";
 export { SseWorkbench, type SseWorkbenchProps, type SseWorkbenchRequest } from "./SseWorkbench";
 export { SocketWorkbench, type SocketWorkbenchProps, type SocketWorkbenchRequest } from "./SocketWorkbench";
@@ -11,7 +12,7 @@ export { PluginCenter, type PluginCenterProps, type PluginManifest, type Install
 export { CodeGenerator, generateHttpCode, listHttpCodeTemplates, registerHttpCodeTemplate, type CodeLanguage, type HttpCodeTemplate } from "./CodeGenerator";
 export { ProtocolCodeGenerator, generateProtocolCode, listCodeTemplates, registerCodeTemplate, type CodeTemplate, type CodegenProtocol, type ProtocolCodegenInput } from "./ProtocolCodeGenerator";
 export { clearWorkbenchDraft, readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
-export { getLocale, setLocale, translate, useI18n, type Locale } from "./i18n";
+export { getLocale, setLocale, translate, translateWorkbench, useI18n, type Locale } from "./i18n";
 export { WorkbenchDeck, type WorkbenchDeckProps, type WorkbenchTab } from "./WorkbenchDeck";
 export { CollectionRunner, type CollectionRunnerProps, type CollectionRunCase } from "./CollectionRunner";
 export { TeamWorkbench } from "./TeamWorkbench";

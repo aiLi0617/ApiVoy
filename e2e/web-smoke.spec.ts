@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 
 test("opens on the primary HTTP workbench and exposes every protocol", async ({ page }) => {
   await expect(page).toHaveTitle("ApiVoy");
-  const tabs = page.getByRole("tablist", { name: "Protocol workbenches" });
+  const tabs = page.getByRole("tablist");
   await expect(tabs).toBeVisible();
   await expect(page.getByRole("tab", { name: "HTTP", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab", { name: "MQTT", exact: true })).toBeVisible();

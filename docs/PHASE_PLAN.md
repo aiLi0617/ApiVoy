@@ -114,8 +114,8 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | OS Keychain 接入 | ✅ | P0-M1 |
 | 变量解析 + 内置断言 | ✅ | P0-M1 |
 | 导入导出包 `packages/import-export` | ✅ | 已实现 JSON/YAML 格式识别、四类导入、内部/外部 `$ref`、Schema 示例、环境变量映射、层级映射、项目包导出与敏感扫描 |
-| Monaco / 命令面板 / i18n | 🟡 | 离线本地 Monaco 已用于 HTTP Body、QuickJS、GraphQL/JSON；Ctrl/⌘+K、协议标签工作台、语言资源运行时、中文/英文持久化切换及核心导航翻译已实现；待迁移各工作台全部细粒度文案 |
-| TanStack Query + Zustand 分层 | ❌ 未引入 | P0 UI |
+| Monaco / 命令面板 / i18n | 🟡 | 离线本地 Monaco 已用于 HTTP Body、QuickJS、GraphQL/JSON；Ctrl/⌘+K、协议标签工作台、语言资源运行时、中文/英文持久化切换、核心导航及全部工作台标签翻译已实现；待迁移工作台内部细粒度文案 |
+| TanStack Query + Zustand 分层 | ✅ | Web/Desktop 共享 QueryClient Provider；Gateway 服务端任务/历史使用 TanStack Query 缓存，活动工作台等客户端状态使用 Zustand 持久化 Store |
 | `plugin-runtime` + Wasmtime | ✅ | Component-only 四类插件宿主、权限与资源限制、Ed25519 签名校验、双端插件中心已接入 |
 | QuickJS 脚本 | ✅ | 受限运行时、request/response/variables/console/assert/crypto API、HTTP 双端编辑器和跨请求变量数据链已接入 |
 | Java 协作微服务拆分 | 🟡 | 可部署单体已覆盖 identity/OIDC SSO/workspace/sync/audit，支持 H2 本地与 PostgreSQL/Docker 私有化；mock/automation 拆分待后续切片 |
