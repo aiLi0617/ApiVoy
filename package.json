@@ -13,10 +13,14 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
+    "test:e2e": "playwright test",
     "rust:check": "cargo check --workspace",
     "rust:test": "cargo test --workspace"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }

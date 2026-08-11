@@ -10,6 +10,7 @@
   --apivoy-danger: #f07178;
   --apivoy-font: "IBM Plex Sans", "Segoe UI", sans-serif;
   --apivoy-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+  color-scheme: dark;
 }
 
 @keyframes apivoy-panel-in {
@@ -26,6 +27,7 @@ body {
   font-family: var(--apivoy-font);
   background: radial-gradient(900px 520px at 60% -20%, rgba(38, 103, 162, .22), transparent 62%), var(--apivoy-bg);
   color: var(--apivoy-text);
+  min-width: 320px;
 }
 
 button, input, textarea, select { transition: border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease; }
@@ -35,14 +37,24 @@ button:disabled { opacity: .45; cursor: not-allowed !important; }
 .nav-item:hover, .icon-button:hover { color: var(--apivoy-text) !important; background: rgba(255,255,255,.045) !important; }
 .nav-item-active { color: var(--apivoy-text) !important; background: var(--apivoy-accent-soft) !important; box-shadow: inset 2px 0 var(--apivoy-accent); }
 .tree-row:hover { background: rgba(255,255,255,.045) !important; }
+.workbench-tab:hover { color: var(--apivoy-text) !important; background: rgba(255,255,255,.055) !important; border-color: rgba(255,255,255,.06) !important; }
+.workbench-tab[aria-selected="true"]:hover { background: linear-gradient(135deg,rgba(61,156,240,.34),rgba(76,210,175,.18)) !important; }
 .apivoy-workbench > div { min-width: 0; }
 .apivoy-workbench code { color: #9dcbf4; }
 small { display: block; color: var(--apivoy-muted); margin-top: 2px; }
+
+::selection { background: rgba(86,173,245,.32); color: #fff; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2b3949; border: 3px solid transparent; border-radius: 999px; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: #40546a; }
 
 @media (max-width: 760px) {
   .apivoy-shell aside { display: none !important; }
   .apivoy-shell header { padding: 10px 14px !important; }
   .apivoy-shell header > div:first-child > div:last-child > div:last-child { display: none; }
   .apivoy-shell main { padding: 20px 14px 36px !important; }
+  .workbench-tabs { position: static !important; margin-top: -4px !important; }
+  .workbench-tab { flex: 1 0 auto !important; }
   .apivoy-workbench > div { grid-template-columns: 1fr !important; }
 }

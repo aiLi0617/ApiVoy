@@ -25,6 +25,8 @@ Thumbs.db
 *.log
 coverage/
 .nyc_output/
+playwright-report/
+test-results/
 
 # Tauri / local
 apps/desktop/src-tauri/gen/

@@ -3,17 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ApiVoy protocol UI Schema / plugin SDK (placeholder)",
+  "description": "ApiVoy protocol UI schema and plugin SDK",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "echo \"lint placeholder\"",
-    "test": "echo \"no tests yet\""
+    "lint": "tsc --noEmit",
+    "test": "tsx src/index.test.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.15.3",
+    "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   }
 }

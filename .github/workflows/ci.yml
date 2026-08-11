@@ -28,6 +28,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Install Chromium for browser smoke tests
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run browser smoke tests
+        run: pnpm test:e2e
       - name: Build Tauri frontend assets
         run: pnpm --filter @apivoy/desktop build
       - run: cargo test --workspace --locked

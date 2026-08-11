@@ -8,8 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
-    "lint": "echo \"lint placeholder\"",
-    "test": "echo \"no tests yet\""
+    "lint": "tsc -b --pretty false",
+    "test": "tsc -b --pretty false"
   },
   "dependencies": {
     "@apivoy/request-model": "workspace:*",

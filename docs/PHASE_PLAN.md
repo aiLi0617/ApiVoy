@@ -1,7 +1,7 @@
 # ApiVoy 阶段计划与缺口对照
 
 > 基于 PRD V1.1、技术架构 V1.0，以及 2026-08-05 品牌与技术定稿。  
-> 对照日期：2026-08-09（代码库现状快照）。
+> 对照日期：2026-08-12（代码库现状快照）。
 
 ---
 
@@ -21,7 +21,7 @@
 
 ## 2. 现状总览
 
-当前仓库处于 **阶段 0（基础架构）接近收尾、MVP 尚未真正启动** 的状态。
+当前仓库已完成 **阶段 0、MVP、P1 与主要 P2 本地/私有化能力**，正在进行发布验证、细粒度国际化与云端执行能力收口。
 
 ### 2.1 已具备（可运行骨架）
 
@@ -56,7 +56,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 |------|--------------|------|
 | 阶段 0 架构 | ~95% | 正式执行 API、SQLite、版本握手已落地 |
 | MVP / M1 内核 | ~100%（M1 退出条件） | HTTP 保存→环境→发送→断言→历史闭环；七协议属 M2 |
-| P1 / P2 | 持续推进 | P1 基础能力大部分完成；协议扩展已交付 SOAP / JSON-RPC，消息队列与数据库协议继续实施 |
+| P1 / P2 | 持续推进 | P1 协议、脚本、插件、Mock、集合运行器已完成；P2 协作、AI、抓包与私有化已完成，云协议网关仍待实施 |
 
 ---
 
@@ -120,7 +120,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | QuickJS 脚本 | ✅ | 受限运行时、request/response/variables/console/assert/crypto API、HTTP 双端编辑器和跨请求变量数据链已接入 |
 | Java 协作微服务拆分 | 🟡 | 可部署单体已覆盖 identity/OIDC SSO/workspace/sync/audit，支持 H2 本地与 PostgreSQL/Docker 私有化；mock/automation 拆分待后续切片 |
 | 云协议网关 `protocol-gateway` | ❌ | P2 |
-| CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、全工作区测试、Clippy、RustSec、CycloneDX SBOM、私有化 Compose 模型/镜像构建与 tag 草稿发布；待补真实安装/升级/卸载和浏览器 E2E 冒烟 |
+| CI：三平台构建 / E2E / SBOM | 🟡 | GitHub Actions 已覆盖三平台 Desktop/sidecar 检查、Playwright 桌面/移动浏览器冒烟、全工作区测试、Clippy、RustSec、CycloneDX SBOM、私有化 Compose 模型/镜像构建与 tag 草稿发布；待补真实安装/升级/卸载验证 |
 
 ### 3.4 MVP 验收标准（AC）对照
 
@@ -135,7 +135,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | AC-07 | 10MB/长流不冻 UI；可取消 | ✅ 内核可取消、正文外置 Blob、事件增量接收与万字符窗口渲染已完成 |
 | AC-08 | Secret 不明文落盘/日志/导出 | ✅ Keychain/Agent secret-store + runtime secret + 导出敏感扫描已完成 |
 | AC-09 | 异常退出数据完整 + 草稿恢复 | ✅ 请求/环境/历史已持久化；HTTP、GraphQL、gRPC、WebSocket、SSE、TCP/UDP 工作台草稿均自动保存并在重启后恢复，损坏草稿自动丢弃 |
-| AC-10 | 单测/集成/E2E/安全/安装冒烟 | 🟡 Rust/TS 单测、真实浏览器 UI 冒烟、三平台 CI、Clippy、RustSec 与 SBOM 已建立；待把浏览器冒烟固化为 CI 用例并完成三平台安装生命周期验证 |
+| AC-10 | 单测/集成/E2E/安全/安装冒烟 | 🟡 Rust/TS 单测、Playwright 桌面/移动浏览器 UI 冒烟、三平台 CI、Clippy、RustSec 与 SBOM 已建立；待完成三平台安装生命周期验证 |
 
 ---
 
@@ -277,7 +277,7 @@ P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 /
 | QuickJS 脚本 | 挂载同一生命周期；受控 API（request/response/variables/crypto/assert） | M1 生命周期 |
 | WASM 插件 | ✅ Wasmtime + 四类专用 WIT、权限模型、Ed25519 信任链与插件中心均已实现 | ADR-0003 |
 | 协议扩展 | ✅ SOAP、JSON-RPC、Redis、MQTT、AMQP、Kafka、SQL 已完成 | MQTT 覆盖 MQTTS、自定义 CA/SNI、QoS 0/1/2 双向状态机；SQL 覆盖 PostgreSQL/MySQL/SQLite、参数、事务与结果限额 |
-| Mock | 🟡 HTTP 规则、延迟、周期错误注入与 Web 管理台已完成；待补 WS、持久化和高级匹配 | 本地执行层 |
+| Mock | ✅ HTTP/WebSocket Mock、规则持久化、确定性匹配、延迟与周期错误注入、Web/Desktop 管理台均已完成 | 本地执行层 |
 | 集合运行器 | ✅ CLI 支持 RequestEnvelope/ApiVoy 项目 JSON、顺序/并发、失败即停、跨请求变量、JSON/CSV 数据迭代及 JSON/JUnit 报告；Desktop 提供集合报告页 | CLI + 断言 |
 | 代码生成 | 多语言片段 + 模板插件点 | 请求模型稳定 |
 | Desktop sidecar | 可选捆绑 `apivoy-agent` | 版本握手 |

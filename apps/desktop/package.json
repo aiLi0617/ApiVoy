@@ -11,8 +11,8 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "node ../../scripts/prepare-sidecar.mjs && tauri build --config src-tauri/tauri.sidecar.conf.json",
     "typecheck": "tsc -b --pretty false",
-    "lint": "echo \"lint placeholder\"",
-    "test": "echo \"no tests yet\""
+    "lint": "tsc -b --pretty false",
+    "test": "tsc -b --pretty false"
   },
   "dependencies": {
     "@apivoy/request-model": "workspace:*",
