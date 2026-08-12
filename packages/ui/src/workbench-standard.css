@@ -1,4 +1,7 @@
 .standardized-workbench { min-height: 100%; padding: 10px; overflow: auto; }
+.standardized-workbench, .standardized-workbench button, .standardized-workbench input, .standardized-workbench select, .standardized-workbench textarea { font-family: var(--apivoy-font); }
+.standardized-workbench button, .standardized-workbench input, .standardized-workbench select, .standardized-workbench textarea { transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, opacity 180ms ease; }
+.standardized-workbench button:focus-visible, .standardized-workbench input:focus-visible, .standardized-workbench select:focus-visible, .standardized-workbench textarea:focus-visible { outline: 2px solid var(--apivoy-accent); outline-offset: 2px; }
 .standardized-workbench > section { min-height: 100%; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; }
 .standardized-workbench > section > header:first-child { display: none !important; }
 .standardized-workbench h2:first-child { margin-top: 0 !important; font-size: 15px !important; }
@@ -20,3 +23,8 @@
 .layout-management > section > div { border-color: var(--apivoy-border) !important; background-color: var(--apivoy-bg-elevated) !important; box-shadow: none !important; }
 .layout-management [style*="font-size: 28"], .layout-management [style*="font-size:28"] { font-size: 18px !important; }
 @media (max-width: 768px) { .standardized-workbench { padding: 8px; } .standardized-workbench > section > div { max-width: 100%; } }
+@media (max-width: 900px) {
+  .standardized-workbench [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+  .standardized-workbench [style*="minmax(500px"], .standardized-workbench [style*="minmax(470px"], .standardized-workbench [style*="minmax(420px"] { grid-template-columns: minmax(0, 1fr) !important; }
+}
+@media (prefers-reduced-motion: reduce) { .standardized-workbench *, .standardized-workbench *::before, .standardized-workbench *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; } }
