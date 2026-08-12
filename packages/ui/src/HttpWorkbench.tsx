@@ -1186,7 +1186,14 @@ export function HttpWorkbench({
                   <span>{result.eventCount} events</span>
                   {result.executionId && <span>id {result.executionId.slice(0, 8)}</span>}
                 </div>
-                <div style={styles.row} role="tablist" aria-label="响应显示模式">
+                <div style={styles.row} role="tablist" aria-label="响应显示模式" onKeyDown={(event) => {
+                  if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+                  event.preventDefault();
+                  const modes: Array<"pretty" | "raw" | "hex" | "table"> = ["pretty", "raw", "hex", ...(responseTable ? ["table" as const] : [])];
+                  const current = modes.indexOf(responseView);
+                  const next = event.key === "ArrowRight" ? (current + 1) % modes.length : (current - 1 + modes.length) % modes.length;
+                  setResponseView(modes[next]);
+                }}>
                   <button role="tab" aria-selected={responseView === "pretty"} style={responseView === "pretty" ? styles.tabActive : styles.tab} onClick={() => setResponseView("pretty")}>美化</button>
                   <button role="tab" aria-selected={responseView === "raw"} style={responseView === "raw" ? styles.tabActive : styles.tab} onClick={() => setResponseView("raw")}>原文</button>
                   <button role="tab" aria-selected={responseView === "hex"} style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
