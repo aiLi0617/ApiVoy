@@ -12,7 +12,9 @@ chrono = { workspace = true }
 core-domain = { workspace = true }
 event-stream = { workspace = true }
 execution-engine = { workspace = true }
-rdkafka = { version = "0.39", features = ["cmake-build", "ssl-vendored"] }
+# librdkafka 2.12.1's CMake build can include curl headers even when curl is
+# disabled. Vendoring curl keeps release builds portable and enables OIDC.
+rdkafka = { version = "0.39", features = ["cmake-build", "curl-static", "ssl-vendored"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tokio-util = { workspace = true }

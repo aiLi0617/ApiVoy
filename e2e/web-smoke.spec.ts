@@ -21,7 +21,17 @@ test("opens on the primary HTTP workbench and exposes every protocol", async ({ 
 test("switches workbenches and persists the selection", async ({ page }) => {
   await page.getByRole("tab", { name: "Redis", exact: true }).click();
   await expect(page.getByRole("tab", { name: "Redis", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("apivoy:active-workbench"))).toBe("redis");
+  await expect.poll(() => page.evaluate(() => {
+    const persisted = localStorage.getItem("apivoy:ui-state");
+    if (!persisted) return null;
+
+    try {
+      const value = JSON.parse(persisted) as { state?: { activeWorkbench?: string } };
+      return value.state?.activeWorkbench ?? null;
+    } catch {
+      return null;
+    }
+  })).toBe("redis");
   await page.reload();
   await expect(page.getByRole("tab", { name: "Redis", exact: true })).toHaveAttribute("aria-selected", "true");
 });
