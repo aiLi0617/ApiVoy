@@ -40,7 +40,7 @@ export function CommentsWorkbench() {
     <div style={styles.toolbar}><label style={styles.field}><span>WORKSPACE ID</span><input style={styles.input} value={workspaceId} onChange={event => setWorkspaceId(event.target.value)} /></label><button style={styles.ghost} onClick={() => void refresh()} disabled={loading}>{loading ? "同步中…" : "刷新讨论"}</button></div>
     <div style={styles.composer}>{replyTo && <div style={styles.replyBanner}>回复 {replyTo.actorName}<button style={styles.close} onClick={() => setReplyTo(null)} aria-label="关闭回复上下文"><span aria-hidden="true">×</span></button></div>}<textarea style={styles.textarea} value={body} onChange={event => setBody(event.target.value)} placeholder={replyTo ? "写下你的回复…" : "提出问题、记录结论或请求评审…"} /><div style={styles.composerFooter}><span>{body.length} / 4000</span><button style={styles.primary} disabled={!body.trim() || body.length > 4000} onClick={() => void submit()}>发布{replyTo ? "回复" : "主题"}</button></div></div>
     <div style={styles.list}>{roots.length === 0 && !loading && <div style={styles.blank}>这个工作区还没有讨论。发起第一条评审主题吧。</div>}{roots.map(root => <article key={root.id} style={{...styles.thread, ...(root.resolvedAt ? styles.resolved : {})}}><CommentCard comment={root} currentUserId={auth.user.id} canResolve={canResolve} onReply={setReplyTo} onEdit={edit} onToggle={toggle} />{comments.filter(item => item.parentId === root.id).map(reply => <div key={reply.id} style={styles.reply}><CommentCard comment={reply} currentUserId={auth.user.id} canResolve={false} onReply={setReplyTo} onEdit={edit} onToggle={toggle} /></div>)}</article>)}</div>
-    {message && <div style={styles.notice}>{message}</div>}
+    {message && <div role="status" aria-live="polite" style={styles.notice}>{message}</div>}
   </section>;
 }
 
