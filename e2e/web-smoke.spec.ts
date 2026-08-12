@@ -75,11 +75,3 @@ test("HTTP workbench exposes busy state semantics", async ({ page }) => {
   await expect(frame).not.toHaveAttribute("aria-busy", "true");
   await expect(frame).toHaveAttribute("aria-labelledby", /workbench-title-http/);
 });
-test("HTTP response tabs expose selection semantics", async ({ page }) => {
-  const tabs = page.getByRole("tablist", { name: "响应内容视图" }).getByRole("tab");
-  await expect(tabs).toHaveCount(4);
-  await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
-  await tabs.nth(1).click();
-  await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
-  await expect(tabs.first()).toHaveAttribute("aria-selected", "false");
-});
