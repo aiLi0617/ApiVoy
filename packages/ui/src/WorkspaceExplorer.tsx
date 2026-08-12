@@ -42,6 +42,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [batchTarget, setBatchTarget] = useState("");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+  const [collapsedCollections, setCollapsedCollections] = useState<Set<string>>(() => new Set());
   const importInput = useRef<HTMLInputElement>(null);
   const { notify, confirm, prompt } = useFeedback();
 
@@ -141,7 +143,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     const children = tree!.collections.filter((item) => item.parentId === collection.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     return <div key={collection.id} role="treeitem" aria-level={depth + 1} aria-label={`集合 ${collection.name}`}>
       <div draggable onDragStart={(event) => setDrag(event, "collection", collection.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropOnCollection(event, collection)} className="tree-row" style={{...styles.collection, paddingLeft: 22 + depth * 14, ...(props.selectedCollectionId === collection.id ? styles.active : {})}}>
-        <button style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)}><Icon name="folder" /><span>{collection.name}</span><small>{requests.length}</small></button>
+        <button aria-label={`${collapsedCollections.has(collection.id) ? "展开" : "折叠"}集合 ${collection.name}`} aria-expanded={!collapsedCollections.has(collection.id)} style={styles.icon} onClick={() => setCollapsedCollections((current) => { const next = new Set(current); if (next.has(collection.id)) next.delete(collection.id); else next.add(collection.id); return next; })}><Icon name="chevron" /></button><button style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)}><Icon name="folder" /><span>{collection.name}</span><small>{requests.length}</small></button>
         <button disabled={siblingIndex <= 0} style={styles.action} title="上移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex - 1])}><Icon name="arrow-up" /></button>
         <button disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} style={styles.action} title="下移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex + 1])}><Icon name="arrow-down" /></button>
         <button style={styles.icon} title="新建子集合" onClick={() => setDraft({ kind: "collection", owner: collection.projectId, parentId: collection.id })}><Icon name="plus" /></button>
@@ -155,7 +157,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
         <button style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}><b>{request.method ?? "HTTP"}</b><span>{request.name}</span></button>
         <button style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteRequest(request.id); }}><Icon name="trash" /></button>
       </div>)}
-      {children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
+      {!collapsedCollections.has(collection.id) && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
     </div>;
   }
   return <section style={styles.root} role="tree" aria-label="工作区资源树">
@@ -182,13 +184,13 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     </div>}
     {tree.projects.filter((project) => project.workspaceId === workspace?.id).filter((project) => !normalizedQuery || project.name.toLocaleLowerCase().includes(normalizedQuery) || tree.collections.some((item) => item.projectId === project.id && collectionMatches(item))).map((project) => <div key={project.id} style={styles.project} role="treeitem" aria-level={1} aria-label={`项目 ${project.name}`}>
       <div style={styles.projectRow} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const item = readDrag(event); if (item?.type === "collection") { const source = tree.collections.find((collection) => collection.id === item.id); if (source?.projectId === project.id) void props.onMoveCollection(source, project.id, null); } }}>
-        <span style={styles.chevron}><Icon name="chevron" /></span><strong title={project.name}>{project.name}</strong>
+        <button aria-label={`${collapsedProjects.has(project.id) ? "展开" : "折叠"}项目 ${project.name}`} aria-expanded={!collapsedProjects.has(project.id)} style={styles.icon} onClick={() => setCollapsedProjects((current) => { const next = new Set(current); if (next.has(project.id)) next.delete(project.id); else next.add(project.id); return next; })}><Icon name="chevron" /></button><strong title={project.name}>{project.name}</strong>
         <button style={styles.icon} title="新建集合" onClick={() => setDraft({ kind: "collection", owner: project.id, parentId: null })}><Icon name="plus" /></button>
         <button style={styles.action} title="重命名项目" onClick={async () => { const value = (await prompt({ title: "重命名项目", initialValue: project.name }))?.trim(); if (value) void props.onRenameProject(project.id, value); }}><Icon name="edit" /></button>
         <button style={styles.action} title="导出项目包" onClick={() => void exportProject(project)}><Icon name="download" /></button>
         {project.id !== "default-project" && <button style={styles.delete} title="删除项目" onClick={async () => { if (await confirm({ title: "删除项目", description: `删除项目“${project.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteProject(project.id); }}><Icon name="trash" /></button>}
       </div>
-      {tree.collections.filter((item) => item.projectId === project.id && !item.parentId && collectionMatches(item)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((collection) => renderCollection(collection))}
+      {!collapsedProjects.has(project.id) && tree.collections.filter((item) => item.projectId === project.id && !item.parentId && collectionMatches(item)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((collection) => renderCollection(collection))}
     </div>)}
     {draft && <div style={styles.createBox}>
       <input autoFocus style={styles.input} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); if (event.key === "Escape") setDraft(null); }} placeholder={draft.kind === "project" ? "项目名称" : "集合名称"} />
