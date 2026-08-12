@@ -27,3 +27,14 @@ test("filters projects by workspace", () => {
   const rows = flattenWorkspaceTree({ projects: [...projects, { id: "other", workspaceId: "other", name: "Other" }], collections, requests, workspaceId: "w", collapsedNodes: [] });
   assert.equal(rows.some((row) => row.id === "project:other"), false);
 });
+
+
+test("keeps matching requests and their ancestors", () => {
+  const rows = flattenWorkspaceTree({ projects, collections, requests, workspaceId: "w", collapsedNodes: [], query: "request" });
+  assert.deepEqual(rows.map((row) => row.id), ["project:p", "collection:a", "request:r"]);
+});
+
+test("filters unrelated branches for collection searches", () => {
+  const rows = flattenWorkspaceTree({ projects, collections, requests, workspaceId: "w", collapsedNodes: [], query: "child" });
+  assert.deepEqual(rows.map((row) => row.id), ["project:p", "collection:a", "collection:child"]);
+});

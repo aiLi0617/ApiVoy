@@ -11,11 +11,13 @@ export interface FlattenWorkspaceTreeOptions {
   requests: readonly RequestRecord[];
   workspaceId?: string;
   collapsedNodes: readonly string[];
+  query?: string;
 }
 
-export function flattenWorkspaceTree({ projects, collections, requests, workspaceId, collapsedNodes }: FlattenWorkspaceTreeOptions): WorkspaceTreeRow[] {
+export function flattenWorkspaceTree({ projects, collections, requests, workspaceId, collapsedNodes, query }: FlattenWorkspaceTreeOptions): WorkspaceTreeRow[] {
   const collapsed = new Set(collapsedNodes);
   const rows: WorkspaceTreeRow[] = [];
+  const normalizedQuery = query?.trim().toLocaleLowerCase() ?? "";
   const rootCollectionsByProject = new Map<string, CollectionRecord[]>();
   const childCollectionsByParent = new Map<string, CollectionRecord[]>();
   const requestsByCollection = new Map<string, RequestRecord[]>();
@@ -30,14 +32,22 @@ export function flattenWorkspaceTree({ projects, collections, requests, workspac
   childCollectionsByParent.forEach(sortCollections);
   requests.forEach((request) => requestsByCollection.set(request.collectionId, [...(requestsByCollection.get(request.collectionId) ?? []), request]));
 
+  const requestMatches = (request: RequestRecord) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery);
+  function collectionMatches(collection: CollectionRecord): boolean {
+    if (!normalizedQuery || collection.name.toLocaleLowerCase().includes(normalizedQuery)) return true;
+    if ((requestsByCollection.get(collection.id) ?? []).some(requestMatches)) return true;
+    return (childCollectionsByParent.get(collection.id) ?? []).some(collectionMatches);
+  }
+
   function appendCollection(collection: CollectionRecord, depth: number) {
+    if (!collectionMatches(collection)) return;
     rows.push({ kind: "collection", id: `collection:${collection.id}`, depth, collection });
     if (collapsed.has(`collection:${collection.id}`)) return;
-    (requestsByCollection.get(collection.id) ?? []).forEach((request) => rows.push({ kind: "request", id: `request:${request.id}`, depth: depth + 1, request }));
+    (requestsByCollection.get(collection.id) ?? []).filter(requestMatches).forEach((request) => rows.push({ kind: "request", id: `request:${request.id}`, depth: depth + 1, request }));
     (childCollectionsByParent.get(collection.id) ?? []).forEach((child) => appendCollection(child, depth + 1));
   }
 
-  projects.filter((project) => !workspaceId || project.workspaceId === workspaceId).forEach((project) => {
+  projects.filter((project) => !workspaceId || project.workspaceId === workspaceId).filter((project) => !normalizedQuery || project.name.toLocaleLowerCase().includes(normalizedQuery) || (rootCollectionsByProject.get(project.id) ?? []).some(collectionMatches)).forEach((project) => {
     rows.push({ kind: "project", id: `project:${project.id}`, depth: 0, project });
     if (collapsed.has(`project:${project.id}`)) return;
     (rootCollectionsByProject.get(project.id) ?? []).forEach((collection) => appendCollection(collection, 1));
