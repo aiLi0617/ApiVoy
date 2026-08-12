@@ -154,3 +154,5 @@ small { color: var(--apivoy-muted); }
 .response-empty strong { color: var(--apivoy-text); font-size: 13px; }
 .response-empty p { max-width: 310px; margin: 0; font-size: 11px; line-height: 1.6; }
 .http-response-pane > div:not(.response-empty) { border-radius: 7px !important; box-shadow: none !important; }
+
+.tree-row { content-visibility: auto; contain-intrinsic-size: 32px; }
