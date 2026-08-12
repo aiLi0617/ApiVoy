@@ -11,6 +11,7 @@ import type {
 } from "@apivoy/request-model";
 import { CodeGenerator } from "./CodeGenerator";
 import { CodeEditor } from "./CodeEditor";
+import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
@@ -763,14 +764,9 @@ export function HttpWorkbench({
   const showBody = method !== "GET" && method !== "HEAD";
 
   return (
-    <section className="apivoy-workbench" style={styles.section}>
-      <h1 style={styles.h1}>HTTP 请求编辑器</h1>
-      <p style={styles.p}>
-        支持 {"{{var}}"} 变量、Basic/Bearer/API Key 认证、内置断言与历史重放。桌面端走 Tauri；Web
-        端经 Local Agent。
-      </p>
-
-      <div style={styles.row}>
+    <WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪 · Ctrl + Enter 发送</span>}>
+      <SplitPane id="http-workbench" primaryLabel="请求配置" secondaryLabel="响应检查器" primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
+<div style={styles.row}>
         <select
           style={styles.select}
           value={method}
@@ -1170,7 +1166,9 @@ export function HttpWorkbench({
         </div>
       )}
 
-      {statusMsg && <div style={styles.status}>{statusMsg}</div>}
+      </div>} secondary={<div className="http-response-pane">
+      {!result && !loading ? <div className="response-empty"><span className="response-empty-icon">↗</span><strong>等待响应</strong><p>发送请求后，状态、响应头、正文、断言与时间线会显示在这里。</p></div> : null}
+      {statusMsg && <div role="status" aria-live="polite" style={styles.status}>{statusMsg}</div>}
 
       {loading && livePreview && <div style={styles.panel}><div style={styles.responseHeader}><strong>响应流正在接收…</strong><span>{new TextEncoder().encode(livePreview).length} bytes</span></div><pre style={styles.pre}>{prettyPreview(livePreview).slice(0, 10000)}</pre></div>}
 
@@ -1228,7 +1226,8 @@ export function HttpWorkbench({
           )}
         </div>
       )}
-    </section>
+      </div>}/>
+    </WorkbenchFrame>
   );
 }
 

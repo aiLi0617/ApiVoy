@@ -1,4 +1,7 @@
-export { AppShell } from "./AppShell";
+export { AppShell, type AppShellProps } from "./AppShell";
+export { WorkbenchFrame, SplitPane, type WorkbenchFrameProps, type SplitPaneProps } from "./WorkbenchFrame";
+export { Icon, type IconName } from "./Icons";
+export { useAppStore, type ThemeMode, type WorkbenchLayoutPreference, type SplitPanePreference } from "./appStore";
 export { ApiVoyProviders } from "./ApiVoyProviders";
 export { WorkspaceExplorer, type WorkspaceTree, type WorkspaceExplorerProps } from "./WorkspaceExplorer";
 export { SseWorkbench, type SseWorkbenchProps, type SseWorkbenchRequest } from "./SseWorkbench";
@@ -13,7 +16,7 @@ export { CodeGenerator, generateHttpCode, listHttpCodeTemplates, registerHttpCod
 export { ProtocolCodeGenerator, generateProtocolCode, listCodeTemplates, registerCodeTemplate, type CodeTemplate, type CodegenProtocol, type ProtocolCodegenInput } from "./ProtocolCodeGenerator";
 export { clearWorkbenchDraft, readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
 export { getLocale, setLocale, translate, translateWorkbench, useI18n, type Locale } from "./i18n";
-export { WorkbenchDeck, type WorkbenchDeckProps, type WorkbenchTab } from "./WorkbenchDeck";
+export { WorkbenchDeck, DEFAULT_WORKBENCH_GROUPS, WORKBENCH_LABELS, type WorkbenchDeckProps, type WorkbenchTab, type WorkbenchDefinition, type WorkbenchGroup } from "./WorkbenchDeck";
 export { CollectionRunner, type CollectionRunnerProps, type CollectionRunCase } from "./CollectionRunner";
 export { TeamWorkbench } from "./TeamWorkbench";
 export { CommentsWorkbench } from "./CommentsWorkbench";
