@@ -804,7 +804,7 @@ impl LocalStore {
         }
 
         let id = Uuid::new_v4().to_string();
-        let relative_path = format!("{}/{}", &sha[..2], &sha);
+        let relative_path = format!("{}/{}", &sha[..2], sha);
         let abs = self.blob_dir.join(&relative_path);
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent)?;
