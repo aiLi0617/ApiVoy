@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { defaultCollaborationUrl } from "./runtimeConfig";
+import { useFeedback } from "./Feedback";
 
 type Auth = { token: string; organizationId: string; role: string; user: { id: string; displayName: string } };
 type Comment = { id: string; workspaceId: string; actorId: string; actorName: string; parentId: string | null; body: string; resolvedAt: string | null; resolvedBy: string | null; createdAt: string; updatedAt: string };
 
 export function CommentsWorkbench() {
+  const { prompt, notify } = useFeedback();
   const [auth, setAuth] = useState<Auth | null>(() => readAuth());
   const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? defaultCollaborationUrl());
   const [workspaceId, setWorkspaceId] = useState("shared-workspace");
@@ -28,15 +30,15 @@ export function CommentsWorkbench() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   async function submit() { if (!body.trim()) return; try { await request(path, { method: "POST", body: JSON.stringify({ parentId: replyTo?.id ?? null, body }) }); setBody(""); setReplyTo(null); await refresh(); setMessage("评论已发布"); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
-  async function toggle(comment: Comment) { try { await request(`${path}/${comment.id}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: !comment.resolvedAt }) }); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
-  async function edit(comment: Comment) { const next = window.prompt("编辑评论", comment.body); if (!next?.trim() || next === comment.body) return; try { await request(`${path}/${comment.id}`, { method: "PATCH", body: JSON.stringify({ body: next }) }); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
+  async function toggle(comment: Comment) { try { await request(`${path}/${comment.id}/resolution`, { method: "PATCH", body: JSON.stringify({ resolved: !comment.resolvedAt }) }); await refresh(); notify("评论已更新", "success"); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
+  async function edit(comment: Comment) { const next = await prompt({ title: "编辑评论", initialValue: comment.body }); if (!next?.trim() || next === comment.body) return; try { await request(`${path}/${comment.id}`, { method: "PATCH", body: JSON.stringify({ body: next }) }); await refresh(); notify("评论已更新", "success"); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
   const roots = comments.filter(comment => !comment.parentId);
 
   if (!auth) return <section style={styles.root}><div style={styles.emptyIcon}>◎</div><small style={styles.eyebrow}>COLLABORATIVE REVIEW</small><h2 style={styles.title}>让讨论留在工作区上下文里</h2><p style={styles.muted}>请先前往 Team 页签登录。登录后可在这里发起主题、回复成员并跟踪解决状态。</p></section>;
   return <section style={styles.root}>
     <header style={styles.header}><div><small style={styles.eyebrow}>COLLABORATIVE REVIEW</small><h2 style={styles.title}>工作区评论</h2><p style={styles.muted}>围绕共享工作区进行异步评审，所有操作都会写入审计日志。</p></div><span style={styles.badge}>{comments.filter(c => !c.resolvedAt && !c.parentId).length} OPEN</span></header>
     <div style={styles.toolbar}><label style={styles.field}><span>WORKSPACE ID</span><input style={styles.input} value={workspaceId} onChange={event => setWorkspaceId(event.target.value)} /></label><button style={styles.ghost} onClick={() => void refresh()} disabled={loading}>{loading ? "同步中…" : "刷新讨论"}</button></div>
-    <div style={styles.composer}>{replyTo && <div style={styles.replyBanner}>回复 {replyTo.actorName}<button style={styles.close} onClick={() => setReplyTo(null)}>×</button></div>}<textarea style={styles.textarea} value={body} onChange={event => setBody(event.target.value)} placeholder={replyTo ? "写下你的回复…" : "提出问题、记录结论或请求评审…"} /><div style={styles.composerFooter}><span>{body.length} / 4000</span><button style={styles.primary} disabled={!body.trim() || body.length > 4000} onClick={() => void submit()}>发布{replyTo ? "回复" : "主题"}</button></div></div>
+    <div style={styles.composer}>{replyTo && <div style={styles.replyBanner}>回复 {replyTo.actorName}<button style={styles.close} onClick={() => setReplyTo(null)} aria-label="关闭回复上下文"><span aria-hidden="true">×</span></button></div>}<textarea style={styles.textarea} value={body} onChange={event => setBody(event.target.value)} placeholder={replyTo ? "写下你的回复…" : "提出问题、记录结论或请求评审…"} /><div style={styles.composerFooter}><span>{body.length} / 4000</span><button style={styles.primary} disabled={!body.trim() || body.length > 4000} onClick={() => void submit()}>发布{replyTo ? "回复" : "主题"}</button></div></div>
     <div style={styles.list}>{roots.length === 0 && !loading && <div style={styles.blank}>这个工作区还没有讨论。发起第一条评审主题吧。</div>}{roots.map(root => <article key={root.id} style={{...styles.thread, ...(root.resolvedAt ? styles.resolved : {})}}><CommentCard comment={root} currentUserId={auth.user.id} canResolve={canResolve} onReply={setReplyTo} onEdit={edit} onToggle={toggle} />{comments.filter(item => item.parentId === root.id).map(reply => <div key={reply.id} style={styles.reply}><CommentCard comment={reply} currentUserId={auth.user.id} canResolve={false} onReply={setReplyTo} onEdit={edit} onToggle={toggle} /></div>)}</article>)}</div>
     {message && <div style={styles.notice}>{message}</div>}
   </section>;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { defaultCollaborationUrl } from "./runtimeConfig";
+import { useFeedback } from "./Feedback";
 
 type Auth = { token: string; expiresAt: string; organizationId: string; role: string; user: { id: string; email: string; displayName: string } };
 type Member = { id: string; email: string; displayName: string; role: string };
@@ -8,6 +9,7 @@ type Conflict = { currentRevision: number; currentDocument: unknown };
 
 export interface TeamWorkbenchProps { onExportSnapshot?: () => Promise<unknown>; onRestoreSnapshot?: (snapshot: unknown) => Promise<void> }
 export function TeamWorkbench({ onExportSnapshot, onRestoreSnapshot }: TeamWorkbenchProps = {}) {
+  const { confirm } = useFeedback();
   const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("apivoy:collaboration-url") ?? defaultCollaborationUrl());
   const [auth, setAuth] = useState<Auth | null>(() => { try { return JSON.parse(localStorage.getItem("apivoy:collaboration-auth") ?? "null"); } catch { return null; } });
   const [mode, setMode] = useState<"login" | "bootstrap">("login");
@@ -24,7 +26,7 @@ export function TeamWorkbench({ onExportSnapshot, onRestoreSnapshot }: TeamWorkb
   async function refreshTeam() { if (!auth) return; try { const [nextMembers, nextAudits] = await Promise.all([request<Member[]>(`/v1/organizations/${auth.organizationId}/members`), canManage ? request<Audit[]>(`/v1/organizations/${auth.organizationId}/audit`) : Promise.resolve([])]); setMembers(nextMembers); setAudits(nextAudits); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
   useEffect(() => { void refreshTeam(); }, [auth?.token]);
   async function provision() { if (!auth) return; try { await request(`/v1/organizations/${auth.organizationId}/members/provision`, { method: "POST", body: JSON.stringify({ email: memberEmail, displayName: memberName, password: memberPassword, role: memberRole }) }); setMemberEmail(""); setMemberName(""); setMemberPassword(""); await refreshTeam(); setMessage("成员已创建并加入组织"); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
-  async function pull() { if (!auth) return; try { const value = await request<{ revision: number; document: unknown }>(`/v1/organizations/${auth.organizationId}/workspaces/${workspaceId}`); setRevision(value.revision); setDocumentText(JSON.stringify(value.document, null, 2)); setConflict(null); if (onRestoreSnapshot && value.revision > 0 && window.confirm(`已拉取 revision ${value.revision}，是否合并恢复到本地工作区？`)) await onRestoreSnapshot(value.document); setMessage(`已拉取 revision ${value.revision}${onRestoreSnapshot ? " · 可恢复到本地" : ""}`); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
+  async function pull() { if (!auth) return; try { const value = await request<{ revision: number; document: unknown }>(`/v1/organizations/${auth.organizationId}/workspaces/${workspaceId}`); setRevision(value.revision); setDocumentText(JSON.stringify(value.document, null, 2)); setConflict(null); if (onRestoreSnapshot && value.revision > 0 && await confirm({ title: "恢复远端快照", description: `已拉取 revision ${value.revision}，是否合并恢复到本地工作区？`, confirmLabel: "恢复" })) await onRestoreSnapshot(value.document); setMessage(`已拉取 revision ${value.revision}${onRestoreSnapshot ? " · 可恢复到本地" : ""}`); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }
   async function push() { if (!auth) return; try { const local = onExportSnapshot ? await onExportSnapshot() : JSON.parse(documentText); if (onExportSnapshot) setDocumentText(JSON.stringify(local,null,2)); const value = await request<{ revision: number; document: unknown }>(`/v1/organizations/${auth.organizationId}/workspaces/${workspaceId}`, { method: "PUT", body: JSON.stringify({ baseRevision: revision, document: local, patch: JSON.parse(patchText) }) }); setRevision(value.revision); setConflict(null); setMessage(`同步成功 · revision ${value.revision}${onExportSnapshot ? " · 已包含本地资源树" : ""}`); await refreshTeam(); } catch (error) { const typed = error as Error & { status?: number; payload?: Conflict }; if (typed.status === 409 && typed.payload) setConflict(typed.payload); setMessage(typed.message); } }
   async function logout() { try { await request("/v1/auth/logout", { method: "POST" }); } catch { /* local logout remains valid */ } setAuth(null); setMembers([]); setAudits([]); setMessage("已退出团队空间"); }
 

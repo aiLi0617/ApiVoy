@@ -1,6 +1,7 @@
 import { exportApiVoyProject, importDocument, type PortableRequest } from "@apivoy/import-export";
 import { useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { useFeedback } from "./Feedback";
+import { Icon } from "./Icons";
 
 export interface WorkspaceRecord { id: string; name: string; rootPath?: string | null; archived?: boolean; updatedAt?: string }
 export interface ProjectRecord { id: string; workspaceId: string; name: string }
@@ -42,7 +43,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const [batchTarget, setBatchTarget] = useState("");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
-  const { notify, confirm } = useFeedback();
+  const { notify, confirm, prompt } = useFeedback();
 
   async function importFiles(files?: FileList | null) {
     if (!files?.length) return;
@@ -140,19 +141,19 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     const children = tree!.collections.filter((item) => item.parentId === collection.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     return <div key={collection.id}>
       <div draggable onDragStart={(event) => setDrag(event, "collection", collection.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropOnCollection(event, collection)} className="tree-row" style={{...styles.collection, paddingLeft: 22 + depth * 14, ...(props.selectedCollectionId === collection.id ? styles.active : {})}}>
-        <button style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)}><span>▱</span><span>{collection.name}</span><small>{requests.length}</small></button>
-        <button disabled={siblingIndex <= 0} style={styles.action} title="上移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex - 1])}>↑</button>
-        <button disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} style={styles.action} title="下移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex + 1])}>↓</button>
-        <button style={styles.icon} title="新建子集合" onClick={() => setDraft({ kind: "collection", owner: collection.projectId, parentId: collection.id })}>＋</button>
-        <button style={styles.action} title="重命名集合" onClick={() => { const value = window.prompt("集合名称", collection.name)?.trim(); if (value) void props.onRenameCollection(collection, value); }}>✎</button>
-        <button style={styles.action} title={collection.tags?.length ? `标签：${collection.tags.join(", ")}` : "设置标签"} onClick={() => { const value = window.prompt("集合标签（逗号分隔）", collection.tags?.join(", ") ?? ""); if (value !== null) void props.onUpdateCollectionTags(collection, value.split(",").map((tag) => tag.trim()).filter(Boolean)); }}>#</button>
-        {collection.id !== "default-collection" && <button style={styles.delete} title="删除集合" onClick={() => { if (window.confirm(`删除集合“${collection.name}”及其中全部内容？`)) void props.onDeleteCollection(collection.id); }}>×</button>}
+        <button style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)}><Icon name="folder" /><span>{collection.name}</span><small>{requests.length}</small></button>
+        <button disabled={siblingIndex <= 0} style={styles.action} title="上移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex - 1])}><Icon name="arrow-up" /></button>
+        <button disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} style={styles.action} title="下移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex + 1])}><Icon name="arrow-down" /></button>
+        <button style={styles.icon} title="新建子集合" onClick={() => setDraft({ kind: "collection", owner: collection.projectId, parentId: collection.id })}><Icon name="plus" /></button>
+        <button style={styles.action} title="重命名集合" onClick={async () => { const value = (await prompt({ title: "重命名集合", initialValue: collection.name }))?.trim(); if (value) void props.onRenameCollection(collection, value); }}><Icon name="edit" /></button>
+        <button style={styles.action} title={collection.tags?.length ? `标签：${collection.tags.join(", ")}` : "设置标签"} onClick={async () => { const value = await prompt({ title: "设置集合标签", initialValue: collection.tags?.join(", ") ?? "", placeholder: "标签以逗号分隔" }); if (value !== null) void props.onUpdateCollectionTags(collection, value.split(",").map((tag) => tag.trim()).filter(Boolean)); }}><Icon name="tag" /></button>
+        {collection.id !== "default-collection" && <button style={styles.delete} title="删除集合" onClick={async () => { if (await confirm({ title: "删除集合", description: `删除集合“${collection.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteCollection(collection.id); }}><Icon name="trash" /></button>}
       </div>
       {!!collection.tags?.length && <div style={{ ...styles.tags, paddingLeft: 39 + depth * 14 }}>{collection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
       {requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request) => <div draggable onDragStart={(event) => setDrag(event, "request", request.id)} className="tree-row" key={request.id} style={{...styles.requestRow, paddingLeft: 39 + depth * 14, ...(props.selectedRequestId === request.id ? styles.active : {})}}>
         <input type="checkbox" checked={selectedIds.includes(request.id)} onChange={() => toggleSelected(request.id)} title="批量选择" />
         <button style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}><b>{request.method ?? "HTTP"}</b><span>{request.name}</span></button>
-        <button style={styles.delete} title="删除请求" onClick={() => { if (window.confirm(`确定删除请求“${request.name}”吗？`)) void props.onDeleteRequest(request.id); }}>×</button>
+        <button style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteRequest(request.id); }}><Icon name="trash" /></button>
       </div>)}
       {children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
     </div>;
@@ -162,14 +163,14 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       <select style={styles.workspaceSelect} value={workspace?.id ?? ""} onChange={(event) => { setSelectedWorkspaceId(event.target.value); void props.onTouchWorkspace(event.target.value); }}>
         {tree.workspaces.map((item) => <option key={item.id} value={item.id}>{item.archived ? `【已归档】${item.name}` : item.name}</option>)}
       </select>
-      <button style={styles.action} title="新建工作区" onClick={() => { const value = window.prompt("工作区名称")?.trim(); if (value) void props.onCreateWorkspace(value); }}>＋</button>
-      {workspace && <button style={styles.action} title="重命名工作区" onClick={() => { const value = window.prompt("工作区名称", workspace.name)?.trim(); if (value) void props.onRenameWorkspace(workspace.id, value); }}>✎</button>}
-      {workspace && workspace.id !== "default-workspace" && <button style={styles.action} title={workspace.archived ? "恢复工作区" : "归档工作区"} onClick={() => { if (workspace.archived || window.confirm(`归档工作区“${workspace.name}”？`)) void props.onArchiveWorkspace(workspace.id, !workspace.archived); }}>{workspace.archived ? "恢复" : "归档"}</button>}
-      {workspace && workspace.id !== "default-workspace" && <button style={styles.delete} title="永久删除工作区" onClick={() => { if (window.confirm(`永久删除工作区“${workspace.name}”及其全部内容？此操作不可恢复。`)) void props.onDeleteWorkspace(workspace.id); }}>×</button>}
+      <button style={styles.action} title="新建工作区" onClick={async () => { const value = (await prompt({ title: "新建工作区" }))?.trim(); if (value) void props.onCreateWorkspace(value); }}><Icon name="plus" /></button>
+      {workspace && <button style={styles.action} title="重命名工作区" onClick={async () => { const value = (await prompt({ title: "重命名工作区", initialValue: workspace.name }))?.trim(); if (value) void props.onRenameWorkspace(workspace.id, value); }}><Icon name="edit" /></button>}
+      {workspace && workspace.id !== "default-workspace" && <button style={styles.action} title={workspace.archived ? "恢复工作区" : "归档工作区"} onClick={async () => { if (workspace.archived || await confirm({ title: "归档工作区", description: `归档工作区“${workspace.name}”？` })) void props.onArchiveWorkspace(workspace.id, !workspace.archived); }}>{workspace.archived ? "恢复" : "归档"}</button>}
+      {workspace && workspace.id !== "default-workspace" && <button style={styles.delete} title="永久删除工作区" onClick={async () => { if (await confirm({ title: "永久删除工作区", description: `永久删除工作区“${workspace.name}”及其全部内容？此操作不可恢复。`, tone: "danger", confirmLabel: "永久删除" })) void props.onDeleteWorkspace(workspace.id); }}><Icon name="trash" /></button>}
     </div>
     <div style={styles.heading}>
       <span>资源管理器</span>
-      <span style={styles.headingActions}><button style={styles.action} title="导入 OpenAPI JSON/YAML、Postman、HAR 或 ApiVoy 包" onClick={() => importInput.current?.click()}>导入</button>{workspace && <button style={styles.icon} title="新建项目" onClick={() => setDraft({ kind: "project", owner: workspace.id })}>＋</button>}</span>
+      <span style={styles.headingActions}><button style={styles.action} title="导入 OpenAPI JSON/YAML、Postman、HAR 或 ApiVoy 包" onClick={() => importInput.current?.click()}>导入</button>{workspace && <button style={styles.icon} title="新建项目" onClick={() => setDraft({ kind: "project", owner: workspace.id })}><Icon name="plus" /></button>}</span>
       <input ref={importInput} hidden multiple type="file" accept=".json,.yaml,.yml,.har,.apivoy" onChange={(event) => void importFiles(event.target.files)} />
     </div>
     <input style={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" />
@@ -181,11 +182,11 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     </div>}
     {tree.projects.filter((project) => project.workspaceId === workspace?.id).filter((project) => !normalizedQuery || project.name.toLocaleLowerCase().includes(normalizedQuery) || tree.collections.some((item) => item.projectId === project.id && collectionMatches(item))).map((project) => <div key={project.id} style={styles.project}>
       <div style={styles.projectRow} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const item = readDrag(event); if (item?.type === "collection") { const source = tree.collections.find((collection) => collection.id === item.id); if (source?.projectId === project.id) void props.onMoveCollection(source, project.id, null); } }}>
-        <span style={styles.chevron}>⌄</span><strong title={project.name}>{project.name}</strong>
-        <button style={styles.icon} title="新建集合" onClick={() => setDraft({ kind: "collection", owner: project.id, parentId: null })}>＋</button>
-        <button style={styles.action} title="重命名项目" onClick={() => { const value = window.prompt("项目名称", project.name)?.trim(); if (value) void props.onRenameProject(project.id, value); }}>✎</button>
-        <button style={styles.action} title="导出项目包" onClick={() => void exportProject(project)}>⇩</button>
-        {project.id !== "default-project" && <button style={styles.delete} title="删除项目" onClick={() => { if (window.confirm(`删除项目“${project.name}”及其中全部内容？`)) void props.onDeleteProject(project.id); }}>×</button>}
+        <span style={styles.chevron}><Icon name="chevron" /></span><strong title={project.name}>{project.name}</strong>
+        <button style={styles.icon} title="新建集合" onClick={() => setDraft({ kind: "collection", owner: project.id, parentId: null })}><Icon name="plus" /></button>
+        <button style={styles.action} title="重命名项目" onClick={async () => { const value = (await prompt({ title: "重命名项目", initialValue: project.name }))?.trim(); if (value) void props.onRenameProject(project.id, value); }}><Icon name="edit" /></button>
+        <button style={styles.action} title="导出项目包" onClick={() => void exportProject(project)}><Icon name="download" /></button>
+        {project.id !== "default-project" && <button style={styles.delete} title="删除项目" onClick={async () => { if (await confirm({ title: "删除项目", description: `删除项目“${project.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteProject(project.id); }}><Icon name="trash" /></button>}
       </div>
       {tree.collections.filter((item) => item.projectId === project.id && !item.parentId && collectionMatches(item)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((collection) => renderCollection(collection))}
     </div>)}
