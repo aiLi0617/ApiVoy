@@ -10,6 +10,7 @@ import type {
   RequestEnvelope,
 } from "@apivoy/request-model";
 import { CodeGenerator } from "./CodeGenerator";
+import { Icon } from "./Icons";
 import { CodeEditor } from "./CodeEditor";
 import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
 import { VirtualList } from "./VirtualList";
@@ -867,7 +868,7 @@ export function HttpWorkbench({
       {onListCookies && onSetCookie && onDeleteCookie && <div style={styles.importPanel}>
         <div style={styles.panelTitle}><strong>Cookie Jar</strong><button style={styles.secondaryButton} onClick={() => void refreshCookies()}>刷新当前 URL</button></div>
         <div style={styles.row}><input style={styles.input} value={cookieName} onChange={(event) => setCookieName(event.target.value)} placeholder="Cookie 名称" /><input style={styles.input} value={cookieValue} onChange={(event) => setCookieValue(event.target.value)} placeholder="Cookie 值" /><button style={styles.secondaryButton} onClick={() => void handleSetCookie()}>设置</button></div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>{cookies.map((cookie) => <span key={cookie.name} style={{ border: "1px solid var(--apivoy-border)", borderRadius: 999, padding: "4px 8px", fontSize: 11 }}><code>{cookie.name}={cookie.value}</code> <button onClick={async () => { await onDeleteCookie(url, cookie.name); await refreshCookies(); }}>×</button></span>)}</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>{cookies.map((cookie) => <span key={cookie.name} style={{ border: "1px solid var(--apivoy-border)", borderRadius: 999, padding: "4px 8px", fontSize: 11 }}><code>{cookie.name}={cookie.value}</code> <button aria-label={`删除 Cookie ${cookie.name}`} onClick={async () => { await onDeleteCookie(url, cookie.name); await refreshCookies(); }}><Icon name="trash" /></button></span>)}</div>
       </div>}
 
       {showBody && (
