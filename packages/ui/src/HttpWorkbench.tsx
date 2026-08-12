@@ -765,7 +765,7 @@ export function HttpWorkbench({
   const showBody = method !== "GET" && method !== "HEAD";
 
   return (
-    <WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪 · Ctrl + Enter 发送</span>}>
+    <WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪 · Ctrl + Enter 发送</span>}>
       <SplitPane id="http-workbench" primaryLabel="请求配置" secondaryLabel="响应检查器" primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
 <div style={styles.row}>
         <select
