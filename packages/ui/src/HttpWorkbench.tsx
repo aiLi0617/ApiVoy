@@ -780,14 +780,7 @@ export function HttpWorkbench({
             </option>
           ))}
         </select>
-        <input
-          style={styles.input}
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://{{host}}/api"
-          spellCheck={false}
-          disabled={loading}
-        />
+        <label className="http-target-field">目标 URL<input id="http-target-url" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://{{host}}/api" spellCheck={false} disabled={loading} aria-describedby="http-target-url-help" aria-invalid={!url.trim()} /><small id="http-target-url-help">支持环境变量，例如 https://&#123;&#123;host&#125;&#125;/api</small></label>
         <button style={styles.button} disabled={loading || !url.trim()} onClick={handleSend}>
           {loading ? "发送中…" : "发送"}
         </button>

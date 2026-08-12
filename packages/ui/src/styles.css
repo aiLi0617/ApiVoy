@@ -156,3 +156,7 @@ small { color: var(--apivoy-muted); }
 .http-response-pane > div:not(.response-empty) { border-radius: 7px !important; box-shadow: none !important; }
 
 .tree-row { content-visibility: auto; contain-intrinsic-size: 32px; }
+
+.http-target-field { display: grid; gap: 4px; min-width: 0; }
+.http-target-field > small { font-size: 10px; color: var(--apivoy-subtle); }
+.http-target-field input[aria-invalid='true'] { border-color: var(--apivoy-warning) !important; }
