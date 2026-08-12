@@ -8,4 +8,11 @@ export default defineConfig({
     strictPort: true,
   },
   clearScreen: false,
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: { monaco: ["monaco-editor", "@monaco-editor/react"] },
+      },
+    },
+  },
 });
