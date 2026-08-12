@@ -4,6 +4,9 @@
 .standardized-workbench button:focus-visible, .standardized-workbench input:focus-visible, .standardized-workbench select:focus-visible, .standardized-workbench textarea:focus-visible { outline: 2px solid var(--apivoy-accent); outline-offset: 2px; }
 .standardized-workbench > section { min-height: 100%; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; }
 .standardized-workbench > section > header:first-child { display: none !important; }
+.standardized-workbench input:not([type="checkbox"]):not([type="radio"]), .standardized-workbench textarea, .standardized-workbench select { color: var(--apivoy-text) !important; background: var(--apivoy-bg-elevated) !important; border-color: var(--apivoy-border) !important; }
+.standardized-workbench pre, .standardized-workbench code { font-family: var(--apivoy-mono); }
+.standardized-workbench pre { background: var(--apivoy-bg) !important; color: var(--apivoy-text) !important; }
 .standardized-workbench h2:first-child { margin-top: 0 !important; font-size: 15px !important; }
 .standardized-workbench details { border-color: var(--apivoy-border) !important; background: var(--apivoy-bg-elevated) !important; }
 .standardized-workbench [style*="linear-gradient"], .standardized-workbench [style*="radial-gradient"] { background-image: none !important; }
