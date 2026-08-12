@@ -142,7 +142,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     const siblings = tree!.collections.filter((item) => item.projectId === collection.projectId && (item.parentId ?? null) === (collection.parentId ?? null)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     const siblingIndex = siblings.findIndex((item) => item.id === collection.id);
     const children = tree!.collections.filter((item) => item.parentId === collection.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-    return <div key={collection.id} role="treeitem" aria-level={depth + 1} aria-label={`集合 ${collection.name}`}>
+    const isCollapsed = collapsedNodes.includes(`collection:${collection.id}`);
+    return <div key={collection.id} role="treeitem" aria-level={depth + 1} aria-expanded={!isCollapsed} aria-label={`集合 ${collection.name}`}>
       <div draggable onDragStart={(event) => setDrag(event, "collection", collection.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropOnCollection(event, collection)} className="tree-row" style={{...styles.collection, paddingLeft: 22 + depth * 14, ...(props.selectedCollectionId === collection.id ? styles.active : {})}}>
         <button aria-label={`${collapsedNodes.includes(`collection:${collection.id}`) ? "展开" : "折叠"}集合 ${collection.name}`} aria-expanded={!collapsedNodes.includes(`collection:${collection.id}`)} style={styles.icon} onClick={() => toggleExplorerNode(`collection:${collection.id}`)}><Icon name="chevron" /></button><button style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)}><Icon name="folder" /><span>{collection.name}</span><small>{requests.length}</small></button>
         <button disabled={siblingIndex <= 0} style={styles.action} title="上移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex - 1])}><Icon name="arrow-up" /></button>
@@ -152,13 +153,13 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
         <button style={styles.action} title={collection.tags?.length ? `标签：${collection.tags.join(", ")}` : "设置标签"} onClick={async () => { const value = await prompt({ title: "设置集合标签", initialValue: collection.tags?.join(", ") ?? "", placeholder: "标签以逗号分隔" }); if (value !== null) void props.onUpdateCollectionTags(collection, value.split(",").map((tag) => tag.trim()).filter(Boolean)); }}><Icon name="tag" /></button>
         {collection.id !== "default-collection" && <button style={styles.delete} title="删除集合" onClick={async () => { if (await confirm({ title: "删除集合", description: `删除集合“${collection.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteCollection(collection.id); }}><Icon name="trash" /></button>}
       </div>
-      {!!collection.tags?.length && <div style={{ ...styles.tags, paddingLeft: 39 + depth * 14 }}>{collection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
-      {requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request) => <div draggable onDragStart={(event) => setDrag(event, "request", request.id)} className="tree-row" role="treeitem" aria-level={depth + 2} key={request.id} style={{...styles.requestRow, paddingLeft: 39 + depth * 14, ...(props.selectedRequestId === request.id ? styles.active : {})}}>
+      {!isCollapsed && !!collection.tags?.length && <div style={{ ...styles.tags, paddingLeft: 39 + depth * 14 }}>{collection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+      {!isCollapsed && requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request) => <div draggable onDragStart={(event) => setDrag(event, "request", request.id)} className="tree-row" role="treeitem" aria-level={depth + 2} key={request.id} style={{...styles.requestRow, paddingLeft: 39 + depth * 14, ...(props.selectedRequestId === request.id ? styles.active : {})}}>
         <input type="checkbox" checked={selectedIds.includes(request.id)} onChange={() => toggleSelected(request.id)} title="批量选择" />
         <button style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}><b>{request.method ?? "HTTP"}</b><span>{request.name}</span></button>
         <button style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteRequest(request.id); }}><Icon name="trash" /></button>
       </div>)}
-      {!collapsedNodes.includes(`collection:${collection.id}`) && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
+      {!isCollapsed && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
     </div>;
   }
   return <section style={styles.root} role="tree" aria-label="工作区资源树">
