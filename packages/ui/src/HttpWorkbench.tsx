@@ -1372,7 +1372,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 14,
     fontWeight: 600,
     color: "#041018",
-    background: "linear-gradient(180deg, #71bdfb, #3d9cf0)",
+    background: "var(--apivoy-panel)",
     border: "none",
     borderRadius: 9,
     padding: "12px 18px",
@@ -1400,7 +1400,7 @@ const styles: Record<string, CSSProperties> = {
   },
   panel: {
     marginTop: 8,
-    background: "linear-gradient(180deg, rgba(18,25,35,.96), rgba(13,19,27,.96))",
+    background: "var(--apivoy-panel)",
     border: "1px solid var(--apivoy-border)",
     borderRadius: 14,
     padding: 18,
