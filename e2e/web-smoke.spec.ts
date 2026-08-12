@@ -70,3 +70,8 @@ test("all protocol workbenches keep light theme bounds", async ({ page }) => {
     expect(overflow, `${id} light horizontal overflow`).toBeLessThanOrEqual(1);
   }
 });
+test("HTTP workbench exposes busy state semantics", async ({ page }) => {
+  const frame = page.locator(".workbench-frame").first();
+  await expect(frame).not.toHaveAttribute("aria-busy", "true");
+  await expect(frame).toHaveAttribute("aria-labelledby", /workbench-title-http/);
+});
