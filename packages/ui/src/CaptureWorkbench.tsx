@@ -1,4 +1,5 @@
 import { useEffect,useState,type CSSProperties } from "react";
+import { VirtualList } from "./VirtualList";
 
 export interface CaptureStatus { running:boolean; bind?:string; exchangeCount:number }
 export interface CapturedExchange { id:string;method:string;url:string;status?:number;requestHeaders:Array<[string,string]>;responseHeaders:Array<[string,string]>;requestBodyPreview:string;responseBodyPreview:string;startedAt:string;durationMs:number;tunnel:boolean;error?:string }
