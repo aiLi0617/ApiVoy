@@ -160,7 +160,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   }
   return <section style={styles.root} role="tree" aria-label="工作区资源树">
     <div style={styles.workspaceBar}>
-      <select style={styles.workspaceSelect} value={workspace?.id ?? ""} onChange={(event) => { setSelectedWorkspaceId(event.target.value); void props.onTouchWorkspace(event.target.value); }}>
+      <select aria-label="选择工作区" style={styles.workspaceSelect} value={workspace?.id ?? ""} onChange={(event) => { setSelectedWorkspaceId(event.target.value); void props.onTouchWorkspace(event.target.value); }}>
         {tree.workspaces.map((item) => <option key={item.id} value={item.id}>{item.archived ? `【已归档】${item.name}` : item.name}</option>)}
       </select>
       <button style={styles.action} title="新建工作区" onClick={async () => { const value = (await prompt({ title: "新建工作区" }))?.trim(); if (value) void props.onCreateWorkspace(value); }}><Icon name="plus" /></button>
@@ -173,10 +173,10 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       <span style={styles.headingActions}><button style={styles.action} title="导入 OpenAPI JSON/YAML、Postman、HAR 或 ApiVoy 包" onClick={() => importInput.current?.click()}>导入</button>{workspace && <button style={styles.icon} title="新建项目" onClick={() => setDraft({ kind: "project", owner: workspace.id })}><Icon name="plus" /></button>}</span>
       <input ref={importInput} hidden multiple type="file" accept=".json,.yaml,.yml,.har,.apivoy" onChange={(event) => void importFiles(event.target.files)} />
     </div>
-    <input style={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" />
+    <input aria-label="搜索资源" style={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" />
     {selectedIds.length > 0 && <div style={styles.batchBar}>
       <strong>{selectedIds.length} 已选</strong>
-      <select style={styles.batchSelect} value={batchTarget} onChange={(event) => setBatchTarget(event.target.value)} disabled={selectedProjectIds.length !== 1}><option value="">{selectedProjectIds.length === 1 ? "移动到…" : "跨项目不可批量移动"}</option>{tree.collections.filter((item) => item.projectId === selectedProjectIds[0]).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+      <select aria-label="批量移动目标集合" style={styles.batchSelect} value={batchTarget} onChange={(event) => setBatchTarget(event.target.value)} disabled={selectedProjectIds.length !== 1}><option value="">{selectedProjectIds.length === 1 ? "移动到…" : "跨项目不可批量移动"}</option>{tree.collections.filter((item) => item.projectId === selectedProjectIds[0]).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <button style={styles.action} disabled={!batchTarget} onClick={() => void batchMove()}>移动</button>
       <button style={styles.delete} onClick={() => void batchDelete()}>删除</button>
     </div>}
