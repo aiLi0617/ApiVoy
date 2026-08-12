@@ -19,14 +19,14 @@ jobs:
           - os: windows-2025
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Linux desktop libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -34,6 +34,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm prepare:sidecar
+      - name: Generate release notes
+        id: release-notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY="$(gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${GITHUB_REF_NAME}" \
+            --jq '.body')"
+
+          if [ -z "$BODY" ]; then
+            BODY="ApiVoy ${GITHUB_REF_NAME}"
+          fi
+
+          DELIM="RELEASE_NOTES_$(date +%s%N)"
+          {
+            echo "body<<$DELIM"
+            printf '%s\n' "$BODY"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -44,7 +67,7 @@ jobs:
           args: --config src-tauri/tauri.sidecar.conf.json
           tagName: ${{ github.ref_name }}
           releaseName: ApiVoy ${{ github.ref_name }}
-          releaseBody: "See the changelog and attached SBOM for details."
+          releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: true
 
   agent-cli:
@@ -59,7 +82,7 @@ jobs:
             archive: zip
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p apivoy-local-agent -p apivoy-cli
