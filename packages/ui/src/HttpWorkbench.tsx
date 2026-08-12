@@ -1195,7 +1195,7 @@ export function HttpWorkbench({
                   {result.preview && <button style={styles.linkButton} onClick={downloadResponse}>下载</button>}
                 </div>
               </div>
-              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图">
+              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return; event.preventDefault(); const tabs = ["body", "headers", "assertions", "timeline"] as const; const current = tabs.indexOf(responseTab); const next = event.key === "ArrowRight" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length; setResponseTab(tabs[next]); }}>
                 <button role="tab" aria-selected={responseTab === "body"} style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>响应体</button>
                 <button role="tab" aria-selected={responseTab === "headers"} style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Headers <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
                 <button role="tab" aria-selected={responseTab === "assertions"} style={responseTab === "assertions" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("assertions")}>断言 <span style={styles.count}>{result.assertions?.length ?? 0}</span></button>
