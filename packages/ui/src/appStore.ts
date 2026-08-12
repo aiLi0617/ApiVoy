@@ -10,6 +10,7 @@ interface AppStore {
   themeMode: ThemeMode;
   collapsedNavigation: boolean;
   collapsedExplorer: boolean;
+  collapsedExplorerNodes: string[];
   favoriteWorkbenches: string[];
   recentWorkbenches: string[];
   splitPreferences: Record<string, SplitPanePreference>;
@@ -17,20 +18,22 @@ interface AppStore {
   setThemeMode: (mode: ThemeMode) => void;
   toggleNavigation: () => void;
   toggleExplorer: () => void;
+  toggleExplorerNode: (id: string) => void;
   toggleFavorite: (id: string) => void;
   setSplitPreference: (id: string, value: SplitPanePreference) => void;
 }
 
 export const useAppStore = create<AppStore>()(persist(
   (set) => ({
-    activeWorkbench: "http", themeMode: "dark", collapsedNavigation: false, collapsedExplorer: false,
+    activeWorkbench: "http", themeMode: "dark", collapsedNavigation: false, collapsedExplorer: false, collapsedExplorerNodes: [],
     favoriteWorkbenches: [], recentWorkbenches: ["http"], splitPreferences: {},
     setActiveWorkbench: (activeWorkbench) => set((state) => ({ activeWorkbench, recentWorkbenches: [activeWorkbench, ...state.recentWorkbenches.filter((id) => id !== activeWorkbench)].slice(0, 6) })),
     setThemeMode: (themeMode) => set({ themeMode }),
     toggleNavigation: () => set((state) => ({ collapsedNavigation: !state.collapsedNavigation })),
     toggleExplorer: () => set((state) => ({ collapsedExplorer: !state.collapsedExplorer })),
+    toggleExplorerNode: (id) => set((state) => ({ collapsedExplorerNodes: state.collapsedExplorerNodes.includes(id) ? state.collapsedExplorerNodes.filter((item) => item !== id) : [...state.collapsedExplorerNodes, id] })),
     toggleFavorite: (id) => set((state) => ({ favoriteWorkbenches: state.favoriteWorkbenches.includes(id) ? state.favoriteWorkbenches.filter((item) => item !== id) : [...state.favoriteWorkbenches, id] })),
     setSplitPreference: (id, value) => set((state) => ({ splitPreferences: { ...state.splitPreferences, [id]: value } })),
   }),
-  { name: "apivoy:ui-state", version: 2 },
+  { name: "apivoy:ui-state", version: 3 },
 ));
