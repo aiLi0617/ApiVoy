@@ -16,18 +16,31 @@ export interface FlattenWorkspaceTreeOptions {
 export function flattenWorkspaceTree({ projects, collections, requests, workspaceId, collapsedNodes }: FlattenWorkspaceTreeOptions): WorkspaceTreeRow[] {
   const collapsed = new Set(collapsedNodes);
   const rows: WorkspaceTreeRow[] = [];
+  const rootCollectionsByProject = new Map<string, CollectionRecord[]>();
+  const childCollectionsByParent = new Map<string, CollectionRecord[]>();
+  const requestsByCollection = new Map<string, RequestRecord[]>();
+  const sortCollections = (items: CollectionRecord[]) => items.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+
+  collections.forEach((collection) => {
+    const index = collection.parentId ? childCollectionsByParent : rootCollectionsByProject;
+    const key = collection.parentId ?? collection.projectId;
+    index.set(key, [...(index.get(key) ?? []), collection]);
+  });
+  rootCollectionsByProject.forEach(sortCollections);
+  childCollectionsByParent.forEach(sortCollections);
+  requests.forEach((request) => requestsByCollection.set(request.collectionId, [...(requestsByCollection.get(request.collectionId) ?? []), request]));
 
   function appendCollection(collection: CollectionRecord, depth: number) {
     rows.push({ kind: "collection", id: `collection:${collection.id}`, depth, collection });
     if (collapsed.has(`collection:${collection.id}`)) return;
-    requests.filter((request) => request.collectionId === collection.id).forEach((request) => rows.push({ kind: "request", id: `request:${request.id}`, depth: depth + 1, request }));
-    collections.filter((item) => item.parentId === collection.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).forEach((child) => appendCollection(child, depth + 1));
+    (requestsByCollection.get(collection.id) ?? []).forEach((request) => rows.push({ kind: "request", id: `request:${request.id}`, depth: depth + 1, request }));
+    (childCollectionsByParent.get(collection.id) ?? []).forEach((child) => appendCollection(child, depth + 1));
   }
 
   projects.filter((project) => !workspaceId || project.workspaceId === workspaceId).forEach((project) => {
     rows.push({ kind: "project", id: `project:${project.id}`, depth: 0, project });
     if (collapsed.has(`project:${project.id}`)) return;
-    collections.filter((collection) => collection.projectId === project.id && !collection.parentId).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).forEach((collection) => appendCollection(collection, 1));
+    (rootCollectionsByProject.get(project.id) ?? []).forEach((collection) => appendCollection(collection, 1));
   });
   return rows;
 }
