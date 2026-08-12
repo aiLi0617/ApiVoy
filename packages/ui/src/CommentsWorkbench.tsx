@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { defaultCollaborationUrl } from "./runtimeConfig";
 import { useFeedback } from "./Feedback";
+import { Icon } from "./Icons";
 
 type Auth = { token: string; organizationId: string; role: string; user: { id: string; displayName: string } };
 type Comment = { id: string; workspaceId: string; actorId: string; actorName: string; parentId: string | null; body: string; resolvedAt: string | null; resolvedBy: string | null; createdAt: string; updatedAt: string };
