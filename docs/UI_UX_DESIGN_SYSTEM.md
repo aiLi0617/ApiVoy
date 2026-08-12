@@ -38,7 +38,7 @@
 | Mock、Gateway、Capture、Plugins、AI | 🟡 部分完成 | 已接入统一 WorkbenchFrame 与管理型布局，内部控件迁移待完成 |
 | Team、Comments、SSO | 🟡 部分完成 | 已接入统一 WorkbenchFrame 与管理型布局，内部控件迁移待完成 |
 | Toast、确认 Dialog、输入 Dialog、加载与空状态 | ✅ 已完成 | 公共组件已建立并由 AppShell 统一提供；资源管理器已开始接入 |
-| 表单校验与错误播报 | 🟡 部分完成 | 规范已确定，全部字段关联待完成 |
+| 表单校验与错误播报 | 🟡 部分完成 | 共享样式已统一标签、错误播报和忙碌状态，字段级 aria-describedby 仍需逐页接入 |
 | 加载与空状态 | 🟡 部分完成 | HTTP 和部分区域已具备，尚未覆盖全部页面 |
 | 长列表虚拟化 | 🟡 部分完成 | HTTP 执行历史、Capture 抓包会话和 Team 审计时间线已接入 VirtualList，事件流和资源树待接入 |
 | 内联样式清理 | 🟡 部分完成 | 全局外观已统一，旧工作台内联样式仍待迁移 |
