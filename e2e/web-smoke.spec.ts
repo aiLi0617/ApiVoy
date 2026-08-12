@@ -43,3 +43,10 @@ test("switches theme and keeps visible keyboard focus", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "命令面板" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "搜索命令" })).toBeFocused();
 });
+
+test("HTTP target URL exposes accessible help text", async ({ page }) => {
+  const input = page.locator("#http-target-url");
+  await expect(input).toHaveAttribute("aria-describedby", "http-target-url-help");
+  await expect(page.locator("label.http-target-field")).toContainText("目标 URL");
+  await expect(page.locator("#http-target-url-help")).toBeVisible();
+});
