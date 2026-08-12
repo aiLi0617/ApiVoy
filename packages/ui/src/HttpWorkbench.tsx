@@ -1195,11 +1195,11 @@ export function HttpWorkbench({
                   {result.preview && <button style={styles.linkButton} onClick={downloadResponse}>下载</button>}
                 </div>
               </div>
-              <div style={styles.responseTabs}>
-                <button style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>响应体</button>
-                <button style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Headers <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
-                <button style={responseTab === "assertions" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("assertions")}>断言 <span style={styles.count}>{result.assertions?.length ?? 0}</span></button>
-                <button style={responseTab === "timeline" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("timeline")}>时间线 <span style={styles.count}>{timeline.length}</span></button>
+              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图">
+                <button role="tab" aria-selected={responseTab === "body"} style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>响应体</button>
+                <button role="tab" aria-selected={responseTab === "headers"} style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Headers <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
+                <button role="tab" aria-selected={responseTab === "assertions"} style={responseTab === "assertions" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("assertions")}>断言 <span style={styles.count}>{result.assertions?.length ?? 0}</span></button>
+                <button role="tab" aria-selected={responseTab === "timeline"} style={responseTab === "timeline" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("timeline")}>时间线 <span style={styles.count}>{timeline.length}</span></button>
               </div>
               {responseTab === "assertions" && result.assertions && result.assertions.length > 0 && (
                 <ul style={styles.assertList}>
