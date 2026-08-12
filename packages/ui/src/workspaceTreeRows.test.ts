@@ -38,3 +38,12 @@ test("filters unrelated branches for collection searches", () => {
   const rows = flattenWorkspaceTree({ projects, collections, requests, workspaceId: "w", collapsedNodes: [], query: "child" });
   assert.deepEqual(rows.map((row) => row.id), ["project:p", "collection:a", "collection:child"]);
 });
+
+
+test("flattens large project trees without dropping rows", () => {
+  const largeCollections = Array.from({ length: 500 }, (_, index) => ({ id: `c-${index}`, projectId: "p", name: `Collection ${index}`, parentId: null, sortOrder: index }));
+  const largeRequests = largeCollections.map((collection, index) => ({ id: `r-${index}`, projectId: "p", collectionId: collection.id, name: `Request ${index}`, target: `/${index}` }));
+  const rows = flattenWorkspaceTree({ projects, collections: largeCollections, requests: largeRequests, workspaceId: "w", collapsedNodes: [] });
+  assert.equal(rows.length, 1001);
+  assert.equal(new Set(rows.map((row) => row.id)).size, rows.length);
+});
