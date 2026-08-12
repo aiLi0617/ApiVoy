@@ -38,5 +38,5 @@ export function VirtualList<T>({ items, itemHeight, height = 360, overscan = 5, 
     else if (event.key === "PageUp") { event.preventDefault(); listRef.current.scrollTop = Math.max(0, current - page); }
   }
   if (items.length === 0) return <>{empty}</>;
-  return <div ref={listRef} className={`virtual-list ${className ?? ""}`} style={{ height }} onScroll={onScroll} onKeyDown={onKeyDown} role="list" aria-label={ariaLabel} tabIndex={0}><div style={spacerStyle}><div style={windowStyle}>{visible.map((item, offset) => { const index = start + offset; return <div role="listitem" aria-setsize={items.length} aria-posinset={index + 1} className="virtual-list-item" style={{ height: itemHeight }} key={getKey(item, index)}>{renderItem(item, index)}</div>; })}</div></div></div>;
+  return <div ref={listRef} className={`virtual-list ${className ?? ""}`} style={{ height }} onScroll={onScroll} onKeyDown={onKeyDown} role="list" aria-label={ariaLabel} aria-keyshortcuts="Home End PageUp PageDown" tabIndex={0}><div style={spacerStyle}><div style={windowStyle}>{visible.map((item, offset) => { const index = start + offset; return <div role="listitem" aria-setsize={items.length} aria-posinset={index + 1} className="virtual-list-item" style={{ height: itemHeight }} key={getKey(item, index)}>{renderItem(item, index)}</div>; })}</div></div></div>;
 }
