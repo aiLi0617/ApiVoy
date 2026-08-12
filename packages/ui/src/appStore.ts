@@ -35,5 +35,5 @@ export const useAppStore = create<AppStore>()(persist(
     toggleFavorite: (id) => set((state) => ({ favoriteWorkbenches: state.favoriteWorkbenches.includes(id) ? state.favoriteWorkbenches.filter((item) => item !== id) : [...state.favoriteWorkbenches, id] })),
     setSplitPreference: (id, value) => set((state) => ({ splitPreferences: { ...state.splitPreferences, [id]: value } })),
   }),
-  { name: "apivoy:ui-state", version: 3 },
+  { name: "apivoy:ui-state", version: 3, migrate: (persisted) => { const state = persisted as Partial<AppStore>; return { ...state, collapsedExplorerNodes: Array.isArray(state.collapsedExplorerNodes) ? state.collapsedExplorerNodes : [] } as AppStore; } },
 ));
