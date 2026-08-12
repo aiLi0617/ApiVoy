@@ -1,4 +1,31 @@
 export { AppShell, type AppShellProps } from "./AppShell";
+export { SettingsDialog, type SettingsDialogProps } from "./SettingsDialog";
+export { CollaborationHub, openCollaborationHub, type CollaborationHubProps, type CollaborationTab } from "./CollaborationHub";
+export { EnvironmentEditor, type EnvironmentEditorProps } from "./EnvironmentEditor";
+export { buildWorkbenchTabs, WORKBENCH_REGISTRY, type WorkbenchCapabilities, type WorkbenchRegistryEntry } from "./workbenchRegistry";
+export {
+  getAiEndpoint,
+  getAiModel,
+  getAiSecretRef,
+  getAgentToken,
+  getAgentUrl,
+  getCollaborationUrl,
+  getGatewayKey,
+  getGatewayUrl,
+  getUserPreferencesSnapshot,
+  setAiEndpoint,
+  setAiModel,
+  setAiSecretRef,
+  setAgentToken,
+  setAgentUrl,
+  setCollaborationUrl,
+  setGatewayKey,
+  setGatewayUrl,
+  subscribePreferences,
+  PREFERENCES_CHANGED_EVENT,
+  type PreferenceKey,
+  type UserPreferencesSnapshot,
+} from "./userPreferences";
 export { WorkbenchFrame, SplitPane, type WorkbenchFrameProps, type SplitPaneProps } from "./WorkbenchFrame";
 export { Icon, type IconName } from "./Icons";
 export { FeedbackProvider, useFeedback, EmptyState, LoadingState } from "./Feedback";

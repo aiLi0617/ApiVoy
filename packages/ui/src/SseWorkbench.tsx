@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import type { HttpRunResult, HttpSendHooks } from "./HttpWorkbench";
 import { ProtocolCodeGenerator } from "./ProtocolCodeGenerator";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
+import { useWorkbenchHydration } from "./useWorkbenchHydration";
 
 export interface SseWorkbenchRequest {
   name: string;
@@ -29,7 +30,29 @@ export function SseWorkbench({ onConnect, onCancel, onSave, externalRequest }: S
   const [runningId, setRunningId] = useState<string | null>(null);
   const [output, setOutput] = useState("尚未连接");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { const apply = (value: SseWorkbenchRequest) => { setUrl(value.url); setHeaderText(value.headers.map(([name, item]) => `${name}: ${item}`).join("\n")); setLastEventId(value.lastEventId ?? ""); setReconnectMax(value.reconnectMax); setReconnectDelayMs(value.reconnectDelayMs); }; if (externalRequest) apply(externalRequest); else { const draft = readWorkbenchDraft<SseWorkbenchRequest>("sse"); if (draft) apply(draft); } const listener = (event: Event) => { const envelope = (event as CustomEvent).detail; if (envelope?.payload?.type === "sse") apply({ name: envelope.name, url: envelope.target, headers: envelope.payload.headers, lastEventId: envelope.payload.lastEventId ?? undefined, reconnectMax: envelope.payload.reconnectMax, reconnectDelayMs: envelope.payload.reconnectDelayMs, timeoutMs: envelope.timeoutMs }); }; window.addEventListener("apivoy-open-request", listener); return () => window.removeEventListener("apivoy-open-request", listener); }, [externalRequest]);
+  useEffect(() => {
+    const apply = (value: SseWorkbenchRequest) => {
+      setUrl(value.url);
+      setHeaderText(value.headers.map(([name, item]) => `${name}: ${item}`).join("\n"));
+      setLastEventId(value.lastEventId ?? "");
+      setReconnectMax(value.reconnectMax);
+      setReconnectDelayMs(value.reconnectDelayMs);
+    };
+    if (externalRequest) apply(externalRequest);
+    else {
+      const draft = readWorkbenchDraft<SseWorkbenchRequest>("sse");
+      if (draft) apply(draft);
+    }
+  }, [externalRequest]);
+  useWorkbenchHydration("sse", (envelope) => {
+    const detail = envelope as { name?: string; target?: string; timeoutMs?: number; payload?: { type?: string; headers?: Array<[string, string]>; lastEventId?: string | null; reconnectMax?: number; reconnectDelayMs?: number } };
+    if (detail?.payload?.type !== "sse") return;
+    setUrl(detail.target ?? "https://");
+    setHeaderText((detail.payload.headers ?? []).map(([name, item]) => `${name}: ${item}`).join("\n"));
+    setLastEventId(detail.payload.lastEventId ?? "");
+    setReconnectMax(detail.payload.reconnectMax ?? 3);
+    setReconnectDelayMs(detail.payload.reconnectDelayMs ?? 1000);
+  });
   const request = (): SseWorkbenchRequest => ({ name: `SSE ${url}`, url, headers: headerText.split("\n").filter(Boolean).map((line): [string, string] => { const index = line.indexOf(":"); return index < 0 ? [line.trim(), ""] : [line.slice(0, index).trim(), line.slice(index + 1).trim()]; }), lastEventId: lastEventId || undefined, reconnectMax, reconnectDelayMs, timeoutMs: 0 });
   useAutosaveDraft("sse", request);
 

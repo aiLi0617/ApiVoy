@@ -22,16 +22,33 @@ import type {
   AiAssistResponse,
   CaptureStatus,
   CapturedExchange,
+  CollectionRunCase,
 } from "@apivoy/ui";
 
 const runtime = (window as Window & { __APIVOY_CONFIG__?: { agentUrl?: string; agentToken?: string } }).__APIVOY_CONFIG__;
-const AGENT_BASE = runtime?.agentUrl ??
-  (import.meta.env.VITE_APIVOY_AGENT_URL as string | undefined) ?? "http://127.0.0.1:39217";
 
-const AGENT_TOKEN = runtime?.agentToken ?? import.meta.env.VITE_APIVOY_AGENT_TOKEN as string | undefined;
-let activeAgentToken = AGENT_TOKEN;
+function agentBase(): string {
+  try {
+    const override = localStorage.getItem("apivoy:agent-url")?.trim();
+    if (override) return override;
+  } catch { /* ignore */ }
+  return runtime?.agentUrl ?? (import.meta.env.VITE_APIVOY_AGENT_URL as string | undefined) ?? "http://127.0.0.1:39217";
+}
+
+function configuredAgentToken(): string | undefined {
+  try {
+    const override = localStorage.getItem("apivoy-agent-token");
+    if (override) return override;
+  } catch { /* ignore */ }
+  return runtime?.agentToken ?? (import.meta.env.VITE_APIVOY_AGENT_TOKEN as string | undefined);
+}
+
+let activeAgentToken = configuredAgentToken();
 let sessionPromise: Promise<void> | null = null;
-if (AGENT_TOKEN) localStorage.setItem("apivoy-agent-token", AGENT_TOKEN);
+const bootstrapToken = configuredAgentToken();
+if (bootstrapToken) {
+  try { localStorage.setItem("apivoy-agent-token", bootstrapToken); } catch { /* ignore */ }
+}
 
 export interface AgentHealth {
   service: string;
@@ -67,7 +84,7 @@ interface StoredRequest {
 }
 export async function loadEnvelopeViaAgent(id: string): Promise<RequestEnvelope | null> {
   await checkAgentHandshake();
-  const response = await fetch(`${AGENT_BASE}/v1/requests/${id}`, { headers: agentHeaders() });
+  const response = await fetch(`${agentBase()}/v1/requests/${id}`, { headers: agentHeaders() });
   if (!response.ok) throw new Error(await response.text());
   return ((await response.json()) as StoredRequest | null)?.envelope ?? null;
 }
@@ -85,7 +102,7 @@ function agentHeaders(extra?: HeadersInit): Headers {
 }
 
 export async function checkAgentHandshake(): Promise<AgentHealth> {
-  const res = await fetch(`${AGENT_BASE}/health`);
+  const res = await fetch(`${agentBase()}/health`);
   if (!res.ok) {
     throw new Error(`Agent health check failed: ${res.status}`);
   }
@@ -95,9 +112,9 @@ export async function checkAgentHandshake(): Promise<AgentHealth> {
       `协议版本不兼容：Web=${PROTOCOL_API_VERSION}，Agent=${health.protocolApiVersion}。请升级客户端或 Agent。`,
     );
   }
-  if (AGENT_TOKEN && !sessionPromise) {
+  if (bootstrapToken && !sessionPromise) {
     sessionPromise = (async () => {
-      const response = await fetch(`${AGENT_BASE}/v1/session`, { method: "POST", headers: { "Authorization": `Bearer ${AGENT_TOKEN}`, "X-ApiVoy-Protocol-Api-Version": PROTOCOL_API_VERSION } });
+      const response = await fetch(`${agentBase()}/v1/session`, { method: "POST", headers: { "Authorization": `Bearer ${bootstrapToken}`, "X-ApiVoy-Protocol-Api-Version": PROTOCOL_API_VERSION } });
       if (!response.ok) throw new Error(`Agent session exchange failed: ${response.status}`);
       const session = await response.json() as { token: string };
       activeAgentToken = session.token;
@@ -159,7 +176,7 @@ export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string)
 
 export async function putSecretViaAgent(name: string, value: string): Promise<void> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/secrets`, {
+  const res = await fetch(`${agentBase()}/v1/secrets`, {
     method: "PUT",
     headers: agentHeaders(),
     body: JSON.stringify({ name, value }),
@@ -169,8 +186,8 @@ export async function putSecretViaAgent(name: string, value: string): Promise<vo
   }
 }
 
-export async function runAiAssistViaAgent(request:AiAssistRequest):Promise<AiAssistResponse>{await checkAgentHandshake();const response=await fetch(`${AGENT_BASE}/v1/ai/assist`,{method:"POST",headers:agentHeaders(),body:JSON.stringify(request)});if(!response.ok)throw new Error(await response.text());return response.json();}
-async function captureRequest<T>(path:string,method="GET",body?:unknown):Promise<T>{await checkAgentHandshake();const response=await fetch(`${AGENT_BASE}${path}`,{method,headers:agentHeaders(),body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)throw new Error(await response.text());return response.status===204?undefined as T:response.json();}
+export async function runAiAssistViaAgent(request:AiAssistRequest):Promise<AiAssistResponse>{await checkAgentHandshake();const response=await fetch(`${agentBase()}/v1/ai/assist`,{method:"POST",headers:agentHeaders(),body:JSON.stringify(request)});if(!response.ok)throw new Error(await response.text());return response.json();}
+async function captureRequest<T>(path:string,method="GET",body?:unknown):Promise<T>{await checkAgentHandshake();const response=await fetch(`${agentBase()}${path}`,{method,headers:agentHeaders(),body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)throw new Error(await response.text());return response.status===204?undefined as T:response.json();}
 export const captureStatusViaAgent=()=>captureRequest<CaptureStatus>("/v1/capture/status");
 export const startCaptureViaAgent=(bind:string)=>captureRequest<CaptureStatus>("/v1/capture/start","POST",{bind,allowRemote:false});
 export const stopCaptureViaAgent=()=>captureRequest<CaptureStatus>("/v1/capture/stop","POST");
@@ -179,7 +196,7 @@ export const clearCapturesViaAgent=()=>captureRequest<void>("/v1/capture/exchang
 
 export async function listCookiesViaAgent(url: string): Promise<Array<{ name: string; value: string }>> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/cookies?url=${encodeURIComponent(url)}`, { headers: agentHeaders() });
+  const res = await fetch(`${agentBase()}/v1/cookies?url=${encodeURIComponent(url)}`, { headers: agentHeaders() });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -191,7 +208,7 @@ export async function getEnvironmentViaAgent(): Promise<{
   secretRefs: string[];
 }> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/environments/default`, {
+  const res = await fetch(`${agentBase()}/v1/environments/default`, {
     headers: agentHeaders(),
   });
   if (!res.ok) {
@@ -209,7 +226,7 @@ export async function saveEnvironmentViaAgent(
   secretRefs: string[],
 ): Promise<void> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/environments/default`, {
+  const res = await fetch(`${agentBase()}/v1/environments/default`, {
     method: "PUT",
     headers: agentHeaders(),
     body: JSON.stringify({ variables, secretRefs }),
@@ -227,7 +244,7 @@ export async function listHistoryViaAgent(filter?: HistoryFilter): Promise<Histo
   if (filter?.protocolId) params.set("protocolId", filter.protocolId);
   if (filter?.status != null) params.set("status", String(filter.status));
   if (filter?.requestId) params.set("requestId", filter.requestId);
-  const res = await fetch(`${AGENT_BASE}/v1/history?${params}`, {
+  const res = await fetch(`${agentBase()}/v1/history?${params}`, {
     headers: agentHeaders(),
   });
   if (!res.ok) {
@@ -248,7 +265,7 @@ export async function listHistoryViaAgent(filter?: HistoryFilter): Promise<Histo
 
 export async function getHistoryItemViaAgent(id: string): Promise<HttpWorkbenchRequest | RequestEnvelope | null> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/history/${id}`, {
+  const res = await fetch(`${agentBase()}/v1/history/${id}`, {
     headers: agentHeaders(),
   });
   if (!res.ok) {
@@ -266,7 +283,7 @@ export async function saveRequestViaAgent(request: HttpWorkbenchRequest, project
   const query = new URLSearchParams();
   if (projectId) query.set("projectId", projectId);
   if (collectionId) query.set("collectionId", collectionId);
-  const res = await fetch(`${AGENT_BASE}/v1/requests${query.size ? `?${query}` : ""}`, {
+  const res = await fetch(`${agentBase()}/v1/requests${query.size ? `?${query}` : ""}`, {
     method: "POST",
     headers: agentHeaders(),
     body: JSON.stringify(toEnvelope(request)),
@@ -281,13 +298,13 @@ export async function saveEnvelopeViaAgent(envelope: RequestEnvelope, projectId?
   const query = new URLSearchParams();
   if (projectId) query.set("projectId", projectId);
   if (collectionId) query.set("collectionId", collectionId);
-  const response = await fetch(`${AGENT_BASE}/v1/requests${query.size ? `?${query}` : ""}`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(envelope) });
+  const response = await fetch(`${agentBase()}/v1/requests${query.size ? `?${query}` : ""}`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(envelope) });
   if (!response.ok) throw new Error(await response.text());
 }
 
 export async function getWorkspaceTreeViaAgent(): Promise<WorkspaceTree> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/workspace-tree`, { headers: agentHeaders() });
+  const res = await fetch(`${agentBase()}/v1/workspace-tree`, { headers: agentHeaders() });
   if (!res.ok) throw new Error(await res.text());
   const raw = await res.json() as Omit<WorkspaceTree, "requests"> & { requests: Array<WorkspaceTree["requests"][number] & { envelope?: RequestEnvelope }> };
   return { ...raw, requests: raw.requests.map((item) => ({
@@ -296,15 +313,58 @@ export async function getWorkspaceTreeViaAgent(): Promise<WorkspaceTree> {
   })) };
 }
 
+export async function runCollectionViaAgent(collectionId: string, failFast: boolean): Promise<CollectionRunCase[]> {
+  const tree = await getWorkspaceTreeViaAgent();
+  const requests = tree.requests.filter((item) => item.collectionId === collectionId);
+  const cases: CollectionRunCase[] = [];
+  for (const item of requests) {
+    try {
+      const envelope = await loadEnvelopeViaAgent(item.id);
+      if (!envelope) {
+        cases.push({ requestId: item.id, name: item.name, protocolId: "unknown", passed: false, status: null, durationMs: 0, error: "请求不存在", failedAssertions: [] });
+        if (failFast) break;
+        continue;
+      }
+      const result = await executeEnvelopeViaAgent(envelope);
+      const failedAssertions = (result.assertions ?? []).filter((assertion) => !assertion.passed).map((assertion) => assertion.name);
+      const passed = result.summary.state === "completed" && failedAssertions.length === 0;
+      cases.push({
+        requestId: item.id,
+        name: item.name,
+        protocolId: envelope.protocolId,
+        passed,
+        status: result.summary.status ?? null,
+        durationMs: result.summary.durationMs,
+        error: null,
+        failedAssertions,
+      });
+      if (failFast && !passed) break;
+    } catch (error) {
+      cases.push({
+        requestId: item.id,
+        name: item.name,
+        protocolId: "unknown",
+        passed: false,
+        status: null,
+        durationMs: 0,
+        error: error instanceof Error ? error.message : String(error),
+        failedAssertions: [],
+      });
+      if (failFast) break;
+    }
+  }
+  return cases;
+}
+
 async function mutateWorkspace(path: string, method: string, body?: unknown): Promise<void> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}${path}`, { method, headers: agentHeaders(), body: body === undefined ? undefined : JSON.stringify(body) });
+  const res = await fetch(`${agentBase()}${path}`, { method, headers: agentHeaders(), body: body === undefined ? undefined : JSON.stringify(body) });
   if (!res.ok) throw new Error(await res.text());
 }
 
 async function createWorkspaceRecord<T>(path: string, body: unknown): Promise<T> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}${path}`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(body) });
+  const res = await fetch(`${agentBase()}${path}`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(body) });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<T>;
 }
@@ -324,20 +384,20 @@ export const deleteCollectionViaAgent = (id: string) => mutateWorkspace(`/v1/col
 export const deleteRequestViaAgent = (id: string) => mutateWorkspace(`/v1/requests/${id}`, "DELETE");
 export const moveRequestViaAgent = (id: string, projectId: string, collectionId: string) => mutateWorkspace(`/v1/requests/${id}`, "PATCH", { projectId, collectionId });
 
-export async function listMockRulesViaAgent(): Promise<MockRule[]> { await checkAgentHandshake(); const res = await fetch(`${AGENT_BASE}/v1/mock-rules`, { headers: agentHeaders() }); if (!res.ok) throw new Error(await res.text()); return res.json(); }
+export async function listMockRulesViaAgent(): Promise<MockRule[]> { await checkAgentHandshake(); const res = await fetch(`${agentBase()}/v1/mock-rules`, { headers: agentHeaders() }); if (!res.ok) throw new Error(await res.text()); return res.json(); }
 export async function createMockRuleViaAgent(rule: Omit<MockRule, "id">): Promise<void> { await mutateWorkspace("/v1/mock-rules", "POST", rule); }
 export async function deleteMockRuleViaAgent(id: string): Promise<void> { await mutateWorkspace(`/v1/mock-rules/${id}`, "DELETE"); }
-export const agentBaseUrl = AGENT_BASE;
-export const tcpSessionUrlViaAgent = (target: string) => `${AGENT_BASE.replace(/^http/, "ws")}/v1/tcp-session?target=${encodeURIComponent(target)}&token=${encodeURIComponent(AGENT_TOKEN ?? "")}`;
-export async function listPluginsViaAgent(): Promise<InstalledPlugin[]> { await checkAgentHandshake(); const res = await fetch(`${AGENT_BASE}/v1/plugins`, { headers: agentHeaders() }); if (!res.ok) throw new Error(await res.text()); return res.json(); }
+export const agentBaseUrl = agentBase();
+export const tcpSessionUrlViaAgent = (target: string) => `${agentBase().replace(/^http/, "ws")}/v1/tcp-session?target=${encodeURIComponent(target)}&token=${encodeURIComponent(bootstrapToken ?? "")}`;
+export async function listPluginsViaAgent(): Promise<InstalledPlugin[]> { await checkAgentHandshake(); const res = await fetch(`${agentBase()}/v1/plugins`, { headers: agentHeaders() }); if (!res.ok) throw new Error(await res.text()); return res.json(); }
 export async function installPluginViaAgent(manifest: PluginManifest, wasmBase64: string): Promise<void> { await mutateWorkspace("/v1/plugins", "POST", { manifest, wasmBase64 }); }
 export async function enablePluginViaAgent(id: string, enabled: boolean): Promise<void> { await mutateWorkspace(`/v1/plugins/${id}`, "PATCH", { enabled }); }
 export async function deletePluginViaAgent(id: string): Promise<void> { await mutateWorkspace(`/v1/plugins/${id}`, "DELETE"); }
-export async function invokePluginViaAgent(id: string, input: string): Promise<string> { await checkAgentHandshake(); const res = await fetch(`${AGENT_BASE}/v1/plugins/${id}/invoke`, { method: "POST", headers: agentHeaders(), body: JSON.stringify({ input }) }); if (!res.ok) throw new Error(await res.text()); return ((await res.json()) as { output: string }).output; }
+export async function invokePluginViaAgent(id: string, input: string): Promise<string> { await checkAgentHandshake(); const res = await fetch(`${agentBase()}/v1/plugins/${id}/invoke`, { method: "POST", headers: agentHeaders(), body: JSON.stringify({ input }) }); if (!res.ok) throw new Error(await res.text()); return ((await res.json()) as { output: string }).output; }
 
 export async function loadRequestViaAgent(id: string): Promise<HttpWorkbenchRequest | null> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/requests/${id}`, { headers: agentHeaders() });
+  const res = await fetch(`${agentBase()}/v1/requests/${id}`, { headers: agentHeaders() });
   if (!res.ok) throw new Error(await res.text());
   const stored = await res.json() as StoredRequest | null;
   return stored ? fromEnvelope(stored.envelope, stored.target) : null;
@@ -345,7 +405,7 @@ export async function loadRequestViaAgent(id: string): Promise<HttpWorkbenchRequ
 
 export async function loadLatestRequestViaAgent(): Promise<HttpWorkbenchRequest | null> {
   await checkAgentHandshake();
-  const res = await fetch(`${AGENT_BASE}/v1/requests/latest`, {
+  const res = await fetch(`${agentBase()}/v1/requests/latest`, {
     headers: agentHeaders(),
   });
   if (!res.ok) {
@@ -401,7 +461,7 @@ export async function executeEnvelopeViaAgent(
   hooks?: HttpSendHooks,
 ): Promise<HttpRunResult> {
   await checkAgentHandshake();
-  const startRes = await fetch(`${AGENT_BASE}/v1/executions`, {
+  const startRes = await fetch(`${agentBase()}/v1/executions`, {
     method: "POST",
     headers: agentHeaders(),
     body: JSON.stringify(envelope),
@@ -416,7 +476,7 @@ export async function executeEnvelopeViaAgent(
   };
   hooks?.onStarted?.(started.executionId);
 
-  const eventsRes = await fetch(`${AGENT_BASE}/v1/executions/${started.executionId}/events`, {
+  const eventsRes = await fetch(`${agentBase()}/v1/executions/${started.executionId}/events`, {
     headers: agentHeaders({ Accept: "text/event-stream" }),
   });
   if (!eventsRes.ok) {
@@ -455,7 +515,7 @@ export async function executeEnvelopeViaAgent(
   const contentType = responseMeta?.contentType?.toLowerCase() ?? "";
   const isTextBody = contentType.startsWith("text/") || /json|xml|javascript|x-www-form-urlencoded/.test(contentType);
   if (isTextBody) {
-    const bodyRes = await fetch(`${AGENT_BASE}/v1/history/${started.executionId}/body`, { headers: agentHeaders() });
+    const bodyRes = await fetch(`${agentBase()}/v1/history/${started.executionId}/body`, { headers: agentHeaders() });
     if (bodyRes.ok) preview = await bodyRes.text();
   }
 
@@ -492,7 +552,7 @@ export async function executeEnvelopeViaAgent(
 }
 
 export async function cancelViaAgent(executionId: string): Promise<void> {
-  const res = await fetch(`${AGENT_BASE}/v1/executions/${executionId}/cancel`, {
+  const res = await fetch(`${agentBase()}/v1/executions/${executionId}/cancel`, {
     method: "POST",
     headers: agentHeaders(),
   });

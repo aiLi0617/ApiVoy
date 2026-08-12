@@ -1,5 +1,6 @@
 import { exportApiVoyProject, importDocument, type PortableRequest } from "@apivoy/import-export";
-import { useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useFeedback } from "./Feedback";
 import { Icon } from "./Icons";
 import { useAppStore } from "./appStore";
@@ -33,6 +34,7 @@ export interface WorkspaceExplorerProps {
   onSwapCollections: (first: CollectionRecord, second: CollectionRecord) => Promise<void>;
   onMoveRequest: (id: string, projectId: string, collectionId: string) => Promise<void>;
   onImportRequests: (projectId: string, collectionId: string, requests: PortableRequest[]) => Promise<void>;
+  onRunCollection?: (projectId: string, collectionId: string) => void;
   onExportProject: (project: ProjectRecord) => Promise<PortableRequest[]>;
 }
 
@@ -43,10 +45,77 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [batchTarget, setBatchTarget] = useState("");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const collapsedNodes = useAppStore((state) => state.collapsedExplorerNodes);
   const toggleExplorerNode = useAppStore((state) => state.toggleExplorerNode);
+  const toggleExplorer = useAppStore((state) => state.toggleExplorer);
   const importInput = useRef<HTMLInputElement>(null);
   const { notify, confirm, prompt } = useFeedback();
+
+  useEffect(() => {
+    const openImport = () => importInput.current?.click();
+    window.addEventListener("apivoy-import-requests", openImport);
+    return () => window.removeEventListener("apivoy-import-requests", openImport);
+  }, []);
+  useEffect(() => {
+    if (!openMenuId) return;
+    const dismiss = () => { setOpenMenuId(null); setMenuPos(null); };
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(`[data-tree-menu="${openMenuId}"]`)) return;
+      dismiss();
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+    };
+  }, [openMenuId]);
+  useLayoutEffect(() => {
+    if (!openMenuId) { setMenuPos(null); return; }
+    const button = menuButtonRefs.current.get(openMenuId);
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const width = 168;
+    const estimatedHeight = 260;
+    const left = Math.min(Math.max(8, rect.right - width), window.innerWidth - width - 8);
+    const below = rect.bottom + 4;
+    const top = below + estimatedHeight > window.innerHeight - 8
+      ? Math.max(8, rect.top - estimatedHeight - 4)
+      : below;
+    setMenuPos({ top, left });
+  }, [openMenuId]);
+
+  function openCollectionMenu(collectionId: string) {
+    setOpenMenuId((current) => {
+      if (current === collectionId) { setMenuPos(null); return null; }
+      return collectionId;
+    });
+  }
+
+  function renderCollectionMenu(collection: CollectionRecord, siblingIndex: number, siblings: CollectionRecord[]): ReactNode {
+    if (openMenuId !== collection.id || !menuPos || typeof document === "undefined") return null;
+    return createPortal(
+      <div className="tree-more-panel" role="menu" data-tree-menu={collection.id} style={{ top: menuPos.top, left: menuPos.left }}>
+        <button type="button" role="menuitem" onClick={() => { props.onSelectCollection(collection.projectId, collection.id); importInput.current?.click(); setOpenMenuId(null); }}><Icon name="download" />导入到此集合</button>
+        <button type="button" role="menuitem" disabled={siblingIndex <= 0} onClick={() => { void props.onSwapCollections(collection, siblings[siblingIndex - 1]); setOpenMenuId(null); }}><Icon name="arrow-up" />上移</button>
+        <button type="button" role="menuitem" disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} onClick={() => { void props.onSwapCollections(collection, siblings[siblingIndex + 1]); setOpenMenuId(null); }}><Icon name="arrow-down" />下移</button>
+        <button type="button" role="menuitem" onClick={() => { setDraft({ kind: "collection", owner: collection.projectId, parentId: collection.id }); setOpenMenuId(null); }}><Icon name="plus" />新建子集合</button>
+        <button type="button" role="menuitem" onClick={async () => { setOpenMenuId(null); const value = (await prompt({ title: "重命名集合", initialValue: collection.name }))?.trim(); if (value) void props.onRenameCollection(collection, value); }}><Icon name="edit" />重命名</button>
+        <button type="button" role="menuitem" onClick={async () => { setOpenMenuId(null); const value = await prompt({ title: "设置集合标签", initialValue: collection.tags?.join(", ") ?? "", placeholder: "标签以逗号分隔" }); if (value !== null) void props.onUpdateCollectionTags(collection, value.split(",").map((tag) => tag.trim()).filter(Boolean)); }}><Icon name="tag" />标签</button>
+        {collection.id !== "default-collection" ? <button type="button" role="menuitem" onClick={async () => { setOpenMenuId(null); if (await confirm({ title: "删除集合", description: `删除集合“${collection.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteCollection(collection.id); }}><Icon name="trash" />删除</button> : null}
+      </div>,
+      document.body,
+    );
+  }
 
   async function importFiles(files?: FileList | null) {
     if (!files?.length) return;
@@ -144,20 +213,34 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     const children = tree!.collections.filter((item) => item.parentId === collection.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     const isCollapsed = collapsedNodes.includes(`collection:${collection.id}`);
     return <div key={collection.id} role="treeitem" aria-level={depth + 1} aria-setsize={siblings.length} aria-posinset={siblingIndex + 1} aria-expanded={!isCollapsed} aria-label={`集合 ${collection.name}`}>
-      <div draggable onDragStart={(event) => setDrag(event, "collection", collection.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropOnCollection(event, collection)} className="tree-row" style={{...styles.collection, paddingLeft: 22 + depth * 14, ...(props.selectedCollectionId === collection.id ? styles.active : {})}}>
-        <button aria-label={`${collapsedNodes.includes(`collection:${collection.id}`) ? "展开" : "折叠"}集合 ${collection.name}`} aria-expanded={!collapsedNodes.includes(`collection:${collection.id}`)} style={styles.icon} onClick={() => toggleExplorerNode(`collection:${collection.id}`)}><Icon name="chevron" /></button><button style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)}><Icon name="folder" /><span>{collection.name}</span><small>{requests.length}</small></button>
-        <button disabled={siblingIndex <= 0} style={styles.action} title="上移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex - 1])}><Icon name="arrow-up" /></button>
-        <button disabled={siblingIndex < 0 || siblingIndex >= siblings.length - 1} style={styles.action} title="下移集合" onClick={() => void props.onSwapCollections(collection, siblings[siblingIndex + 1])}><Icon name="arrow-down" /></button>
-        <button style={styles.icon} title="新建子集合" onClick={() => setDraft({ kind: "collection", owner: collection.projectId, parentId: collection.id })}><Icon name="plus" /></button>
-        <button style={styles.action} title="重命名集合" onClick={async () => { const value = (await prompt({ title: "重命名集合", initialValue: collection.name }))?.trim(); if (value) void props.onRenameCollection(collection, value); }}><Icon name="edit" /></button>
-        <button style={styles.action} title={collection.tags?.length ? `标签：${collection.tags.join(", ")}` : "设置标签"} onClick={async () => { const value = await prompt({ title: "设置集合标签", initialValue: collection.tags?.join(", ") ?? "", placeholder: "标签以逗号分隔" }); if (value !== null) void props.onUpdateCollectionTags(collection, value.split(",").map((tag) => tag.trim()).filter(Boolean)); }}><Icon name="tag" /></button>
-        {collection.id !== "default-collection" && <button style={styles.delete} title="删除集合" onClick={async () => { if (await confirm({ title: "删除集合", description: `删除集合“${collection.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteCollection(collection.id); }}><Icon name="trash" /></button>}
+      <div draggable onDragStart={(event) => setDrag(event, "collection", collection.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropOnCollection(event, collection)} className={`tree-row${props.selectedCollectionId === collection.id ? " is-active" : ""}${openMenuId === collection.id ? " is-menu-open" : ""}`} style={{...styles.collection, paddingLeft: 22 + depth * 14, ...(props.selectedCollectionId === collection.id ? styles.active : {})}}>
+        <button type="button" aria-label={`${isCollapsed ? "展开" : "折叠"}集合 ${collection.name}`} aria-expanded={!isCollapsed} className={`tree-chevron${isCollapsed ? "" : " is-expanded"}`} style={styles.chevronBtn} onClick={() => toggleExplorerNode(`collection:${collection.id}`)}><Icon name="chevron" /></button>
+        <button type="button" className="tree-main" style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)} title={collection.name}>
+          <Icon name="folder" />
+          <span className="tree-label">{collection.name}</span>
+          <small>{requests.length}</small>
+        </button>
+        <span className="tree-actions">
+          <button type="button" style={styles.action} title="运行集合" aria-label={`运行集合 ${collection.name}`} onClick={() => { props.onSelectCollection(collection.projectId, collection.id); props.onRunCollection?.(collection.projectId, collection.id); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "runner" })); }}><Icon name="send" /></button>
+          <span className="tree-more" data-tree-menu={collection.id}>
+            <button
+              type="button"
+              ref={(node) => { if (node) menuButtonRefs.current.set(collection.id, node); else menuButtonRefs.current.delete(collection.id); }}
+              style={styles.action}
+              title="更多操作"
+              aria-expanded={openMenuId === collection.id}
+              aria-haspopup="menu"
+              onClick={(event) => { event.stopPropagation(); openCollectionMenu(collection.id); }}
+            ><Icon name="menu" /></button>
+            {renderCollectionMenu(collection, siblingIndex, siblings)}
+          </span>
+        </span>
       </div>
       {!isCollapsed && !!collection.tags?.length && <div style={{ ...styles.tags, paddingLeft: 39 + depth * 14 }}>{collection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
-      {!isCollapsed && requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request, requestIndex, visibleRequests) => <div draggable onDragStart={(event) => setDrag(event, "request", request.id)} className="tree-row" role="treeitem" aria-level={depth + 2} aria-setsize={visibleRequests.length} aria-posinset={requestIndex + 1} key={request.id} style={{...styles.requestRow, paddingLeft: 39 + depth * 14, ...(props.selectedRequestId === request.id ? styles.active : {})}}>
-        <input type="checkbox" checked={selectedIds.includes(request.id)} onChange={() => toggleSelected(request.id)} title="批量选择" />
-        <button style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}><b>{request.method ?? "HTTP"}</b><span>{request.name}</span></button>
-        <button style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteRequest(request.id); }}><Icon name="trash" /></button>
+      {!isCollapsed && requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request, requestIndex, visibleRequests) => <div draggable onDragStart={(event) => setDrag(event, "request", request.id)} className={`tree-row${selectedIds.length ? " is-batch" : ""}${props.selectedRequestId === request.id ? " is-active" : ""}`} role="treeitem" aria-level={depth + 2} aria-setsize={visibleRequests.length} aria-posinset={requestIndex + 1} key={request.id} style={{...styles.requestRow, paddingLeft: 39 + depth * 14, ...(props.selectedRequestId === request.id ? styles.active : {})}}>
+        <span className="tree-actions tree-actions-leading"><input type="checkbox" checked={selectedIds.includes(request.id)} onChange={() => toggleSelected(request.id)} title="批量选择" /></span>
+        <button type="button" className="tree-main" style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}><b>{request.method ?? "HTTP"}</b><span className="tree-label">{request.name}</span></button>
+        <span className="tree-actions"><button type="button" style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteRequest(request.id); }}><Icon name="trash" /></button></span>
       </div>)}
       {!isCollapsed && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
     </div>;
@@ -174,7 +257,11 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     </div>
     <div style={styles.heading}>
       <span>资源管理器</span>
-      <span style={styles.headingActions}><button style={styles.action} title="导入 OpenAPI JSON/YAML、Postman、HAR 或 ApiVoy 包" onClick={() => importInput.current?.click()}>导入</button>{workspace && <button style={styles.icon} title="新建项目" onClick={() => setDraft({ kind: "project", owner: workspace.id })}><Icon name="plus" /></button>}</span>
+      <span style={styles.headingActions}>
+        <button style={styles.action} title="导入 OpenAPI JSON/YAML、Postman、HAR 或 ApiVoy 包" onClick={() => importInput.current?.click()}>导入</button>
+        {workspace && <button style={styles.icon} title="新建项目" onClick={() => setDraft({ kind: "project", owner: workspace.id })}><Icon name="plus" /></button>}
+        <button className="ui-icon-button compact" aria-label="收起资源管理器" title="收起" onClick={toggleExplorer}><Icon name="close" /></button>
+      </span>
       <input ref={importInput} hidden multiple type="file" accept=".json,.yaml,.yml,.har,.apivoy" onChange={(event) => void importFiles(event.target.files)} />
     </div>
     <input aria-label="搜索资源" style={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" />
@@ -186,11 +273,14 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     </div>}
     {tree.projects.filter((project) => project.workspaceId === workspace?.id).filter((project) => !normalizedQuery || project.name.toLocaleLowerCase().includes(normalizedQuery) || tree.collections.some((item) => item.projectId === project.id && collectionMatches(item))).map((project, projectIndex, visibleProjects) => <div key={project.id} className="tree-project" style={styles.project} role="treeitem" aria-level={1} aria-setsize={visibleProjects.length} aria-posinset={projectIndex + 1} aria-label={`项目 ${project.name}`}>
       <div style={styles.projectRow} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const item = readDrag(event); if (item?.type === "collection") { const source = tree.collections.find((collection) => collection.id === item.id); if (source?.projectId === project.id) void props.onMoveCollection(source, project.id, null); } }}>
-        <button aria-label={`${collapsedNodes.includes(`project:${project.id}`) ? "展开" : "折叠"}项目 ${project.name}`} aria-expanded={!collapsedNodes.includes(`project:${project.id}`)} style={styles.icon} onClick={() => toggleExplorerNode(`project:${project.id}`)}><Icon name="chevron" /></button><strong title={project.name}>{project.name}</strong>
-        <button style={styles.icon} title="新建集合" onClick={() => setDraft({ kind: "collection", owner: project.id, parentId: null })}><Icon name="plus" /></button>
-        <button style={styles.action} title="重命名项目" onClick={async () => { const value = (await prompt({ title: "重命名项目", initialValue: project.name }))?.trim(); if (value) void props.onRenameProject(project.id, value); }}><Icon name="edit" /></button>
-        <button style={styles.action} title="导出项目包" onClick={() => void exportProject(project)}><Icon name="download" /></button>
-        {project.id !== "default-project" && <button style={styles.delete} title="删除项目" onClick={async () => { if (await confirm({ title: "删除项目", description: `删除项目“${project.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteProject(project.id); }}><Icon name="trash" /></button>}
+        <button type="button" aria-label={`${collapsedNodes.includes(`project:${project.id}`) ? "展开" : "折叠"}项目 ${project.name}`} aria-expanded={!collapsedNodes.includes(`project:${project.id}`)} className={`tree-chevron${collapsedNodes.includes(`project:${project.id}`) ? "" : " is-expanded"}`} style={styles.chevronBtn} onClick={() => toggleExplorerNode(`project:${project.id}`)}><Icon name="chevron" /></button>
+        <strong style={styles.projectName} title={project.name}>{project.name}</strong>
+        <span style={styles.projectActions}>
+          <button type="button" style={styles.action} title="新建集合" onClick={() => setDraft({ kind: "collection", owner: project.id, parentId: null })}><Icon name="plus" /></button>
+          <button type="button" style={styles.action} title="重命名项目" onClick={async () => { const value = (await prompt({ title: "重命名项目", initialValue: project.name }))?.trim(); if (value) void props.onRenameProject(project.id, value); }}><Icon name="edit" /></button>
+          <button type="button" style={styles.action} title="导出项目包" onClick={() => void exportProject(project)}><Icon name="download" /></button>
+          {project.id !== "default-project" && <button type="button" style={styles.delete} title="删除项目" onClick={async () => { if (await confirm({ title: "删除项目", description: `删除项目“${project.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteProject(project.id); }}><Icon name="trash" /></button>}
+        </span>
       </div>
       {!collapsedNodes.includes(`project:${project.id}`) && tree.collections.filter((item) => item.projectId === project.id && !item.parentId && collectionMatches(item)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((collection) => renderCollection(collection))}
     </div>)}
@@ -213,16 +303,19 @@ const styles: Record<string, CSSProperties> = {
   batchSelect: { minWidth: 0, flex: 1, color: "var(--apivoy-text)", background: "var(--apivoy-bg-elevated)", border: "1px solid var(--apivoy-border)", borderRadius: 5, padding: 4, fontSize: 10 },
   project: { display: "flex", flexDirection: "column", gap: 2 },
   projectRow: { display: "flex", alignItems: "center", gap: 6, minWidth: 0, padding: "7px 8px", fontSize: 12 },
+  projectName: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  projectActions: { display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0, marginLeft: "auto" },
   chevron: { color: "var(--apivoy-muted)" },
-  icon: { marginLeft: "auto", border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", fontSize: 16 },
-  action: { border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", padding: "3px" },
-  collection: { width: "100%", display: "flex", gap: 5, alignItems: "center", background: "transparent", color: "var(--apivoy-text)", padding: "2px 5px 2px 22px", borderRadius: 7, fontSize: 12 },
+  chevronBtn: { flexShrink: 0, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", padding: 2, display: "inline-flex", alignItems: "center" },
+  icon: { flexShrink: 0, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", fontSize: 16, padding: 2 },
+  action: { flexShrink: 0, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", padding: "3px", display: "inline-flex", alignItems: "center" },
+  collection: { width: "100%", boxSizing: "border-box", display: "flex", gap: 4, alignItems: "center", background: "transparent", color: "var(--apivoy-text)", padding: "2px 5px 2px 22px", borderRadius: 7, fontSize: 12 },
   tags: { display: "flex", gap: 4, flexWrap: "wrap", paddingBottom: 3, color: "#8da6b8", fontSize: 9 },
-  collectionMain: { flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "18px 1fr auto", gap: 5, alignItems: "center", border: 0, background: "transparent", color: "inherit", padding: "5px 4px", textAlign: "left", cursor: "pointer" },
+  collectionMain: { flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "18px minmax(0,1fr) auto", gap: 5, alignItems: "center", border: 0, background: "transparent", color: "inherit", padding: "5px 4px", textAlign: "left", cursor: "pointer", overflow: "hidden" },
   active: { background: "var(--apivoy-accent-soft)", color: "var(--apivoy-accent)" },
-  requestRow: { display: "flex", alignItems: "center", paddingLeft: 39, borderRadius: 7 },
-  request: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 7, border: 0, background: "transparent", color: "inherit", padding: "7px 4px", cursor: "pointer", textAlign: "left" },
-  delete: { opacity: .6, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", padding: "4px 8px" },
+  requestRow: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, paddingLeft: 39, borderRadius: 7 },
+  request: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 7, border: 0, background: "transparent", color: "inherit", padding: "7px 4px", cursor: "pointer", textAlign: "left", overflow: "hidden" },
+  delete: { flexShrink: 0, opacity: .6, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" },
   createBox: { display: "flex", gap: 5, padding: "8px" },
   input: { minWidth: 0, flex: 1, background: "var(--apivoy-bg-elevated)", color: "var(--apivoy-text)", border: "1px solid var(--apivoy-border)", borderRadius: 7, padding: "7px 8px", fontSize: 12, outline: "none" },
   confirm: { border: 0, borderRadius: 7, background: "var(--apivoy-accent)", color: "#06121d", fontWeight: 700, cursor: "pointer", padding: "0 8px" },

@@ -64,7 +64,7 @@ export function ProtocolCodeGenerator({ input }: { input: ProtocolCodegenInput }
   const [selected, setSelected] = useState(options[0]?.id ?? "");
   const active = options.some((option) => option.id === selected) ? selected : options[0]?.id ?? "";
   const code = useMemo(() => active ? generateProtocolCode(input, active) : "暂无可用模板", [input, active]);
-  return <details style={styles.root}><summary>{t("codegen.title")}</summary><div style={styles.toolbar}><select value={active} onChange={(event) => setSelected(event.target.value)}>{options.map((option) => <option key={option.id} value={option.id}>{option.label}{option.source === "plugin" ? ` (${t("codegen.plugin")})` : ""}</option>)}</select><button onClick={() => void navigator.clipboard.writeText(code)}>{t("action.copy")}</button></div><pre style={styles.code}>{code}</pre></details>;
+  return <details className="protocol-codegen" style={styles.root}><summary>{t("codegen.title")}</summary><div style={styles.toolbar}><select value={active} onChange={(event) => setSelected(event.target.value)}>{options.map((option) => <option key={option.id} value={option.id}>{option.label}{option.source === "plugin" ? ` (${t("codegen.plugin")})` : ""}</option>)}</select><button onClick={() => void navigator.clipboard.writeText(code)}>{t("action.copy")}</button></div><pre style={styles.code}>{code}</pre></details>;
 }
 
 const styles: Record<string, CSSProperties> = {

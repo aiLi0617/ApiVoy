@@ -1,4 +1,4 @@
-import { AiWorkbench, AmqpWorkbench, AppShell, CaptureWorkbench, CommentsWorkbench, exportTeamSnapshot, GatewayWorkbench, GraphqlWorkbench, GrpcWorkbench, HttpWorkbench, KafkaWorkbench, MockWorkbench, MqttWorkbench, PluginCenter, RedisWorkbench, restoreTeamSnapshot, RpcWorkbench, SocketWorkbench, SqlWorkbench, SseWorkbench, SsoWorkbench, TeamWorkbench, WebSocketWorkbench, WorkbenchDeck, WorkspaceExplorer, type AmqpWorkbenchRequest, type HttpWorkbenchRequest, type KafkaWorkbenchRequest, type MqttWorkbenchRequest, type RedisWorkbenchRequest, type RpcWorkbenchRequest, type SqlWorkbenchRequest, type WorkspaceTree } from "@apivoy/ui";
+import { AiWorkbench, AmqpWorkbench, AppShell, buildWorkbenchTabs, CaptureWorkbench, CollectionRunner, CommentsWorkbench, exportTeamSnapshot, GatewayWorkbench, GraphqlWorkbench, GrpcWorkbench, HttpWorkbench, KafkaWorkbench, MockWorkbench, MqttWorkbench, PluginCenter, RedisWorkbench, restoreTeamSnapshot, RpcWorkbench, SocketWorkbench, SqlWorkbench, SseWorkbench, SsoWorkbench, TeamWorkbench, WebSocketWorkbench, WorkbenchDeck, WorkspaceExplorer, type AmqpWorkbenchRequest, type HttpWorkbenchRequest, type KafkaWorkbenchRequest, type MqttWorkbenchRequest, type RedisWorkbenchRequest, type RpcWorkbenchRequest, type SqlWorkbenchRequest, type WorkspaceTree } from "@apivoy/ui";
 import {
   cancelViaAgent,
   createCollectionViaAgent,
@@ -46,6 +46,7 @@ import {
   stopCaptureViaAgent,
   listCapturesViaAgent,
   clearCapturesViaAgent,
+  runCollectionViaAgent,
 } from "./agentClient";
 import { useEffect, useState } from "react";
 import type { RequestEnvelope } from "@apivoy/request-model";
@@ -68,7 +69,19 @@ export function App() {
   useEffect(() => { void refreshTree().catch(() => setTree(null)); }, []);
 
   return (
-    <AppShell channelLabel="Web → Local Agent" explorer={<WorkspaceExplorer tree={tree} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
+    <AppShell
+      channelLabel="Web → Local Agent"
+      connectionStatus={null}
+      environment={{
+        onLoad: getEnvironmentViaAgent,
+        onSave: async (variables, secretRefs) => { await saveEnvironmentViaAgent(variables, secretRefs); },
+      }}
+      collaboration={{
+        team: <TeamWorkbench onExportSnapshot={async () => exportTeamSnapshot(await getWorkspaceTreeViaAgent(), loadEnvelopeViaAgent)} onRestoreSnapshot={async (snapshot) => { await restoreTeamSnapshot(snapshot, { getTree: getWorkspaceTreeViaAgent, createWorkspace: createWorkspaceViaAgent, createProject: createProjectViaAgent, createCollection: createCollectionViaAgent, saveEnvelope: saveEnvelopeViaAgent }); await refreshTree(); }} />,
+        comments: <CommentsWorkbench contextCollectionId={selectedCollectionId} contextRequestId={selectedRequestId} contextLabel={selectedRequestId ? `请求 ${selectedRequestId}` : selectedCollectionId ? `集合 ${selectedCollectionId}` : null} />,
+        sso: <SsoWorkbench />,
+      }}
+      explorer={<WorkspaceExplorer tree={tree} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
       onSelectCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
       onOpenRequest={async (id) => { setSelectedRequestId(id); const envelope = await loadEnvelopeViaAgent(id); if (envelope) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: envelope })); setExternalRequest(envelope?.payload.type === "http" ? await loadRequestViaAgent(id) : null); }}
       onCreateWorkspace={async (name) => { await createWorkspaceViaAgent(name); await refreshTree(); }}
@@ -88,8 +101,10 @@ export function App() {
       onMoveRequest={async (id, projectId, collectionId) => { await moveRequestViaAgent(id, projectId, collectionId); await refreshTree(); }}
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await createCollectionViaAgent(projectId, parentId, segment); id = created.id; paths.set(key, id); } parentId = id; } await saveRequestViaAgent({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }, projectId, parentId); } await refreshTree(); }}
       onExportProject={async (project) => { const items = tree?.requests.filter((item) => item.projectId === project.id) ?? []; return Promise.all(items.map(async (item) => { const request = await loadRequestViaAgent(item.id); return { name: item.name, method: request?.method ?? item.method ?? "GET", url: request?.url ?? item.target, headers: Object.fromEntries(request?.headers ?? []), body: request?.body }; })); }}
-      onDeleteRequest={async (id) => { await deleteRequestViaAgent(id); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }} />}>
-      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "rpc", label: "SOAP / RPC", protocols: ["soap", "jsonrpc"] }, { id: "redis", label: "Redis", protocol: "redis" }, { id: "mqtt", label: "MQTT", protocol: "mqtt" }, { id: "amqp", label: "AMQP", protocol: "amqp" }, { id: "kafka", label: "Kafka", protocol: "kafka" }, { id: "sql", label: "SQL", protocol: "sql" }, { id: "mock", label: "Mock" }, { id: "plugins", label: "Plugins" }, { id: "gateway", label: "Gateway" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }, { id: "sso", label: "SSO" }, { id: "ai", label: "AI" }, { id: "capture", label: "Capture" }]}>
+      onDeleteRequest={async (id) => { await deleteRequestViaAgent(id); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }}
+      onRunCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
+    />}>
+      <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
       <HttpWorkbench
         externalRequest={externalRequest}
         onSend={executeViaAgent}
@@ -117,18 +132,11 @@ export function App() {
       <KafkaWorkbench onSend={(request,hooks)=>executeEnvelopeViaAgent(kafkaEnvelope(request),hooks)} onSave={async(request)=>{await saveEnvelopeViaAgent(kafkaEnvelope(request),selectedProjectId,selectedCollectionId);await refreshTree();}} onCancel={cancelViaAgent} />
       <SqlWorkbench onSend={(request,hooks)=>executeEnvelopeViaAgent(sqlEnvelope(request),hooks)} onSave={async(request)=>{await saveEnvelopeViaAgent(sqlEnvelope(request),selectedProjectId,selectedCollectionId);await refreshTree();}} onCancel={cancelViaAgent} />
       <MockWorkbench baseUrl={agentBaseUrl} onList={listMockRulesViaAgent} onCreate={createMockRuleViaAgent} onDelete={deleteMockRuleViaAgent} />
-      <PluginCenter onList={listPluginsViaAgent} onInstall={installPluginViaAgent} onEnable={enablePluginViaAgent} onDelete={deletePluginViaAgent} onInvoke={invokePluginViaAgent} />
+      <CollectionRunner collectionId={selectedCollectionId} onRun={(collectionId, failFast) => runCollectionViaAgent(collectionId, failFast)} />
       <GatewayWorkbench />
-      <TeamWorkbench onExportSnapshot={async () => exportTeamSnapshot(await getWorkspaceTreeViaAgent(), loadEnvelopeViaAgent)} onRestoreSnapshot={async (snapshot) => { await restoreTeamSnapshot(snapshot, { getTree: getWorkspaceTreeViaAgent, createWorkspace: createWorkspaceViaAgent, createProject: createProjectViaAgent, createCollection: createCollectionViaAgent, saveEnvelope: saveEnvelopeViaAgent }); await refreshTree(); }} />
-      <CommentsWorkbench />
-      <SsoWorkbench />
-      <AiWorkbench onAssist={runAiAssistViaAgent} onPutSecret={putSecretViaAgent} />
       <CaptureWorkbench onStatus={captureStatusViaAgent} onStart={startCaptureViaAgent} onStop={stopCaptureViaAgent} onList={listCapturesViaAgent} onClear={clearCapturesViaAgent} />
-      <p style={{ color: "var(--apivoy-muted)", fontSize: 13, marginTop: 24 }}>
-        请先运行 <code>cargo run -p apivoy-local-agent</code>，并设置{" "}
-        <code>VITE_APIVOY_AGENT_TOKEN</code> 为 Agent 配对令牌。环境/历史经 Agent 写入本地 SQLite；密钥经{" "}
-        <code>PUT /v1/secrets</code> 写入 Keychain。
-      </p>
+      <PluginCenter onList={listPluginsViaAgent} onInstall={installPluginViaAgent} onEnable={enablePluginViaAgent} onDelete={deletePluginViaAgent} onInvoke={invokePluginViaAgent} />
+      <AiWorkbench onAssist={runAiAssistViaAgent} onPutSecret={putSecretViaAgent} />
       </WorkbenchDeck>
     </AppShell>
   );

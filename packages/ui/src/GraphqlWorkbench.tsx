@@ -3,6 +3,7 @@ import type { HttpRunResult, HttpSendHooks } from "./HttpWorkbench";
 import { CodeEditor } from "./CodeEditor";
 import { ProtocolCodeGenerator } from "./ProtocolCodeGenerator";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
+import { useWorkbenchHydration } from "./useWorkbenchHydration";
 
 export interface GraphqlWorkbenchRequest {
   name: string;
@@ -32,7 +33,29 @@ export function GraphqlWorkbench({ onSend, onCancel, onSave, externalRequest }: 
   const [runningId, setRunningId] = useState<string | null>(null);
   const [output, setOutput] = useState("尚未执行");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { const apply = (value: GraphqlWorkbenchRequest) => { setUrl(value.url); setQuery(value.query); setVariables(JSON.stringify(value.variables ?? {}, null, 2)); setOperationName(value.operationName ?? ""); setHeaderText(value.headers.map(([name, item]) => `${name}: ${item}`).join("\n")); }; if (externalRequest) apply(externalRequest); else { const draft = readWorkbenchDraft<GraphqlWorkbenchRequest>("graphql"); if (draft) apply(draft); } const listener = (event: Event) => { const envelope = (event as CustomEvent).detail; if (envelope?.payload?.type === "graphql") apply({ name: envelope.name, url: envelope.target, query: envelope.payload.query, variables: envelope.payload.variables, operationName: envelope.payload.operationName ?? undefined, headers: envelope.payload.headers }); }; window.addEventListener("apivoy-open-request", listener); return () => window.removeEventListener("apivoy-open-request", listener); }, [externalRequest]);
+  useEffect(() => {
+    const apply = (value: GraphqlWorkbenchRequest) => {
+      setUrl(value.url);
+      setQuery(value.query);
+      setVariables(JSON.stringify(value.variables ?? {}, null, 2));
+      setOperationName(value.operationName ?? "");
+      setHeaderText(value.headers.map(([name, item]) => `${name}: ${item}`).join("\n"));
+    };
+    if (externalRequest) apply(externalRequest);
+    else {
+      const draft = readWorkbenchDraft<GraphqlWorkbenchRequest>("graphql");
+      if (draft) apply(draft);
+    }
+  }, [externalRequest]);
+  useWorkbenchHydration("graphql", (envelope) => {
+    const detail = envelope as { name?: string; target?: string; payload?: { type?: string; query?: string; variables?: unknown; operationName?: string | null; headers?: Array<[string, string]> } };
+    if (detail?.payload?.type !== "graphql") return;
+    setUrl(detail.target ?? "https://");
+    setQuery(detail.payload.query ?? "");
+    setVariables(JSON.stringify(detail.payload.variables ?? {}, null, 2));
+    setOperationName(detail.payload.operationName ?? "");
+    setHeaderText((detail.payload.headers ?? []).map(([name, item]) => `${name}: ${item}`).join("\n"));
+  });
 
   const headers = () => headerText.split("\n").filter(Boolean).map((line): [string, string] => {
     const index = line.indexOf(":");

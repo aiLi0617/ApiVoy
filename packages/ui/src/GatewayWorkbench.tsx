@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import type { RequestEnvelope } from "@apivoy/request-model";
 import { useQuery } from "@tanstack/react-query";
+import { getGatewayKey, getGatewayUrl, setGatewayKey, setGatewayUrl, subscribePreferences } from "./userPreferences";
 
 type Job = { id: string; name: string; intervalSeconds: number; nextRunAt: string; enabled: boolean; lastExecutionId?: string | null };
 type Execution = { id: string; source: string; success: boolean; startedAt: string; error?: string | null; summary?: { durationMs: number; protocolId: string; status?: number | null } | null };
@@ -10,8 +11,8 @@ function defaultRequest(): RequestEnvelope {
 }
 
 export function GatewayWorkbench() {
-  const [baseUrl, setBaseUrl] = useState(() => sessionStorage.getItem("apivoy:gateway-url") ?? `${location.origin}/gateway`);
-  const [apiKey, setApiKey] = useState(() => sessionStorage.getItem("apivoy:gateway-key") ?? "");
+  const [baseUrl, setBaseUrl] = useState(() => getGatewayUrl());
+  const [apiKey, setApiKey] = useState(() => getGatewayKey());
   const [requestText, setRequestText] = useState(() => JSON.stringify(defaultRequest(), null, 2));
   const [jobName, setJobName] = useState("Scheduled gateway check");
   const [intervalSeconds, setIntervalSeconds] = useState(300);
@@ -22,7 +23,11 @@ export function GatewayWorkbench() {
   const jobs = jobsQuery.data;
   const executions = executionsQuery.data;
 
-  useEffect(() => { sessionStorage.setItem("apivoy:gateway-url", baseUrl); sessionStorage.setItem("apivoy:gateway-key", apiKey); }, [baseUrl, apiKey]);
+  useEffect(() => { setGatewayUrl(baseUrl); setGatewayKey(apiKey); }, [baseUrl, apiKey]);
+  useEffect(() => subscribePreferences((keys) => {
+    if (keys.length === 0 || keys.includes("gatewayUrl")) setBaseUrl(getGatewayUrl());
+    if (keys.length === 0 || keys.includes("gatewayKey")) setApiKey(getGatewayKey());
+  }), []);
   async function call<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, ...init?.headers } }); const body = response.status === 204 ? null : await response.json(); if (!response.ok) throw new Error((body as { error?: string } | null)?.error ?? `Gateway HTTP ${response.status}`); return body as T; }
   function request() { return JSON.parse(requestText) as RequestEnvelope; }
   async function run(source: "remote" | "ci") { setBusy(true); try { const body = source === "ci" ? { request: request(), failOnAssertion: true } : request(); const result = await call<unknown>(source === "ci" ? "/v1/runner/execute" : "/v1/executions", { method: "POST", body: JSON.stringify(body) }); setOutput(JSON.stringify(result, null, 2)); await refresh(); } catch (error) { setOutput(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); } }

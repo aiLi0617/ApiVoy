@@ -12,6 +12,7 @@ import {
   MockWorkbench,
   CollectionRunner,
   WorkbenchDeck,
+  buildWorkbenchTabs,
   TeamWorkbench,
   CommentsWorkbench,
   SsoWorkbench,
@@ -54,11 +55,28 @@ import type {
 } from "@apivoy/request-model";
 import { useEffect, useState } from "react";
 
-const AGENT_BASE_URL = (import.meta.env.VITE_APIVOY_AGENT_URL as string | undefined) ?? "http://127.0.0.1:39217";
-const AGENT_TOKEN = import.meta.env.VITE_APIVOY_AGENT_TOKEN as string | undefined;
-let activeAgentToken = AGENT_TOKEN;
+function agentBaseUrl(): string {
+  try {
+    const override = localStorage.getItem("apivoy:agent-url")?.trim();
+    if (override) return override;
+  } catch { /* ignore */ }
+  return (import.meta.env.VITE_APIVOY_AGENT_URL as string | undefined) ?? "http://127.0.0.1:39217";
+}
+
+function configuredAgentToken(): string | undefined {
+  try {
+    const override = localStorage.getItem("apivoy-agent-token");
+    if (override) return override;
+  } catch { /* ignore */ }
+  return import.meta.env.VITE_APIVOY_AGENT_TOKEN as string | undefined;
+}
+
+let activeAgentToken = configuredAgentToken();
 let agentSessionPromise: Promise<void> | null = null;
-if (AGENT_TOKEN) localStorage.setItem("apivoy-agent-token", AGENT_TOKEN);
+const bootstrapToken = configuredAgentToken();
+if (bootstrapToken) {
+  try { localStorage.setItem("apivoy-agent-token", bootstrapToken); } catch { /* ignore */ }
+}
 
 function agentHeaders(): Headers {
   const headers = new Headers({ "Content-Type": "application/json", "X-ApiVoy-Protocol-Api-Version": "1", "X-ApiVoy-Client": "desktop", "X-ApiVoy-Client-Version": "0.1.0" });
@@ -67,9 +85,9 @@ function agentHeaders(): Headers {
 }
 
 async function agentJson<T>(path: string, init?: RequestInit): Promise<T> {
-  if (AGENT_TOKEN && !agentSessionPromise) agentSessionPromise = (async () => { const response = await fetch(`${AGENT_BASE_URL}/v1/session`, { method: "POST", headers: { Authorization: `Bearer ${AGENT_TOKEN}`, "X-ApiVoy-Protocol-Api-Version": "1" } }); if (!response.ok) throw new Error(`Local Agent session ${response.status}`); const session = await response.json() as { token: string }; activeAgentToken = session.token; localStorage.setItem("apivoy-agent-token", session.token); })();
+  if (bootstrapToken && !agentSessionPromise) agentSessionPromise = (async () => { const response = await fetch(`${agentBaseUrl()}/v1/session`, { method: "POST", headers: { Authorization: `Bearer ${bootstrapToken}`, "X-ApiVoy-Protocol-Api-Version": "1" } }); if (!response.ok) throw new Error(`Local Agent session ${response.status}`); const session = await response.json() as { token: string }; activeAgentToken = session.token; localStorage.setItem("apivoy-agent-token", session.token); })();
   await agentSessionPromise;
-  const response = await fetch(`${AGENT_BASE_URL}${path}`, { ...init, headers: agentHeaders() });
+  const response = await fetch(`${agentBaseUrl()}${path}`, { ...init, headers: agentHeaders() });
   if (!response.ok) throw new Error(`Local Agent ${response.status}: ${await response.text()}`);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -208,7 +226,19 @@ export function App() {
   }, []);
 
   return (
-    <AppShell channelLabel="Desktop → Rust Core" explorer={<WorkspaceExplorer tree={tree} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
+    <AppShell
+      channelLabel="Desktop → Rust Core"
+      connectionStatus={null}
+      environment={{
+        onLoad: async () => invoke<{ variables: Record<string, string>; secretRefs?: string[] }>("get_environment", { id: "default-env" }),
+        onSave: async (variables, secretRefs) => { await invoke("save_environment", { environment: { id: "default-env", variables, secretRefs } }); },
+      }}
+      collaboration={{
+        team: <TeamWorkbench onExportSnapshot={async () => { const snapshotTree = await invoke<WorkspaceTree>("get_workspace_tree"); return exportTeamSnapshot(snapshotTree, async (id) => (await invoke<StoredRequest | null>("get_request", { id }))?.envelope ?? null); }} onRestoreSnapshot={async (snapshot) => { await restoreTeamSnapshot(snapshot, { getTree: async () => invoke<WorkspaceTree>("get_workspace_tree"), createWorkspace: async (name) => invoke("create_workspace", { name, rootPath: null }), createProject: async (workspaceId, name) => invoke("create_project", { workspaceId, name }), createCollection: async (projectId, parentId, name) => invoke("create_collection", { projectId, parentId, name }), saveEnvelope: async (request, projectId, collectionId) => { await invoke("save_envelope", { request, projectId, collectionId }); } }); await refreshTree(); }} />,
+        comments: <CommentsWorkbench contextCollectionId={selectedCollectionId} contextRequestId={selectedRequestId} contextLabel={selectedRequestId ? `请求 ${selectedRequestId}` : selectedCollectionId ? `集合 ${selectedCollectionId}` : null} />,
+        sso: <SsoWorkbench />,
+      }}
+      explorer={<WorkspaceExplorer tree={tree} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
       onSelectCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
       onOpenRequest={async (id) => { const stored = await invoke<StoredRequest | null>("get_request", { id }); setSelectedRequestId(id); if (stored) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: stored.envelope })); setExternalRequest(stored?.envelope.payload.type === "http" ? fromEnvelope(stored.envelope, stored.target) : null); }}
       onCreateWorkspace={async (name) => { await invoke("create_workspace", { name, rootPath: null }); await refreshTree(); }}
@@ -228,8 +258,10 @@ export function App() {
       onMoveRequest={async (id, projectId, collectionId) => { await invoke("move_request", { id, projectId, collectionId }); await refreshTree(); }}
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId, parentId, name: segment }); id = created.id; paths.set(key, id); } parentId = id; } await invoke("save_request", { request: toInvokeRequest({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }), projectId, collectionId: parentId }); } await refreshTree(); }}
       onExportProject={async (project) => { const items = tree?.requests.filter((item) => item.projectId === project.id) ?? []; return Promise.all(items.map(async (item) => { const stored = await invoke<StoredRequest | null>("get_request", { id: item.id }); const request = stored ? fromEnvelope(stored.envelope, stored.target) : null; return { name: item.name, method: request?.method ?? item.method ?? "GET", url: request?.url ?? item.target, headers: Object.fromEntries(request?.headers ?? []), body: request?.body }; })); }}
-      onDeleteRequest={async (id) => { await invoke("delete_request", { id }); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }} />}>
-      <WorkbenchDeck tabs={[{ id: "http", label: "HTTP", protocol: "http" }, { id: "sse", label: "SSE", protocol: "sse" }, { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] }, { id: "graphql", label: "GraphQL", protocol: "graphql" }, { id: "websocket", label: "WebSocket", protocol: "websocket" }, { id: "grpc", label: "gRPC", protocol: "grpc" }, { id: "rpc", label: "SOAP / RPC", protocols: ["soap", "jsonrpc"] }, { id: "redis", label: "Redis", protocol: "redis" }, { id: "mqtt", label: "MQTT", protocol: "mqtt" }, { id: "amqp", label: "AMQP", protocol: "amqp" }, { id: "kafka", label: "Kafka", protocol: "kafka" }, { id: "sql", label: "SQL", protocol: "sql" }, { id: "plugins", label: "Plugins" }, { id: "mock", label: "Mock" }, { id: "runner", label: "Runner" }, { id: "gateway", label: "Gateway" }, { id: "team", label: "Team" }, { id: "comments", label: "Comments" }, { id: "sso", label: "SSO" }, { id: "ai", label: "AI" }, { id: "capture", label: "Capture" }]}>
+      onDeleteRequest={async (id) => { await invoke("delete_request", { id }); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }}
+      onRunCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
+    />}>
+      <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
       <HttpWorkbench
         externalRequest={externalRequest}
         onSend={async (request, hooks) => {
@@ -420,6 +452,15 @@ export function App() {
       <AmqpWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:amqpEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:amqpEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
       <KafkaWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:kafkaEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:kafkaEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
       <SqlWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:sqlEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:sqlEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
+      <MockWorkbench
+        baseUrl={agentBaseUrl()}
+        onList={() => agentJson<MockRule[]>("/v1/mock-rules")}
+        onCreate={async (rule) => { await agentJson<MockRule>("/v1/mock-rules", { method: "POST", body: JSON.stringify(rule) }); }}
+        onDelete={async (id) => { await agentJson<void>(`/v1/mock-rules/${id}`, { method: "DELETE" }); }}
+      />
+      <CollectionRunner collectionId={selectedCollectionId} onRun={(collectionId, failFast) => invoke<CollectionRunCase[]>("run_collection", { collectionId, failFast })} />
+      <GatewayWorkbench />
+      <CaptureWorkbench onStatus={()=>invoke<CaptureStatus>("capture_status")} onStart={(bind)=>invoke<CaptureStatus>("start_capture",{request:{bind,allowRemote:false}})} onStop={()=>invoke<CaptureStatus>("stop_capture")} onList={()=>invoke<CapturedExchange[]>("capture_exchanges")} onClear={()=>invoke("clear_capture")} />
       <PluginCenter
         onList={() => invoke<InstalledPlugin[]>("list_plugins")}
         onInstall={async (manifest: PluginManifest, wasmBase64: string) => {
@@ -436,19 +477,7 @@ export function App() {
           return response.output;
         }}
       />
-      <MockWorkbench
-        baseUrl={AGENT_BASE_URL}
-        onList={() => agentJson<MockRule[]>("/v1/mock-rules")}
-        onCreate={async (rule) => { await agentJson<MockRule>("/v1/mock-rules", { method: "POST", body: JSON.stringify(rule) }); }}
-        onDelete={async (id) => { await agentJson<void>(`/v1/mock-rules/${id}`, { method: "DELETE" }); }}
-      />
-      <CollectionRunner collectionId={selectedCollectionId} onRun={(collectionId, failFast) => invoke<CollectionRunCase[]>("run_collection", { collectionId, failFast })} />
-      <GatewayWorkbench />
-      <TeamWorkbench onExportSnapshot={async () => { const snapshotTree = await invoke<WorkspaceTree>("get_workspace_tree"); return exportTeamSnapshot(snapshotTree, async (id) => (await invoke<StoredRequest | null>("get_request", { id }))?.envelope ?? null); }} onRestoreSnapshot={async (snapshot) => { await restoreTeamSnapshot(snapshot, { getTree: async () => invoke<WorkspaceTree>("get_workspace_tree"), createWorkspace: async (name) => invoke("create_workspace", { name, rootPath: null }), createProject: async (workspaceId, name) => invoke("create_project", { workspaceId, name }), createCollection: async (projectId, parentId, name) => invoke("create_collection", { projectId, parentId, name }), saveEnvelope: async (request, projectId, collectionId) => { await invoke("save_envelope", { request, projectId, collectionId }); } }); await refreshTree(); }} />
-      <CommentsWorkbench />
-      <SsoWorkbench />
       <AiWorkbench onAssist={(request:AiAssistRequest)=>invoke<AiAssistResponse>("run_ai_assistant",{request})} onPutSecret={(name,value)=>invoke("put_secret",{request:{name,value}})} />
-      <CaptureWorkbench onStatus={()=>invoke<CaptureStatus>("capture_status")} onStart={(bind)=>invoke<CaptureStatus>("start_capture",{request:{bind,allowRemote:false}})} onStop={()=>invoke<CaptureStatus>("stop_capture")} onList={()=>invoke<CapturedExchange[]>("capture_exchanges")} onClear={()=>invoke("clear_capture")} />
       </WorkbenchDeck>
     </AppShell>
   );

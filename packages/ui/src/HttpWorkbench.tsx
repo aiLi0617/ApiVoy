@@ -15,6 +15,7 @@ import { CodeEditor } from "./CodeEditor";
 import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
 import { VirtualList } from "./VirtualList";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
+import { useWorkbenchHydration } from "./useWorkbenchHydration";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 
@@ -364,6 +365,7 @@ export function HttpWorkbench({
   const [curlText, setCurlText] = useState("");
   const [responseView, setResponseView] = useState<"pretty" | "raw" | "hex" | "table">("pretty");
   const [responseTab, setResponseTab] = useState<"body" | "headers" | "assertions" | "timeline">("body");
+  const [requestTab, setRequestTab] = useState<"headers" | "body" | "auth" | "cookies" | "pre" | "post" | "proxy" | "assertions" | "variables">("headers");
   const [timeline, setTimeline] = useState<Array<{ at: number; event: ExecutionEvent }>>([]);
   const [responseOffset, setResponseOffset] = useState(0);
 
@@ -515,7 +517,14 @@ export function HttpWorkbench({
     }
   }, [externalRequest]);
 
-  useEffect(() => { const listener=(event:Event)=>{const detail=(event as CustomEvent<{request?:HttpWorkbenchRequest;aiAssertions?:string}>).detail;if(!detail?.request)return;applyRequest(detail.request);if(detail.aiAssertions)setAssertionsText(detail.aiAssertions);setResult(null);setStatusMsg("已载入 AI 生成请求，请检查后再发送");};window.addEventListener("apivoy-open-request",listener);return()=>window.removeEventListener("apivoy-open-request",listener); }, []);
+  useWorkbenchHydration("http", (raw) => {
+    const detail = raw as { request?: HttpWorkbenchRequest; aiAssertions?: string };
+    if (!detail?.request) return;
+    applyRequest(detail.request);
+    if (detail.aiAssertions) setAssertionsText(detail.aiAssertions);
+    setResult(null);
+    setStatusMsg("已载入请求，请检查后再发送");
+  });
 
   useAutosaveDraft("http", buildRequest);
 
@@ -712,6 +721,15 @@ export function HttpWorkbench({
     }
   }
 
+  useEffect(() => {
+    const focusHistory = () => {
+      void handleRefreshHistory();
+      queueMicrotask(() => document.getElementById("http-execution-history")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    };
+    window.addEventListener("apivoy-focus-history", focusHistory);
+    return () => window.removeEventListener("apivoy-focus-history", focusHistory);
+  }, [onListHistory, historyStateFilter, historyStatusFilter]);
+
   function toggleCompare(id: string) {
     setCompareIds((prev) => {
       if (prev.includes(id)) {
@@ -767,7 +785,7 @@ export function HttpWorkbench({
 
   return (
     <WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪 · Ctrl + Enter 发送</span>}>
-      <SplitPane id="http-workbench" primaryLabel="请求配置" secondaryLabel="响应检查器" primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
+      <SplitPane id="http-workbench" direction="vertical" primaryLabel="请求配置" secondaryLabel="响应检查器" primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
 <div style={styles.row}>
         <select
           style={styles.select}
@@ -815,249 +833,134 @@ export function HttpWorkbench({
       )}
       {codeRequest && <CodeGenerator request={codeRequest} />}
 
-      <div style={styles.grid}>
-        <label style={styles.label}>
-          Headers（每行 `Name: Value`）
-          <textarea
-            style={styles.textarea}
-            value={headersText}
-            onChange={(e) => setHeadersText(e.target.value)}
-            rows={4}
-            spellCheck={false}
-            disabled={loading}
-          />
-        </label>
-        <label style={styles.label}>
-          Timeout (ms)
-          <input
-            style={styles.timeout}
-            type="number"
-            min={1}
-            value={timeoutMs}
-            onChange={(e) => setTimeoutMs(Number(e.target.value) || 30_000)}
-            disabled={loading}
-          />
-        </label>
-      </div>
-
-      <div style={styles.grid3}>
-        <label style={styles.label}>
-          代理地址（可选）
-          <input style={styles.input} value={proxy} onChange={(e) => setProxy(e.target.value)} placeholder="http://127.0.0.1:7890" spellCheck={false} disabled={loading} />
-        </label>
-        <label style={styles.label}>
-          最大重试次数
-          <input style={styles.timeout} type="number" min={0} max={10} value={retryMax} onChange={(e) => setRetryMax(Math.max(0, Number(e.target.value) || 0))} disabled={loading} />
-        </label>
-        <label style={styles.label}>
-          重试间隔 (ms)
-          <input style={styles.timeout} type="number" min={0} value={retryBackoffMs} onChange={(e) => setRetryBackoffMs(Math.max(0, Number(e.target.value) || 0))} disabled={loading || retryMax === 0} />
-        </label>
-        <label style={styles.checkLabel}>
-          <input type="checkbox" checked={followRedirects} onChange={(e) => setFollowRedirects(e.target.checked)} disabled={loading} />
-          跟随重定向
-        </label>
-        <label style={styles.checkLabel} title="关闭证书校验存在中间人攻击风险">
-          <input type="checkbox" checked={tlsVerify} onChange={(e) => setTlsVerify(e.target.checked)} disabled={loading} />
-          校验 TLS 证书
-        </label>
-        {!tlsVerify && <span style={styles.dangerHint}>仅在可信测试环境关闭证书校验</span>}
-        <label style={styles.label}>客户端证书密钥引用<input style={styles.input} value={tlsClientCertRef} onChange={(event) => setTlsClientCertRef(event.target.value)} placeholder="Keychain 中的合并 PEM 名称" disabled={loading} /></label>
-      </div>
-
-      {onListCookies && onSetCookie && onDeleteCookie && <div style={styles.importPanel}>
-        <div style={styles.panelTitle}><strong>Cookie Jar</strong><button style={styles.secondaryButton} onClick={() => void refreshCookies()}>刷新当前 URL</button></div>
-        <div style={styles.row}><input style={styles.input} value={cookieName} onChange={(event) => setCookieName(event.target.value)} placeholder="Cookie 名称" /><input style={styles.input} value={cookieValue} onChange={(event) => setCookieValue(event.target.value)} placeholder="Cookie 值" /><button style={styles.secondaryButton} onClick={() => void handleSetCookie()}>设置</button></div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>{cookies.map((cookie) => <span key={cookie.name} style={{ border: "1px solid var(--apivoy-border)", borderRadius: 999, padding: "4px 8px", fontSize: 11 }}><code>{cookie.name}={cookie.value}</code> <button aria-label={`删除 Cookie ${cookie.name}`} onClick={async () => { await onDeleteCookie(url, cookie.name); await refreshCookies(); }}><Icon name="trash" /></button></span>)}</div>
-      </div>}
-
-      {showBody && (
-        <div style={styles.label}>
-          <div style={styles.row}>
-            <strong>Body</strong>
-            <select style={styles.select} value={bodyMode} onChange={(event) => setBodyMode(event.target.value as "raw" | "multipart")} disabled={loading}>
-              <option value="raw">Raw</option>
-              <option value="multipart">Multipart form-data</option>
-            </select>
+      {(() => {
+        const cookieEnabled = Boolean(onListCookies && onSetCookie && onDeleteCookie);
+        const requestTabs = [
+          { id: "headers" as const, label: "Headers", hint: headersText.split("\n").filter((line) => line.trim()).length || undefined },
+          { id: "body" as const, label: "Body" },
+          { id: "auth" as const, label: "认证", hint: authKind !== "none" ? authKind : undefined },
+          { id: "cookies" as const, label: "Cookie", hint: cookieEnabled ? cookies.length || undefined : undefined },
+          { id: "pre" as const, label: "前置脚本", hint: preScript.trim() ? "·" : undefined },
+          { id: "post" as const, label: "后置脚本", hint: postScript.trim() ? "·" : undefined },
+          { id: "proxy" as const, label: "代理与传输", hint: proxy.trim() ? "·" : undefined },
+          { id: "assertions" as const, label: "断言" },
+          { id: "variables" as const, label: "变量与密钥" },
+        ];
+        const activeTab = requestTabs.some((tab) => tab.id === requestTab) ? requestTab : "headers";
+        return <div className="http-request-tabs">
+          <div style={styles.requestTabs} role="tablist" aria-label="请求配置" onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const current = requestTabs.findIndex((tab) => tab.id === activeTab);
+            const next = event.key === "Home" ? 0 : event.key === "End" ? requestTabs.length - 1 : event.key === "ArrowRight" ? (current + 1) % requestTabs.length : (current - 1 + requestTabs.length) % requestTabs.length;
+            setRequestTab(requestTabs[next].id);
+          }}>
+            {requestTabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} id={`http-request-tab-${tab.id}`} aria-controls={`http-request-panel-${tab.id}`} style={activeTab === tab.id ? styles.tabActive : styles.tab} onClick={() => setRequestTab(tab.id)}>{tab.label}{tab.hint != null && tab.hint !== "" ? <span style={styles.count}>{tab.hint}</span> : null}</button>)}
           </div>
-          {bodyMode === "raw" ? (
-            <CodeEditor value={body} onChange={setBody} language="json" height={170} readOnly={loading} />
-          ) : (
-            <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-              {multipart.map((part, index) => (
-                <div key={index} style={{ display: "grid", gridTemplateColumns: "minmax(100px,.7fr) minmax(140px,1fr) auto auto", gap: 8 }}>
-                  <input style={styles.input} value={part.name} onChange={(event) => updateMultipart(index, { name: event.target.value })} placeholder="字段名" disabled={loading} />
-                  {part.fileName ? <input style={styles.input} value={part.fileName} readOnly title={part.contentType ?? undefined} /> : <input style={styles.input} value={part.value} onChange={(event) => updateMultipart(index, { value: event.target.value, base64: false })} placeholder="文本值" disabled={loading} />}
-                  <label style={styles.secondaryButton}>选择文件<input type="file" hidden onChange={(event) => void attachMultipartFile(index, event.target.files?.[0] ?? null)} disabled={loading} /></label>
-                  <button style={styles.secondaryButton} onClick={() => setMultipart((parts) => parts.filter((_, partIndex) => partIndex !== index))} disabled={loading}>删除</button>
-                </div>
-              ))}
-              <button style={styles.secondaryButton} onClick={() => setMultipart((parts) => [...parts, { name: "", value: "", base64: false }])} disabled={loading}>添加字段</button>
-              <small style={{ color: "var(--apivoy-muted)" }}>文件内容以 Base64 保存在请求中；发送时自动生成 multipart boundary。</small>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div style={styles.grid2}>
-        <label style={styles.label}>前置脚本（QuickJS）<CodeEditor value={preScript} onChange={setPreScript} language="javascript" height={145} readOnly={loading} /></label>
-        <label style={styles.label}>后置脚本（QuickJS）<CodeEditor value={postScript} onChange={setPostScript} language="javascript" height={145} readOnly={loading} /></label>
-      </div>
-
-      <div style={styles.grid2}>
-        <label style={styles.label}>
-          认证
-          <select
-            style={styles.selectWide}
-            value={authKind}
-            onChange={(e) => setAuthKind(e.target.value as AuthKind)}
-            disabled={loading}
-          >
-            <option value="none">None</option>
-            <option value="bearer">Bearer Token</option>
-            <option value="basic">Basic</option>
-            <option value="api_key">API Key</option>
-            <option value="oauth2_client_credentials">OAuth 2.0 Client Credentials</option>
-            <option value="oauth2_authorization_code">OAuth 2.0 Authorization Code + PKCE</option>
-          </select>
-          {authKind !== "none" && (
-            <div style={styles.authFields}>
-              {(authKind === "basic" || authKind.startsWith("oauth2_")) && (
-                <input
-                  style={styles.input}
-                  value={authUsername}
-                  onChange={(e) => setAuthUsername(e.target.value)}
-                  placeholder={authKind.startsWith("oauth2_") ? "Client ID（支持 {{var}}）" : "Username（支持 {{var}}）"}
-                  spellCheck={false}
-                  disabled={loading}
-                />
-              )}
-              <input
-                style={styles.input}
-                value={authSecretRef}
-                onChange={(e) => setAuthSecretRef(e.target.value)}
-                placeholder={
-                  authKind === "basic"
-                    ? "Password secret_ref 名称"
-                    : authKind === "oauth2_client_credentials"
-                      ? "Client Secret secret_ref 名称"
-                    : authKind === "api_key"
-                      ? "API Key secret_ref 名称"
-                      : "Token secret_ref 名称"
-                }
-                spellCheck={false}
-                disabled={loading}
-              />
-              {authKind === "api_key" && (
-                <input
-                  style={styles.input}
-                  value={authHeaderName}
-                  onChange={(e) => setAuthHeaderName(e.target.value)}
-                  placeholder="Header 名（默认 X-Api-Key）"
-                  spellCheck={false}
-                  disabled={loading}
-                />
-              )}
-              {authKind.startsWith("oauth2_") && <>
-                <input style={styles.input} value={oauthTokenUrl} onChange={(event) => setOauthTokenUrl(event.target.value)} placeholder="Token Endpoint URL" spellCheck={false} disabled={loading} />
-                <input style={styles.input} value={oauthScope} onChange={(event) => setOauthScope(event.target.value)} placeholder="Scopes（空格分隔，可选）" spellCheck={false} disabled={loading} />
-                <input style={styles.input} value={oauthAudience} onChange={(event) => setOauthAudience(event.target.value)} placeholder="Audience（可选）" spellCheck={false} disabled={loading} />
-              </>}
-              {authKind === "oauth2_authorization_code" && <>
-                <input style={styles.input} value={oauthAuthorizationUrl} onChange={(event) => setOauthAuthorizationUrl(event.target.value)} placeholder="Authorization Endpoint URL" spellCheck={false} disabled={loading} />
-                <input style={styles.input} value={oauthRedirectUri} onChange={(event) => setOauthRedirectUri(event.target.value)} placeholder="Redirect URI" spellCheck={false} disabled={loading} />
-                <button type="button" style={styles.secondaryButton} disabled={loading} onClick={() => void startPkceAuthorization()}>打开浏览器授权（PKCE S256）</button>
-                <input style={styles.input} value={oauthAuthorizationCode} onChange={(event) => setOauthAuthorizationCode(event.target.value)} placeholder="粘贴回调参数 code（仅写入安全存储）" spellCheck={false} disabled={loading} />
-              </>}
-              <div style={styles.muted}>
-                仅保存密钥引用名；明文写入下方「密钥存储」。
+          <div className="http-request-tab-panel" role="tabpanel" id={`http-request-panel-${activeTab}`} aria-labelledby={`http-request-tab-${activeTab}`}>
+            {activeTab === "headers" && <label style={styles.label}>Headers（每行 `Name: Value`）<textarea style={styles.textarea} value={headersText} onChange={(e) => setHeadersText(e.target.value)} rows={8} spellCheck={false} disabled={loading} /></label>}
+            {activeTab === "body" && (showBody ? <div style={styles.label}>
+              <div style={styles.row}>
+                <strong>Body</strong>
+                <select style={styles.select} value={bodyMode} onChange={(event) => setBodyMode(event.target.value as "raw" | "multipart")} disabled={loading}>
+                  <option value="raw">Raw</option>
+                  <option value="multipart">Multipart form-data</option>
+                </select>
               </div>
-            </div>
-          )}
-        </label>
-        <label style={styles.label}>
-          断言（每行一条：`status == 200` / `body contains …` / `jsonpath $.a == 1`）
-          <textarea
-            style={styles.textarea}
-            value={assertionsText}
-            onChange={(e) => setAssertionsText(e.target.value)}
-            rows={4}
-            spellCheck={false}
-            disabled={loading}
-          />
-        </label>
-      </div>
-
-      <div style={styles.grid2}>
-        <label style={styles.label}>
-          请求变量（`key=value`，覆盖环境）
-          <textarea
-            style={styles.textarea}
-            value={variablesText}
-            onChange={(e) => setVariablesText(e.target.value)}
-            rows={4}
-            spellCheck={false}
-            disabled={loading}
-          />
-        </label>
-        {onPutSecret ? (
-          <label style={styles.label}>
-            密钥存储（写入 OS Keychain / Agent，不明文进 SQLite）
-            <input
-              style={styles.input}
-              value={secretName}
-              onChange={(e) => setSecretName(e.target.value)}
-              placeholder="secret 名称，如 apiToken"
-              spellCheck={false}
-              disabled={loading}
-            />
-            <input
-              style={styles.input}
-              type="password"
-              value={secretValue}
-              onChange={(e) => setSecretValue(e.target.value)}
-              placeholder="密钥值（仅写入安全存储）"
-              disabled={loading}
-            />
-            <div style={styles.row}>
-              <button style={styles.secondaryButton} disabled={loading} onClick={handlePutSecret}>
-                存入密钥
-              </button>
-              {secretRefs.length > 0 && (
-                <span style={styles.muted}>已关联: {secretRefs.join(", ")}</span>
+              {bodyMode === "raw" ? (
+                <CodeEditor value={body} onChange={setBody} language="json" height={220} readOnly={loading} />
+              ) : (
+                <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                  {multipart.map((part, index) => (
+                    <div key={index} style={{ display: "grid", gridTemplateColumns: "minmax(100px,.7fr) minmax(140px,1fr) auto auto", gap: 8 }}>
+                      <input style={styles.input} value={part.name} onChange={(event) => updateMultipart(index, { name: event.target.value })} placeholder="字段名" disabled={loading} />
+                      {part.fileName ? <input style={styles.input} value={part.fileName} readOnly title={part.contentType ?? undefined} /> : <input style={styles.input} value={part.value} onChange={(event) => updateMultipart(index, { value: event.target.value, base64: false })} placeholder="文本值" disabled={loading} />}
+                      <label style={styles.secondaryButton}>选择文件<input type="file" hidden onChange={(event) => void attachMultipartFile(index, event.target.files?.[0] ?? null)} disabled={loading} /></label>
+                      <button style={styles.secondaryButton} onClick={() => setMultipart((parts) => parts.filter((_, partIndex) => partIndex !== index))} disabled={loading}>删除</button>
+                    </div>
+                  ))}
+                  <button style={styles.secondaryButton} onClick={() => setMultipart((parts) => [...parts, { name: "", value: "", base64: false }])} disabled={loading}>添加字段</button>
+                  <small style={{ color: "var(--apivoy-muted)" }}>文件内容以 Base64 保存在请求中；发送时自动生成 multipart boundary。</small>
+                </div>
               )}
-            </div>
-          </label>
-        ) : (
-          <div />
-        )}
-      </div>
-
-      {(onLoadEnvironment || onSaveEnvironment) && (
-        <label style={styles.label}>
-          环境变量（Default env，`key=value`）
-          <textarea
-            style={styles.textarea}
-            value={envText}
-            onChange={(e) => setEnvText(e.target.value)}
-            rows={3}
-            spellCheck={false}
-            disabled={loading}
-          />
-          <div style={styles.row}>
-            {onLoadEnvironment && (
-              <button style={styles.secondaryButton} disabled={loading} onClick={handleLoadEnv}>
-                加载环境
-              </button>
-            )}
-            {onSaveEnvironment && (
-              <button style={styles.secondaryButton} disabled={loading} onClick={handleSaveEnv}>
-                保存环境
-              </button>
-            )}
+            </div> : <div style={styles.muted}>{method} 请求通常不包含 Body。切换到 POST / PUT 等方法后可在此编辑。</div>)}
+            {activeTab === "auth" && <label style={styles.label}>
+              认证
+              <select style={styles.selectWide} value={authKind} onChange={(e) => setAuthKind(e.target.value as AuthKind)} disabled={loading}>
+                <option value="none">None</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="basic">Basic</option>
+                <option value="api_key">API Key</option>
+                <option value="oauth2_client_credentials">OAuth 2.0 Client Credentials</option>
+                <option value="oauth2_authorization_code">OAuth 2.0 Authorization Code + PKCE</option>
+              </select>
+              {authKind !== "none" && (
+                <div style={styles.authFields}>
+                  {(authKind === "basic" || authKind.startsWith("oauth2_")) && (
+                    <input style={styles.input} value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder={authKind.startsWith("oauth2_") ? "Client ID（支持 {{var}}）" : "Username（支持 {{var}}）"} spellCheck={false} disabled={loading} />
+                  )}
+                  <input style={styles.input} value={authSecretRef} onChange={(e) => setAuthSecretRef(e.target.value)} placeholder={authKind === "basic" ? "Password secret_ref 名称" : authKind === "oauth2_client_credentials" ? "Client Secret secret_ref 名称" : authKind === "api_key" ? "API Key secret_ref 名称" : "Token secret_ref 名称"} spellCheck={false} disabled={loading} />
+                  {authKind === "api_key" && <input style={styles.input} value={authHeaderName} onChange={(e) => setAuthHeaderName(e.target.value)} placeholder="Header 名（默认 X-Api-Key）" spellCheck={false} disabled={loading} />}
+                  {authKind.startsWith("oauth2_") && <>
+                    <input style={styles.input} value={oauthTokenUrl} onChange={(event) => setOauthTokenUrl(event.target.value)} placeholder="Token Endpoint URL" spellCheck={false} disabled={loading} />
+                    <input style={styles.input} value={oauthScope} onChange={(event) => setOauthScope(event.target.value)} placeholder="Scopes（空格分隔，可选）" spellCheck={false} disabled={loading} />
+                    <input style={styles.input} value={oauthAudience} onChange={(event) => setOauthAudience(event.target.value)} placeholder="Audience（可选）" spellCheck={false} disabled={loading} />
+                  </>}
+                  {authKind === "oauth2_authorization_code" && <>
+                    <input style={styles.input} value={oauthAuthorizationUrl} onChange={(event) => setOauthAuthorizationUrl(event.target.value)} placeholder="Authorization Endpoint URL" spellCheck={false} disabled={loading} />
+                    <input style={styles.input} value={oauthRedirectUri} onChange={(event) => setOauthRedirectUri(event.target.value)} placeholder="Redirect URI" spellCheck={false} disabled={loading} />
+                    <button type="button" style={styles.secondaryButton} disabled={loading} onClick={() => void startPkceAuthorization()}>打开浏览器授权（PKCE S256）</button>
+                    <input style={styles.input} value={oauthAuthorizationCode} onChange={(event) => setOauthAuthorizationCode(event.target.value)} placeholder="粘贴回调参数 code（仅写入安全存储）" spellCheck={false} disabled={loading} />
+                  </>}
+                  <div style={styles.muted}>仅保存密钥引用名；明文写入「变量与密钥」页签中的密钥存储。</div>
+                </div>
+              )}
+            </label>}
+            {activeTab === "cookies" && (cookieEnabled ? <div style={styles.importPanel}>
+              <div style={styles.panelTitle}><strong>Cookie Jar</strong><button style={styles.secondaryButton} onClick={() => void refreshCookies()}>刷新当前 URL</button></div>
+              <div style={styles.row}><input style={styles.input} value={cookieName} onChange={(event) => setCookieName(event.target.value)} placeholder="Cookie 名称" /><input style={styles.input} value={cookieValue} onChange={(event) => setCookieValue(event.target.value)} placeholder="Cookie 值" /><button style={styles.secondaryButton} onClick={() => void handleSetCookie()}>设置</button></div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>{cookies.map((cookie) => <span key={cookie.name} style={{ border: "1px solid var(--apivoy-border)", borderRadius: 999, padding: "4px 8px", fontSize: 11 }}><code>{cookie.name}={cookie.value}</code> <button aria-label={`删除 Cookie ${cookie.name}`} onClick={async () => { await onDeleteCookie!(url, cookie.name); await refreshCookies(); }}><Icon name="trash" /></button></span>)}</div>
+            </div> : <div style={styles.muted}>当前通道未接入 Cookie Jar。</div>)}
+            {activeTab === "pre" && <label style={styles.label}>前置脚本（QuickJS）<CodeEditor value={preScript} onChange={setPreScript} language="javascript" height={240} readOnly={loading} /></label>}
+            {activeTab === "post" && <label style={styles.label}>后置脚本（QuickJS）<CodeEditor value={postScript} onChange={setPostScript} language="javascript" height={240} readOnly={loading} /></label>}
+            {activeTab === "proxy" && <div style={styles.grid3}>
+              <label style={styles.label}>代理地址（可选）<input style={styles.input} value={proxy} onChange={(e) => setProxy(e.target.value)} placeholder="http://127.0.0.1:7890" spellCheck={false} disabled={loading} /></label>
+              <label style={styles.label}>Timeout (ms)<input style={styles.timeout} type="number" min={1} value={timeoutMs} onChange={(e) => setTimeoutMs(Number(e.target.value) || 30_000)} disabled={loading} /></label>
+              <label style={styles.label}>最大重试次数<input style={styles.timeout} type="number" min={0} max={10} value={retryMax} onChange={(e) => setRetryMax(Math.max(0, Number(e.target.value) || 0))} disabled={loading} /></label>
+              <label style={styles.label}>重试间隔 (ms)<input style={styles.timeout} type="number" min={0} value={retryBackoffMs} onChange={(e) => setRetryBackoffMs(Math.max(0, Number(e.target.value) || 0))} disabled={loading || retryMax === 0} /></label>
+              <label style={styles.checkLabel}><input type="checkbox" checked={followRedirects} onChange={(e) => setFollowRedirects(e.target.checked)} disabled={loading} />跟随重定向</label>
+              <label style={styles.checkLabel} title="关闭证书校验存在中间人攻击风险"><input type="checkbox" checked={tlsVerify} onChange={(e) => setTlsVerify(e.target.checked)} disabled={loading} />校验 TLS 证书</label>
+              {!tlsVerify && <span style={styles.dangerHint}>仅在可信测试环境关闭证书校验</span>}
+              <label style={styles.label}>客户端证书密钥引用<input style={styles.input} value={tlsClientCertRef} onChange={(event) => setTlsClientCertRef(event.target.value)} placeholder="Keychain 中的合并 PEM 名称" disabled={loading} /></label>
+            </div>}
+            {activeTab === "assertions" && <label style={styles.label}>断言（每行一条：`status == 200` / `body contains …` / `jsonpath $.a == 1`）<textarea style={styles.textarea} value={assertionsText} onChange={(e) => setAssertionsText(e.target.value)} rows={8} spellCheck={false} disabled={loading} /></label>}
+            {activeTab === "variables" && <div style={styles.grid2}>
+              <label style={styles.label}>请求变量（`key=value`，覆盖环境）<textarea style={styles.textarea} value={variablesText} onChange={(e) => setVariablesText(e.target.value)} rows={6} spellCheck={false} disabled={loading} /></label>
+              {onPutSecret ? (
+                <label style={styles.label}>
+                  密钥存储（写入 OS Keychain / Agent，不明文进 SQLite）
+                  <input style={styles.input} value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="secret 名称，如 apiToken" spellCheck={false} disabled={loading} />
+                  <input style={styles.input} type="password" value={secretValue} onChange={(e) => setSecretValue(e.target.value)} placeholder="密钥值（仅写入安全存储）" disabled={loading} />
+                  <div style={styles.row}>
+                    <button style={styles.secondaryButton} disabled={loading} onClick={handlePutSecret}>存入密钥</button>
+                    {secretRefs.length > 0 && <span style={styles.muted}>已关联: {secretRefs.join(", ")}</span>}
+                  </div>
+                </label>
+              ) : <div />}
+              {(onLoadEnvironment || onSaveEnvironment) && (
+                <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+                  环境变量（Default env，`key=value`）
+                  <textarea style={styles.textarea} value={envText} onChange={(e) => setEnvText(e.target.value)} rows={4} spellCheck={false} disabled={loading} />
+                  <div style={styles.row}>
+                    {onLoadEnvironment && <button style={styles.secondaryButton} disabled={loading} onClick={handleLoadEnv}>加载环境</button>}
+                    {onSaveEnvironment && <button style={styles.secondaryButton} disabled={loading} onClick={handleSaveEnv}>保存环境</button>}
+                  </div>
+                </label>
+              )}
+            </div>}
           </div>
-        </label>
-      )}
+        </div>;
+      })()}
 
       {(onSave || onLoad) && (
         <div style={styles.row}>
@@ -1075,7 +978,7 @@ export function HttpWorkbench({
       )}
 
       {onListHistory && (
-        <div style={styles.history}>
+        <div style={styles.history} id="http-execution-history">
           <div style={styles.row}>
             <strong style={{ color: "var(--apivoy-text)" }}>执行历史</strong>
             <button style={styles.secondaryButton} disabled={loading} onClick={handleRefreshHistory}>
@@ -1420,6 +1323,7 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap", paddingBottom: 12, marginBottom: 12, borderBottom: "1px solid var(--apivoy-border)",
   },
   responseTabs: { display: "flex", gap: 4, marginBottom: 12 },
+  requestTabs: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid var(--apivoy-border)" },
   jsonTableWrap: { maxHeight: 420, overflow: "auto", border: "1px solid var(--apivoy-border)", borderRadius: 8 },
   jsonTable: { width: "100%", borderCollapse: "collapse", fontSize: 11, textAlign: "left" },
   timeline: { display: "grid", gap: 1, maxHeight: 420, overflow: "auto", border: "1px solid var(--apivoy-border)", borderRadius: 8 },

@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from "react";
+import { consumeHydrate } from "./openRequestPipeline";
 import type { HttpRunResult, HttpSendHooks } from "./HttpWorkbench";
 
 export type RpcProtocol = "soap" | "jsonrpc";
@@ -62,8 +63,19 @@ export function RpcWorkbench({ onSend, onSave, onCancel }: RpcWorkbenchProps) {
         setId(raw.id == null ? "null" : String(raw.id));
       }
     };
+    const pending = consumeHydrate("rpc");
+    if (pending) listener(new CustomEvent("apivoy-open-request", { detail: pending.envelope }) as Event);
+    const onHydrate = (event: Event) => {
+      const d = (event as CustomEvent).detail;
+      if (d?.workbenchId !== "rpc") return;
+      listener(new CustomEvent("apivoy-open-request", { detail: d.envelope }) as Event);
+    };
     window.addEventListener("apivoy-open-request", listener);
-    return () => window.removeEventListener("apivoy-open-request", listener);
+    window.addEventListener("apivoy-hydrate-request", onHydrate);
+    return () => {
+      window.removeEventListener("apivoy-open-request", listener);
+      window.removeEventListener("apivoy-hydrate-request", onHydrate);
+    };
   }, []);
 
   function buildRequest(): RpcWorkbenchRequest {
