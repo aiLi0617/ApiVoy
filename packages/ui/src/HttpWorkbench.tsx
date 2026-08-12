@@ -1186,11 +1186,11 @@ export function HttpWorkbench({
                   <span>{result.eventCount} events</span>
                   {result.executionId && <span>id {result.executionId.slice(0, 8)}</span>}
                 </div>
-                <div style={styles.row}>
-                  <button style={responseView === "pretty" ? styles.tabActive : styles.tab} onClick={() => setResponseView("pretty")}>美化</button>
-                  <button style={responseView === "raw" ? styles.tabActive : styles.tab} onClick={() => setResponseView("raw")}>原文</button>
-                  <button style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
-                  <button style={responseView === "table" ? styles.tabActive : styles.tab} disabled={!responseTable} onClick={() => setResponseView("table")}>表格</button>
+                <div style={styles.row} role="tablist" aria-label="响应显示模式">
+                  <button role="tab" aria-selected={responseView === "pretty"} style={responseView === "pretty" ? styles.tabActive : styles.tab} onClick={() => setResponseView("pretty")}>美化</button>
+                  <button role="tab" aria-selected={responseView === "raw"} style={responseView === "raw" ? styles.tabActive : styles.tab} onClick={() => setResponseView("raw")}>原文</button>
+                  <button role="tab" aria-selected={responseView === "hex"} style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
+                  <button role="tab" aria-selected={responseView === "table"} style={responseView === "table" ? styles.tabActive : styles.tab} disabled={!responseTable} onClick={() => setResponseView("table")}>表格</button>
                   {result.preview && <button style={styles.linkButton} onClick={() => void copyText(responsePreview, "响应内容已复制")}>复制</button>}
                   {result.preview && <button style={styles.linkButton} onClick={downloadResponse}>下载</button>}
                 </div>
