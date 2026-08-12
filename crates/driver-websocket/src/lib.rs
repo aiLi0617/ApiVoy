@@ -170,7 +170,7 @@ impl ProtocolDriver for WebSocketDriver {
                 })
                 .await;
             while frames < limit {
-                let next = tokio::select! { _ = cancel.cancelled() => { let _ = socket.close(None).await; return Err(DriverError::Cancelled); }, value = timeout(Duration::from_millis(request.timeout_ms.max(1)), socket.next()) => match value { Ok(value) => value, Err(_) => None } };
+                let next = tokio::select! { _ = cancel.cancelled() => { let _ = socket.close(None).await; return Err(DriverError::Cancelled); }, value = timeout(Duration::from_millis(request.timeout_ms.max(1)), socket.next()) => value.unwrap_or_default() };
                 let Some(frame) = next else { break };
                 let frame = match frame {
                     Ok(value) => value,

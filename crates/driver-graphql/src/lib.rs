@@ -25,7 +25,10 @@ pub struct GraphqlDriver {
 impl GraphqlDriver {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap_or_else(|_| Client::new()),
         }
     }
 }
@@ -384,6 +387,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::result_large_err)] // Signature is fixed by tungstenite's handshake callback.
     async fn receives_graphql_transport_ws_subscription_events() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

@@ -356,19 +356,10 @@ impl AuthRef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RetryPolicy {
     pub max_retries: u32,
     pub backoff_ms: u64,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_retries: 0,
-            backoff_ms: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

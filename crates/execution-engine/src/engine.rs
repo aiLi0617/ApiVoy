@@ -17,6 +17,12 @@ use crate::{
     VariableScope,
 };
 
+pub type ExecutionTask = (
+    ExecutionId,
+    mpsc::Receiver<ExecutionEvent>,
+    tokio::task::JoinHandle<Result<ExecutionSummary, EngineError>>,
+);
+
 pub struct ExecutionEngine {
     drivers: HashMap<String, Arc<dyn ProtocolDriver>>,
     lifecycle: Arc<dyn LifecycleHook>,
@@ -59,17 +65,7 @@ impl ExecutionEngine {
     }
 
     #[instrument(skip(self, request), fields(protocol = %request.protocol_id.0, request = %request.id.0))]
-    pub async fn execute(
-        &self,
-        request: RequestEnvelope,
-    ) -> Result<
-        (
-            ExecutionId,
-            mpsc::Receiver<ExecutionEvent>,
-            tokio::task::JoinHandle<Result<ExecutionSummary, EngineError>>,
-        ),
-        EngineError,
-    > {
+    pub async fn execute(&self, request: RequestEnvelope) -> Result<ExecutionTask, EngineError> {
         self.execute_with_scope(request, VariableScope::default())
             .await
     }
@@ -79,20 +75,13 @@ impl ExecutionEngine {
         &self,
         request: RequestEnvelope,
         scope: VariableScope,
-    ) -> Result<
-        (
-            ExecutionId,
-            mpsc::Receiver<ExecutionEvent>,
-            tokio::task::JoinHandle<Result<ExecutionSummary, EngineError>>,
-        ),
-        EngineError,
-    > {
+    ) -> Result<ExecutionTask, EngineError> {
         let protocol = request.protocol_id.0.clone();
         let driver = self
             .drivers
             .get(&protocol)
             .cloned()
-            .ok_or_else(|| EngineError::DriverNotFound(protocol))?;
+            .ok_or(EngineError::DriverNotFound(protocol))?;
 
         // Validate after variable resolution inside `run_driver` so `{{baseUrl}}`
         // templates are not rejected before substitution.

@@ -4,9 +4,11 @@
 //! env values). `AuthRef` holds secret names and never stores passwords/tokens.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use core_domain::{ErrorKind, HttpPayload, ProtocolPayload, RequestEnvelope};
+use reqwest::Url;
 use thiserror::Error;
 
 use crate::variables::{resolve_template, VariableScope};
@@ -142,7 +144,7 @@ pub async fn apply_auth(
                         .map_err(|error| AuthError::Resolve(error.to_string()))?,
                 ));
             }
-            let response = reqwest::Client::new()
+            let response = oauth_client(&token_url)?
                 .post(token_url)
                 .basic_auth(client_id, Some(client_secret))
                 .form(&form)
@@ -216,7 +218,7 @@ pub async fn apply_auth(
                 ("redirect_uri", redirect_uri),
                 ("code_verifier", verifier),
             ];
-            let client = reqwest::Client::new();
+            let client = oauth_client(&token_url)?;
             let mut builder = client
                 .post(token_url)
                 .form(&form)
@@ -263,6 +265,29 @@ struct OAuthTokenResponse {
     access_token: String,
     #[serde(default)]
     token_type: Option<String>,
+}
+
+fn oauth_client(token_url: &str) -> Result<reqwest::Client, AuthError> {
+    let mut builder = reqwest::Client::builder();
+    if Url::parse(token_url)
+        .ok()
+        .as_ref()
+        .is_some_and(url_is_loopback)
+    {
+        builder = builder.no_proxy();
+    }
+    builder
+        .build()
+        .map_err(|error| AuthError::TokenEndpoint(error.to_string()))
+}
+
+fn url_is_loopback(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    })
 }
 
 fn resolve_secret(

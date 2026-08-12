@@ -31,6 +31,18 @@ pub enum StoreError {
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
+type StoredRequestRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceRecord {
@@ -1063,17 +1075,7 @@ impl LocalStore {
             )?
         };
 
-        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-        )> {
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<StoredRequestRow> {
             Ok((
                 row.get(0)?,
                 row.get(1)?,

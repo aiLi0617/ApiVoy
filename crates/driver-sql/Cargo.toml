@@ -14,7 +14,7 @@ event-stream = { workspace = true }
 execution-engine = { workspace = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
-sqlx = { version = "0.8.6", default-features = false, features = ["any", "postgres", "mysql", "sqlite", "runtime-tokio-rustls"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["any", "postgres", "mysql", "sqlite", "runtime-tokio", "tls-rustls-ring-webpki"] }
 tokio = { workspace = true, features = ["time"] }
 tokio-util = { workspace = true }
 url = "2"

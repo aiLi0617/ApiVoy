@@ -1,4 +1,4 @@
-use std::{io::BufReader, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -9,6 +9,7 @@ use core_domain::{
 };
 use event_stream::EventSink;
 use execution_engine::{DriverDescriptor, DriverError, ProtocolDriver, ValidationReport};
+use rustls_pki_types::{pem::PemObject, CertificateDer};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::{sleep, timeout, Duration};
@@ -55,8 +56,7 @@ async fn connect_tcp(
         let pem = request.runtime_secrets.get(secret_ref).ok_or_else(|| {
             DriverError::Validation(format!("TCP TLS CA secret `{secret_ref}` is unavailable"))
         })?;
-        let mut reader = BufReader::new(pem.as_bytes());
-        let certificates = rustls_pemfile::certs(&mut reader)
+        let certificates = CertificateDer::pem_slice_iter(pem.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| {
                 DriverError::Validation(format!("invalid CA PEM `{secret_ref}`: {error}"))
@@ -72,9 +72,13 @@ async fn connect_tcp(
             })?;
         }
     }
-    let config = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let config = rustls::ClientConfig::builder_with_provider(
+        rustls::crypto::ring::default_provider().into(),
+    )
+    .with_safe_default_protocol_versions()
+    .map_err(|error| DriverError::Tls(error.to_string()))?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
     let server_name = payload
         .server_name
         .as_deref()
@@ -104,7 +108,7 @@ fn decode_data(data: &str, encoding: &str) -> Result<Vec<u8>, DriverError> {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    if compact.len() % 2 != 0 {
+    if !compact.len().is_multiple_of(2) {
         return Err(DriverError::Validation(
             "hex data must contain an even number of digits".into(),
         ));
@@ -363,15 +367,19 @@ mod tests {
             .unwrap()
             .self_signed(&key)
             .unwrap();
-        let server_config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![certificate.der().clone()],
-                rustls::pki_types::PrivateKeyDer::Pkcs8(
-                    rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()),
-                ),
-            )
-            .unwrap();
+        let server_config = rustls::ServerConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certificate.der().clone()],
+            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+                key.serialize_der(),
+            )),
+        )
+        .unwrap();
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

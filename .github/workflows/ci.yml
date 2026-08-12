@@ -74,7 +74,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-audit
       - name: Audit Rust dependencies
-        run: cargo audit
+        # .cargo/audit.toml contains the reviewed, exact-ID upstream exceptions.
+        # Any newly reported vulnerability or warning must fail this job.
+        run: cargo audit -D warnings
       - uses: anchore/sbom-action@v0
         with:
           path: .

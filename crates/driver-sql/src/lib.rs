@@ -9,7 +9,7 @@ use event_stream::EventSink;
 use execution_engine::{DriverDescriptor, DriverError, ProtocolDriver, ValidationReport};
 use futures::TryStreamExt;
 use serde_json::Value;
-use sqlx::{any::AnyPoolOptions, Column, Row, TypeInfo};
+use sqlx::{any::AnyPoolOptions, AssertSqlSafe, Column, Row, TypeInfo};
 use std::time::Instant;
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
@@ -38,6 +38,28 @@ fn decode(request: &RequestEnvelope) -> Result<SqlRequest, DriverError> {
         return Err(DriverError::Validation(
             "SQL target must use postgres://, mysql://, or sqlite://".into(),
         ));
+    }
+    if url.scheme() == "mysql" {
+        let ssl_modes = url
+            .query_pairs()
+            .filter(|(name, _)| {
+                name.eq_ignore_ascii_case("ssl-mode") || name.eq_ignore_ascii_case("sslmode")
+            })
+            .map(|(_, value)| value.into_owned())
+            .collect::<Vec<_>>();
+        if ssl_modes.is_empty() {
+            url.query_pairs_mut().append_pair("ssl-mode", "REQUIRED");
+        } else if ssl_modes.iter().any(|mode| {
+            !matches!(
+                mode.to_ascii_uppercase().as_str(),
+                "REQUIRED" | "VERIFY_CA" | "VERIFY_IDENTITY"
+            )
+        }) {
+            return Err(DriverError::Validation(
+                "MySQL connections must use ssl-mode=REQUIRED, VERIFY_CA, or VERIFY_IDENTITY"
+                    .into(),
+            ));
+        }
     }
     if url.scheme() != "sqlite" {
         if let Some(username) = value
@@ -84,9 +106,9 @@ fn decode(request: &RequestEnvelope) -> Result<SqlRequest, DriverError> {
     })
 }
 fn bind<'q>(
-    mut query: sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments<'q>>,
+    mut query: sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments>,
     parameters: &'q [Value],
-) -> Result<sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments<'q>>, DriverError> {
+) -> Result<sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments>, DriverError> {
     for value in parameters {
         query = match value {
             Value::Null => query.bind(Option::<String>::None),
@@ -117,8 +139,7 @@ fn bind<'q>(
 }
 fn query_like(sql: &str) -> bool {
     matches!(
-        sql.trim_start()
-            .split_whitespace()
+        sql.split_whitespace()
             .next()
             .unwrap_or("")
             .to_ascii_uppercase()
@@ -247,7 +268,12 @@ impl ProtocolDriver for SqlDriver {
             .await;
         let operation = async {
             if query_like(&payload.sql) {
-                let query = bind(sqlx::query(&payload.sql), &payload.parameters)?;
+                // ApiVoy is an explicit SQL debugging client: the complete statement is supplied
+                // by the user, while individual values still use driver bind parameters below.
+                let query = bind(
+                    sqlx::query(AssertSqlSafe(payload.sql.as_str())),
+                    &payload.parameters,
+                )?;
                 let mut rows = query.fetch(&mut *connection);
                 let mut output = Vec::new();
                 while output.len() < payload.row_limit {
@@ -265,10 +291,13 @@ impl ProtocolDriver for SqlDriver {
                     serde_json::json!({"columns":output.first().and_then(Value::as_object).map(|v|v.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),"rows":output,"truncated":output.len()==payload.row_limit}),
                 )
             } else {
-                let result = bind(sqlx::query(&payload.sql), &payload.parameters)?
-                    .execute(&mut *connection)
-                    .await
-                    .map_err(err)?;
+                let result = bind(
+                    sqlx::query(AssertSqlSafe(payload.sql.as_str())),
+                    &payload.parameters,
+                )?
+                .execute(&mut *connection)
+                .await
+                .map_err(err)?;
                 Ok(
                     serde_json::json!({"rowsAffected":result.rows_affected(),"lastInsertId":result.last_insert_id()}),
                 )
@@ -336,6 +365,27 @@ mod tests {
             .runtime_secrets
             .insert("db-pass".into(), "secret".into());
         assert!(SqlDriver.validate(&request).is_valid());
+    }
+    #[test]
+    fn requires_tls_for_mysql_connections() {
+        let mut request = RequestEnvelope::http_get("SQL", "mysql://localhost/db");
+        request.protocol_id = ProtocolId("sql".into());
+        request.payload = ProtocolPayload::Raw(serde_json::json!({"sql":"select 1"}));
+
+        let decoded = decode(&request).unwrap();
+        assert!(decoded.url.contains("ssl-mode=REQUIRED"));
+
+        request.target = "mysql://localhost/db?ssl-mode=DISABLED".into();
+        assert!(decode(&request).is_err());
+
+        request.target = "mysql://localhost/db?ssl-mode=VERIFY_IDENTITY".into();
+        assert!(decode(&request).is_ok());
+
+        request.target = "mysql://localhost/db?ssl-mode=REQUIRED&ssl-mode=DISABLED".into();
+        assert!(decode(&request).is_err());
+
+        request.target = "mysql://localhost/db?sslmode=DISABLED".into();
+        assert!(decode(&request).is_err());
     }
     #[tokio::test]
     async fn runs_parameterized_sqlite_query() {

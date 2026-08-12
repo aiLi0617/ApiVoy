@@ -1,5 +1,6 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -70,8 +71,11 @@ pub async fn run_ai_assistant(
         None => request.input.clone(),
     };
     let payload = serde_json::json!({"model":request.model,"temperature":0.2,"messages":[{"role":"system","content":system},{"role":"user","content":user}]});
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(90))
+    let mut client = reqwest::Client::builder().timeout(Duration::from_secs(90));
+    if url_is_loopback(&url) {
+        client = client.no_proxy();
+    }
+    let response = client
         .build()
         .map_err(|error| AiError::Provider(error.to_string()))?
         .post(url)
@@ -121,6 +125,14 @@ fn completion_url(endpoint: &str) -> Result<Url, AiError> {
         url.set_path(&path);
     }
     Ok(url)
+}
+fn url_is_loopback(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    })
 }
 fn truncate(value: &str, max: usize) -> String {
     value.chars().take(max).collect()

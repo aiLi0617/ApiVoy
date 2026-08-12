@@ -1,4 +1,4 @@
-use std::{io::BufReader, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -9,6 +9,7 @@ use core_domain::{
 };
 use event_stream::EventSink;
 use execution_engine::{DriverDescriptor, DriverError, ProtocolDriver, ValidationReport};
+use rustls_pki_types::{pem::PemObject, CertificateDer};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -194,8 +195,7 @@ async fn connect(
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     if let Some(pem) = &payload.ca_pem {
-        let mut reader = BufReader::new(pem.as_bytes());
-        let certificates = rustls_pemfile::certs(&mut reader)
+        let certificates = CertificateDer::pem_slice_iter(pem.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| DriverError::Validation(format!("invalid MQTT CA PEM: {error}")))?;
         if certificates.is_empty() {
@@ -209,9 +209,13 @@ async fn connect(
             })?;
         }
     }
-    let config = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let config = rustls::ClientConfig::builder_with_provider(
+        rustls::crypto::ring::default_provider().into(),
+    )
+    .with_safe_default_protocol_versions()
+    .map_err(|error| DriverError::Tls(error.to_string()))?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
     let name = payload
         .server_name
         .clone()

@@ -1,0 +1,35 @@
+[advisories]
+ignore = [
+  # Tauri/Wry still use the gtk-rs GTK3 bindings on Linux. These entries are
+  # accepted only while apivoy-desktop remains on that upstream backend.
+  "RUSTSEC-2024-0411",
+  "RUSTSEC-2024-0412",
+  "RUSTSEC-2024-0413",
+  "RUSTSEC-2024-0414",
+  "RUSTSEC-2024-0415",
+  "RUSTSEC-2024-0416",
+  "RUSTSEC-2024-0417",
+  "RUSTSEC-2024-0418",
+  "RUSTSEC-2024-0419",
+  "RUSTSEC-2024-0420",
+
+  # Build-time macro dependency of the same gtk-rs 0.18 dependency chain.
+  "RUSTSEC-2024-0370",
+
+  # urlpattern 0.3.0 is pulled in by tauri-utils and still uses UNIC 0.9.
+  "RUSTSEC-2025-0075",
+  "RUSTSEC-2025-0080",
+  "RUSTSEC-2025-0081",
+  "RUSTSEC-2025-0098",
+  "RUSTSEC-2025-0100",
+
+  # glib 0.18 enters only through the Tauri Linux dependency graph. The
+  # affected VariantStrIter API is not referenced by ApiVoy or Tauri/Wry.
+  "RUSTSEC-2024-0429",
+]
+
+[output]
+# Every advisory not explicitly reviewed above fails the audit.
+deny = ["warnings"]
+quiet = false
+show_tree = true

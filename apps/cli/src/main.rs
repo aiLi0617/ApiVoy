@@ -335,10 +335,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let engine_cancel = Arc::clone(&engine);
             let cancel_id = id;
             tokio::spawn(async move {
-                if tokio::signal::ctrl_c().await.is_ok() {
-                    if engine_cancel.cancel(&cancel_id) {
-                        eprintln!("cancelled execution {}", cancel_id.0);
-                    }
+                if tokio::signal::ctrl_c().await.is_ok() && engine_cancel.cancel(&cancel_id) {
+                    eprintln!("cancelled execution {}", cancel_id.0);
                 }
             });
 
@@ -463,8 +461,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .0,
                     )
                 });
-                if fail_fast && tasks.len() > 0 { /* scheduling remains bounded by semaphore; stop is applied while collecting */
-                }
             }
             let mut cases = Vec::new();
             while let Some(result) = tasks.join_next().await {

@@ -992,10 +992,7 @@ async fn relay_tcp_session(socket: WebSocket, target: String) {
     };
     let from_tcp = async {
         let mut buffer = vec![0u8; 16 * 1024];
-        loop {
-            let Ok(size) = tcp_read.read(&mut buffer).await else {
-                break;
-            };
+        while let Ok(size) = tcp_read.read(&mut buffer).await {
             if size == 0 {
                 break;
             }
@@ -1644,7 +1641,7 @@ async fn start_execution(
 
     let (sse_tx, sse_rx) = mpsc::channel::<ExecutionEvent>(256);
     let store = state.store.clone();
-    let execution_id = id.clone();
+    let execution_id = id;
     let execution_environment_id = env_id.clone();
     tokio::spawn(async move {
         let mut preview = None;

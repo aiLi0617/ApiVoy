@@ -22,14 +22,17 @@ pub struct SseDriver {
 impl SseDriver {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap_or_else(|_| Client::new()),
         }
     }
 }
 
-fn raw_options(
-    payload: &ProtocolPayload,
-) -> Result<(Vec<(String, String)>, Option<String>, u32, u64), DriverError> {
+type RawSseOptions = (Vec<(String, String)>, Option<String>, u32, u64);
+
+fn raw_options(payload: &ProtocolPayload) -> Result<RawSseOptions, DriverError> {
     let ProtocolPayload::Sse(value) = payload else {
         return Err(DriverError::Validation(
             "SSE payload must be a raw object".into(),

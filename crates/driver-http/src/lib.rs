@@ -36,6 +36,7 @@ impl HttpDriver {
         let client = Client::builder()
             .user_agent(concat!("ApiVoy/", env!("CARGO_PKG_VERSION")))
             .cookie_provider(Arc::clone(&cookie_jar))
+            .no_proxy()
             .build()
             .unwrap_or_else(|_| Client::new());
         Self { client, cookie_jar }
@@ -82,6 +83,7 @@ impl HttpDriver {
         let mut builder = Client::builder()
             .user_agent(concat!("ApiVoy/", env!("CARGO_PKG_VERSION")))
             .cookie_provider(Arc::clone(&self.cookie_jar))
+            .no_proxy()
             .danger_accept_invalid_certs(!request.tls.verify)
             .redirect(if follow_redirects {
                 Policy::limited(10)
