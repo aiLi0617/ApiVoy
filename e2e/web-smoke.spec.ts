@@ -60,3 +60,13 @@ test("all protocol workbenches keep semantic frame and viewport bounds", async (
     expect(overflow, `${id} horizontal overflow`).toBeLessThanOrEqual(1);
   }
 });
+test("all protocol workbenches keep light theme bounds", async ({ page }) => {
+  await page.getByRole("button", { name: "切换主题" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  const ids = ["http", "graphql", "grpc", "rpc", "websocket", "sse", "socket", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "gateway", "capture", "plugins", "ai", "team", "comments", "sso"];
+  for (const id of ids) {
+    await page.goto(`/#workbench=${id}`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `${id} light horizontal overflow`).toBeLessThanOrEqual(1);
+  }
+});
