@@ -50,3 +50,13 @@ test("HTTP target URL exposes accessible help text", async ({ page }) => {
   await expect(page.locator("label.http-target-field")).toContainText("目标 URL");
   await expect(page.locator("#http-target-url-help")).toBeVisible();
 });
+test("all protocol workbenches keep semantic frame and viewport bounds", async ({ page }) => {
+  const ids = ["http", "graphql", "grpc", "rpc", "websocket", "sse", "socket", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "gateway", "capture", "plugins", "ai", "team", "comments", "sso"];
+  for (const id of ids) {
+    await page.goto(`/#workbench=${id}`);
+    await expect(page.locator(".workbench-frame").first()).toBeVisible();
+    await expect(page.locator(".workbench-frame h1").first()).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `${id} horizontal overflow`).toBeLessThanOrEqual(1);
+  }
+});
