@@ -28,5 +28,5 @@ export function VirtualList<T>({ items, itemHeight, height = 360, overscan = 5, 
   const windowStyle = { position: "absolute", insetInline: 0, top: start * itemHeight } satisfies CSSProperties;
   function onScroll(event: UIEvent<HTMLDivElement>) { setScrollTop(event.currentTarget.scrollTop); }
   if (items.length === 0) return <>{empty}</>;
-  return <div className={`virtual-list ${className ?? ""}`} style={{ height }} onScroll={onScroll} role="list" aria-label={ariaLabel} tabIndex={0}><div style={spacerStyle}><div style={windowStyle}>{visible.map((item, offset) => <div role="listitem" className="virtual-list-item" style={{ height: itemHeight }} key={getKey(item, start + offset)}>{renderItem(item, start + offset)}</div>)}</div></div></div>;
+  return <div className={`virtual-list ${className ?? ""}`} style={{ height }} onScroll={onScroll} role="list" aria-label={ariaLabel} tabIndex={0}><div style={spacerStyle}><div style={windowStyle}>{visible.map((item, offset) => { const index = start + offset; return <div role="listitem" aria-setsize={items.length} aria-posinset={index + 1} className="virtual-list-item" style={{ height: itemHeight }} key={getKey(item, index)}>{renderItem(item, index)}</div>; })}</div></div></div>;
 }
