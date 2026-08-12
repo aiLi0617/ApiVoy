@@ -12,6 +12,7 @@ import type {
 import { CodeGenerator } from "./CodeGenerator";
 import { CodeEditor } from "./CodeEditor";
 import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
+import { VirtualList } from "./VirtualList";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
@@ -1117,9 +1118,14 @@ export function HttpWorkbench({
           {history.length === 0 ? (
             <div style={styles.muted}>暂无历史；发送请求后会出现在这里。</div>
           ) : (
-            <ul style={styles.historyList}>
-              {history.map((item) => (
-                <li key={item.id} style={styles.historyItem}>
+            <VirtualList
+              items={history}
+              itemHeight={48}
+              height={Math.min(360, Math.max(96, history.length * 48))}
+              ariaLabel="执行历史"
+              getKey={(item) => item.id}
+              renderItem={(item) => (
+                <div style={styles.historyItem}>
                   <label style={styles.compareCheck}>
                     <input
                       type="checkbox"
@@ -1141,9 +1147,9 @@ export function HttpWorkbench({
                       重放
                     </button>
                   )}
-                </li>
-              ))}
-            </ul>
+                </div>
+              )}
+            />
           )}
           {compareIds.length === 2 && (
             <div style={styles.compareBox}>

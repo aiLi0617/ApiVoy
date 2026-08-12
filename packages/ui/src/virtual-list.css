@@ -1,0 +1,3 @@
+.virtual-list { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.virtual-list-item { min-width: 0; contain: layout paint style; }
+.virtual-list:focus-visible { outline: 2px solid var(--apivoy-accent); outline-offset: -2px; }

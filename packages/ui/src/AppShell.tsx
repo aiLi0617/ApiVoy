@@ -1,15 +1,54 @@
-﻿import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { useAppStore } from "./appStore";
 import { DEFAULT_WORKBENCH_GROUPS, WORKBENCH_LABELS } from "./WorkbenchDeck";
 import { useI18n } from "./i18n";
+import { FeedbackProvider } from "./Feedback";
+
 export interface AppShellProps { title?: string; channelLabel: string; children: ReactNode; explorer?: ReactNode; status?: ReactNode }
+
 export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, status }: AppShellProps) {
- const { locale, setLocale, t } = useI18n(); const mainRef=useRef<HTMLElement>(null); const [paletteOpen,setPaletteOpen]=useState(false); const [search,setSearch]=useState("");
- const themeMode=useAppStore(s=>s.themeMode); const setThemeMode=useAppStore(s=>s.setThemeMode); const collapsedExplorer=useAppStore(s=>s.collapsedExplorer); const toggleExplorer=useAppStore(s=>s.toggleExplorer);
- useEffect(()=>{const root=document.documentElement;const media=window.matchMedia("(prefers-color-scheme: dark)");const apply=()=>root.dataset.theme=themeMode==="system"?(media.matches?"dark":"light"):themeMode;apply();media.addEventListener("change",apply);return()=>media.removeEventListener("change",apply)},[themeMode]);
- useEffect(()=>{const handler=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="k"){event.preventDefault();setPaletteOpen(v=>!v)}if(event.key==="Escape")setPaletteOpen(false)};window.addEventListener("keydown",handler);return()=>window.removeEventListener("keydown",handler)},[]);
- const commands=DEFAULT_WORKBENCH_GROUPS.flatMap(group=>group.workbenchIds.map(id=>({id,group:group.label,label:WORKBENCH_LABELS[id]??id}))).filter(item=>`${item.label} ${item.group}`.toLowerCase().includes(search.toLowerCase()));
- const cycleTheme=()=>setThemeMode(themeMode==="dark"?"light":themeMode==="light"?"system":"dark");
- return <div className="apivoy-shell"><a className="skip-link" href="#apivoy-main">跳到主工作区</a><header className="app-header"><div className="brand-lockup"><span className="brand-mark" aria-hidden="true">A</span><div><strong>{title}</strong><span>{t("app.tagline")}</span></div></div><div className="header-context"><span className="connection-status"><span className="status-dot"/>连接正常</span><span className="channel-label">{channelLabel}</span>{status}</div><div className="header-actions"><button className="ui-icon-button" aria-label="切换资源管理器" title="资源管理器" onClick={toggleExplorer}><Icon name="folder"/></button><button className="command-trigger" onClick={()=>setPaletteOpen(true)}><Icon name="search"/><span>搜索与命令</span><kbd>⌘ K</kbd></button><button className="ui-icon-button" aria-label="切换主题" title={`主题：${themeMode}`} onClick={cycleTheme}><Icon name={themeMode==="light"?"sun":"moon"}/></button><select className="locale-select" aria-label={t("locale.label")} value={locale} onChange={event=>setLocale(event.target.value as typeof locale)}><option value="zh-CN">中</option><option value="en-US">EN</option></select></div></header><div className={`app-workspace ${collapsedExplorer?"explorer-collapsed":""}`}>{explorer?<aside className="resource-explorer" aria-label="资源管理器">{explorer}</aside>:null}<main ref={mainRef} id="apivoy-main" tabIndex={-1} className="app-main">{children}</main></div>{paletteOpen?<div className="command-overlay" role="presentation" onMouseDown={()=>setPaletteOpen(false)}><div className="command-palette" role="dialog" aria-modal="true" aria-label="命令面板" onMouseDown={event=>event.stopPropagation()}><div className="command-input-wrap"><Icon name="search"/><input autoFocus value={search} onChange={event=>setSearch(event.target.value)} placeholder="搜索协议或工作区…" aria-label="搜索命令"/></div><div className="command-group-label">工作区</div>{commands.map(command=><button key={command.id} onClick={()=>{window.dispatchEvent(new CustomEvent("apivoy-select-workbench",{detail:command.id}));setPaletteOpen(false)}}><span><Icon name="bolt"/>{command.label}</span><kbd>Enter</kbd></button>)}{commands.length===0?<div className="command-empty">没有匹配的命令</div>:null}</div></div>:null}</div>;
+  const { locale, setLocale, t } = useI18n();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const themeMode = useAppStore((state) => state.themeMode);
+  const setThemeMode = useAppStore((state) => state.setThemeMode);
+  const collapsedExplorer = useAppStore((state) => state.collapsedExplorer);
+  const toggleExplorer = useAppStore((state) => state.toggleExplorer);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => { root.dataset.theme = themeMode === "system" ? (systemDark.matches ? "dark" : "light") : themeMode; };
+    apply(); systemDark.addEventListener("change", apply); return () => systemDark.removeEventListener("change", apply);
+  }, [themeMode]);
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen((value) => !value); }
+      if (event.key === "Escape") setPaletteOpen(false);
+    };
+    window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  const commands = DEFAULT_WORKBENCH_GROUPS.flatMap((group) => group.workbenchIds.map((id) => ({ id, group: group.label, label: WORKBENCH_LABELS[id] ?? id }))).filter((item) => `${item.label} ${item.group}`.toLowerCase().includes(search.toLowerCase()));
+  const cycleTheme = () => setThemeMode(themeMode === "dark" ? "light" : themeMode === "light" ? "system" : "dark");
+
+  return <FeedbackProvider><div className="apivoy-shell">
+    <a className="skip-link" href="#apivoy-main">跳到主工作区</a>
+    <header className="app-header">
+      <div className="brand-lockup"><span className="brand-mark" aria-hidden="true">A</span><div><strong>{title}</strong><span>{t("app.tagline")}</span></div></div>
+      <div className="header-context"><span className="connection-status"><span className="status-dot"/>连接正常</span><span className="channel-label">{channelLabel}</span>{status}</div>
+      <div className="header-actions">
+        <button className="ui-icon-button" aria-label="切换资源管理器" title="资源管理器" onClick={toggleExplorer}><Icon name="folder"/></button>
+        <button className="command-trigger" onClick={() => setPaletteOpen(true)}><Icon name="search"/><span>搜索与命令</span><kbd>⌘ K</kbd></button>
+        <button className="ui-icon-button" aria-label="切换主题" title={`主题：${themeMode}`} onClick={cycleTheme}><Icon name={themeMode === "light" ? "sun" : "moon"}/></button>
+        <select className="locale-select" aria-label={t("locale.label")} value={locale} onChange={(event) => setLocale(event.target.value as typeof locale)}><option value="zh-CN">中</option><option value="en-US">EN</option></select>
+      </div>
+    </header>
+    <div className={`app-workspace ${collapsedExplorer ? "explorer-collapsed" : ""}`}>
+      {explorer ? <aside className="resource-explorer" aria-label="资源管理器">{explorer}</aside> : null}
+      <main id="apivoy-main" tabIndex={-1} className="app-main">{children}</main>
+    </div>
+    {paletteOpen ? <div className="command-overlay" role="presentation" onMouseDown={() => setPaletteOpen(false)}><div className="command-palette" role="dialog" aria-modal="true" aria-label="命令面板" onMouseDown={(event) => event.stopPropagation()}><div className="command-input-wrap"><Icon name="search"/><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索协议或工作区…" aria-label="搜索命令"/></div><div className="command-group-label">工作区</div>{commands.map((command) => <button key={command.id} onClick={() => { window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: command.id })); setPaletteOpen(false); }}><span><Icon name="bolt"/>{command.label}</span><kbd>Enter</kbd></button>)}{commands.length === 0 ? <div className="command-empty">没有匹配的命令</div> : null}</div></div> : null}
+  </div></FeedbackProvider>;
 }

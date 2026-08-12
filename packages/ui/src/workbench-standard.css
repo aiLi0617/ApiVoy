@@ -1,0 +1,22 @@
+.standardized-workbench { min-height: 100%; padding: 10px; overflow: auto; }
+.standardized-workbench > section { min-height: 100%; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; }
+.standardized-workbench > section > header:first-child { display: none !important; }
+.standardized-workbench h2:first-child { margin-top: 0 !important; font-size: 15px !important; }
+.standardized-workbench details { border-color: var(--apivoy-border) !important; background: var(--apivoy-bg-elevated) !important; }
+.standardized-workbench [style*="linear-gradient"], .standardized-workbench [style*="radial-gradient"] { background-image: none !important; }
+.standardized-workbench [style*="border-radius: 18"], .standardized-workbench [style*="border-radius:18"] { border-radius: 7px !important; }
+.standardized-workbench pre { border: 1px solid var(--apivoy-border); }
+.standardized-workbench table { width: 100%; border-collapse: collapse; }
+.standardized-workbench th, .standardized-workbench td { padding: 7px 9px; border-bottom: 1px solid var(--apivoy-border); text-align: left; }
+.standardized-workbench button:not(:disabled):hover { border-color: var(--apivoy-border-strong) !important; filter: brightness(1.08); }
+.layout-request > section > div:last-of-type,
+.layout-stream > section > div:last-of-type,
+.layout-editor > section > div:last-of-type { min-width: 0; }
+.layout-stream pre { min-height: 220px; max-height: calc(100vh - 310px) !important; overflow: auto; }
+.layout-stream [style*="grid-template-columns"] { align-items: stretch; }
+.layout-editor textarea { font-family: var(--apivoy-mono) !important; line-height: 1.55 !important; }
+.layout-editor pre { min-height: 260px; max-height: calc(100vh - 300px) !important; overflow: auto; }
+.layout-management > section { display: grid !important; align-content: start; gap: 10px !important; }
+.layout-management > section > div { border-color: var(--apivoy-border) !important; background-color: var(--apivoy-bg-elevated) !important; box-shadow: none !important; }
+.layout-management [style*="font-size: 28"], .layout-management [style*="font-size:28"] { font-size: 18px !important; }
+@media (max-width: 768px) { .standardized-workbench { padding: 8px; } .standardized-workbench > section > div { max-width: 100%; } }

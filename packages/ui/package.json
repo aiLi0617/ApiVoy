@@ -12,7 +12,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx src/ProtocolCodeGenerator.test.ts && tsx src/WorkbenchDeck.test.ts"
+    "test": "tsx src/ProtocolCodeGenerator.test.ts && tsx src/WorkbenchDeck.test.ts && tsx src/VirtualList.test.ts"
   },
   "dependencies": {
     "@apivoy/import-export": "workspace:*",

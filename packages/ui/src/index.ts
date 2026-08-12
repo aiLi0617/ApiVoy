@@ -1,7 +1,9 @@
 export { AppShell, type AppShellProps } from "./AppShell";
 export { WorkbenchFrame, SplitPane, type WorkbenchFrameProps, type SplitPaneProps } from "./WorkbenchFrame";
 export { Icon, type IconName } from "./Icons";
+export { FeedbackProvider, useFeedback, EmptyState, LoadingState } from "./Feedback";
 export { useAppStore, type ThemeMode, type WorkbenchLayoutPreference, type SplitPanePreference } from "./appStore";
+export { VirtualList, getVirtualRange, type VirtualListProps, type VirtualRange } from "./VirtualList";
 export { ApiVoyProviders } from "./ApiVoyProviders";
 export { WorkspaceExplorer, type WorkspaceTree, type WorkspaceExplorerProps } from "./WorkspaceExplorer";
 export { SseWorkbench, type SseWorkbenchProps, type SseWorkbenchRequest } from "./SseWorkbench";

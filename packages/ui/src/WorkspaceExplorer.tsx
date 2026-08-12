@@ -1,5 +1,6 @@
 import { exportApiVoyProject, importDocument, type PortableRequest } from "@apivoy/import-export";
 import { useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { useFeedback } from "./Feedback";
 
 export interface WorkspaceRecord { id: string; name: string; rootPath?: string | null; archived?: boolean; updatedAt?: string }
 export interface ProjectRecord { id: string; workspaceId: string; name: string }
@@ -41,13 +42,14 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const [batchTarget, setBatchTarget] = useState("");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
+  const { notify, confirm } = useFeedback();
 
   async function importFiles(files?: FileList | null) {
     if (!files?.length) return;
     const selected = [...files];
     const file = selected[0];
     const collection = tree?.collections.find((item) => item.id === props.selectedCollectionId);
-    if (!collection) return window.alert("请先选择一个目标集合");
+    if (!collection) { notify("请先选择一个目标集合", "warning"); return; }
     try {
       const dependencyEntries = await Promise.all(selected.slice(1).map(async (dependency) => {
         const text = await dependency.text();
@@ -58,8 +60,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
         documents: Object.fromEntries(dependencyEntries.flat()),
       });
       await props.onImportRequests(collection.projectId, collection.id, result.requests);
-      window.alert(`已从 ${result.source} 导入 ${result.requests.length} 个请求${result.warnings.length ? `\n${result.warnings.join("\n")}` : ""}`);
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+      notify(`已从 ${result.source} 导入 ${result.requests.length} 个请求${result.warnings.length ? `\\n${result.warnings.join("\\n")}` : ""}`, "success");
+    } catch (error) { notify(error instanceof Error ? error.message : String(error), "danger"); }
     if (importInput.current) importInput.current.value = "";
   }
 
@@ -69,12 +71,12 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       let content: string;
       try { content = exportApiVoyProject(project.name, requests); }
       catch (error) {
-        if (!window.confirm(`${error instanceof Error ? error.message : String(error)}\n仍然继续导出吗？`)) return;
+        if (!(await confirm({ title: "导出项目", description: `${error instanceof Error ? error.message : String(error)}\\n仍然继续导出吗？` }))) return;
         content = exportApiVoyProject(project.name, requests, true);
       }
       const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
       const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${project.name.replace(/[^\w\u4e00-\u9fff-]+/g, "-")}.apivoy.json`; anchor.click(); URL.revokeObjectURL(url);
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { notify(error instanceof Error ? error.message : String(error), "danger"); }
   }
 
   async function submit() {
@@ -121,7 +123,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
   async function batchDelete() {
-    if (!selectedIds.length || !window.confirm(`确定删除选中的 ${selectedIds.length} 个请求吗？`)) return;
+    if (!selectedIds.length || !(await confirm({ title: "删除请求", description: `确定删除选中的 ${selectedIds.length} 个请求吗？`, tone: "danger", confirmLabel: "删除" }))) return;
     for (const id of selectedIds) await props.onDeleteRequest(id);
     setSelectedIds([]);
   }
