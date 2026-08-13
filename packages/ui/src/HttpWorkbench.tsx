@@ -75,6 +75,32 @@ export interface HistoryFilter {
   requestId?: string;
 }
 
+interface HeaderRow {
+  id: string;
+  key: string;
+  value: string;
+}
+
+type BodyMode = "none" | "multipart" | "urlencoded" | "json" | "xml" | "text" | "graphql";
+
+const BODY_MODES: Array<{ id: BodyMode; label: string; contentType?: string }> = [
+  { id: "none", label: "none" },
+  { id: "multipart", label: "form-data" },
+  { id: "urlencoded", label: "x-www-form-urlencoded", contentType: "application/x-www-form-urlencoded" },
+  { id: "json", label: "JSON", contentType: "application/json" },
+  { id: "xml", label: "XML", contentType: "application/xml" },
+  { id: "text", label: "Text", contentType: "text/plain" },
+  { id: "graphql", label: "GraphQL", contentType: "application/graphql" },
+];
+
+function createHeaderRow(key = "", value = ""): HeaderRow {
+  return { id: crypto.randomUUID(), key, value };
+}
+
+function headerRowsFromPairs(headers: Array<[string, string]>): HeaderRow[] {
+  return [...headers.map(([key, value]) => createHeaderRow(key, value)), createHeaderRow()];
+}
+
 export interface HttpWorkbenchProps {
   onSend: (request: HttpWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>;
   onCancel?: (executionId: string) => Promise<void>;
@@ -317,10 +343,11 @@ export function HttpWorkbench({
 }: HttpWorkbenchProps) {
   const [method, setMethod] = useState<string>("GET");
   const [url, setUrl] = useState("https://{{host}}");
-  const [headersText, setHeadersText] = useState("Accept: application/json");
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createHeaderRow("Accept", "application/json"), createHeaderRow()]);
   const [body, setBody] = useState("");
-  const [bodyMode, setBodyMode] = useState<"raw" | "multipart">("raw");
+  const [bodyMode, setBodyMode] = useState<BodyMode>("none");
   const [multipart, setMultipart] = useState<MultipartPart[]>([]);
+  const [formRows, setFormRows] = useState<HeaderRow[]>(() => [createHeaderRow()]);
   const [timeoutMs, setTimeoutMs] = useState(30_000);
   const [followRedirects, setFollowRedirects] = useState(true);
   const [retryMax, setRetryMax] = useState(0);
@@ -379,23 +406,19 @@ export function HttpWorkbench({
   const responseWindow = responsePreview.slice(responseOffset, responseOffset + 10000);
 
   function buildRequest(): HttpWorkbenchRequest {
-    const headers = headersText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const idx = line.indexOf(":");
-        if (idx <= 0) {
-          throw new Error(`Header 格式错误：${line}`);
-        }
-        return [line.slice(0, idx).trim(), line.slice(idx + 1).trim()] as [string, string];
-      });
+    const headers = headerRows
+      .filter((row) => row.key.trim())
+      .map((row) => [row.key.trim(), row.value.trim()] as [string, string]);
 
     return {
       url: url.trim(),
       method,
       headers,
-      body: method === "GET" || method === "HEAD" ? undefined : body,
+      body: method === "GET" || method === "HEAD" || bodyMode === "none" || bodyMode === "multipart"
+        ? undefined
+        : bodyMode === "urlencoded"
+          ? new URLSearchParams(formRows.filter((row) => row.key.trim()).map((row) => [row.key, row.value])).toString()
+          : body,
       multipart: bodyMode === "multipart" ? multipart.filter((part) => part.name.trim()) : [],
       timeoutMs,
       variables: parseKv(variablesText),
@@ -417,7 +440,7 @@ export function HttpWorkbench({
       const parsed = parseCurl(curlText);
       if (parsed.method) setMethod(parsed.method);
       if (parsed.url) setUrl(parsed.url);
-      if (parsed.headers) setHeadersText(parsed.headers.map(([k, v]) => `${k}: ${v}`).join("\n"));
+      if (parsed.headers) setHeaderRows(headerRowsFromPairs(parsed.headers));
       if (parsed.body !== undefined) setBody(parsed.body);
       setShowCurlImport(false);
       setStatusMsg("已从 cURL 导入请求");
@@ -470,10 +493,20 @@ export function HttpWorkbench({
   function applyRequest(loaded: HttpWorkbenchRequest) {
     setMethod(loaded.method);
     setUrl(loaded.url);
-    setHeadersText(loaded.headers.map(([k, v]) => `${k}: ${v}`).join("\n"));
+    setHeaderRows(headerRowsFromPairs(loaded.headers));
+    const contentType = loaded.headers.find(([key]) => key.toLowerCase() === "content-type")?.[1].toLowerCase() ?? "";
+    const nextBodyMode: BodyMode = loaded.multipart?.length ? "multipart"
+      : contentType.includes("x-www-form-urlencoded") ? "urlencoded"
+      : contentType.includes("graphql") ? "graphql"
+      : contentType.includes("json") ? "json"
+      : contentType.includes("xml") ? "xml"
+      : loaded.body ? "text" : "none";
     setBody(loaded.body ?? "");
     setMultipart(loaded.multipart ?? []);
-    setBodyMode(loaded.multipart?.length ? "multipart" : "raw");
+    setBodyMode(nextBodyMode);
+    setFormRows(nextBodyMode === "urlencoded"
+      ? headerRowsFromPairs(Array.from(new URLSearchParams(loaded.body ?? "").entries()))
+      : [createHeaderRow()]);
     setTimeoutMs(loaded.timeoutMs);
     setFollowRedirects(loaded.followRedirects ?? true);
     setRetryMax(loaded.retryMax ?? 0);
@@ -501,6 +534,18 @@ export function HttpWorkbench({
     } else {
       setAuthKind("none");
     }
+  }
+
+  function selectBodyMode(nextMode: BodyMode) {
+    const contentType = BODY_MODES.find((mode) => mode.id === nextMode)?.contentType;
+    setBodyMode(nextMode);
+    setHeaderRows((rows) => {
+      const withoutContentType = rows.filter((row) => row.key.toLowerCase() !== "content-type");
+      const contentRows = contentType ? [createHeaderRow("Content-Type", contentType), ...withoutContentType] : withoutContentType;
+      return contentRows.length && !contentRows[contentRows.length - 1].key && !contentRows[contentRows.length - 1].value
+        ? contentRows
+        : [...contentRows, createHeaderRow()];
+    });
   }
 
   useEffect(() => {
@@ -551,13 +596,13 @@ export function HttpWorkbench({
     setStatusMsg("授权页面已打开；完成授权后粘贴回调中的 code");
   }
 
-  async function handleSend() {
+  async function handleSend(responseView: "body" | "timeline" = "body") {
     setLoading(true);
     setResult(null);
     setLivePreview("");
     setTimeline([]);
     setResponseOffset(0);
-    setResponseTab("body");
+    setResponseTab(responseView);
     setExecutionId(null);
     setStatusMsg(null);
     try {
@@ -786,8 +831,9 @@ export function HttpWorkbench({
   return (
     <WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪 · Ctrl + Enter 发送</span>}>
       <SplitPane id="http-workbench" direction="vertical" primaryLabel="请求配置" secondaryLabel="响应检查器" primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
-<div style={styles.row}>
+<div className="http-request-commandbar"><div className="http-request-primary-actions">
         <select
+          aria-label="HTTP 方法"
           style={styles.select}
           value={method}
           onChange={(e) => setMethod(e.target.value)}
@@ -800,9 +846,13 @@ export function HttpWorkbench({
           ))}
         </select>
         <label className="http-target-field">目标 URL<input id="http-target-url" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://{{host}}/api" spellCheck={false} disabled={loading} aria-describedby="http-target-url-help" aria-invalid={!url.trim()} /><small id="http-target-url-help">支持环境变量，例如 https://&#123;&#123;host&#125;&#125;/api</small></label>
-        <button style={styles.button} disabled={loading || !url.trim()} onClick={handleSend}>
-          {loading ? "发送中…" : "发送"}
+        <button className="http-send-button" style={styles.button} disabled={loading || !url.trim()} onClick={() => void handleSend("body")}>
+          <Icon name="send"/>{loading ? "发送中…" : "发送"}
         </button>
+        <button className="http-debug-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => void handleSend("timeline")} title="发送请求并打开时间线诊断">
+          <Icon name="activity"/>调试
+        </button>
+        {onSave && <button className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}><Icon name="archive"/>保存</button>}
         {onCancel && (
           <button
             style={styles.secondaryButton}
@@ -812,6 +862,9 @@ export function HttpWorkbench({
             取消
           </button>
         )}
+        <span style={styles.shortcut}>Ctrl ↵</span>
+      </div><div className="http-request-utility-actions" aria-label="请求文件与代码工具">
+        {onLoad && <button style={styles.secondaryButton} disabled={loading} onClick={handleLoad}><Icon name="activity"/>打开最近保存</button>}
         <button style={styles.secondaryButton} disabled={loading} onClick={() => setShowCurlImport((v) => !v)}>
           导入 cURL
         </button>
@@ -821,13 +874,12 @@ export function HttpWorkbench({
         <button style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => { try { setCodeRequest(buildRequest()); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } }}>
           生成代码
         </button>
-        <span style={styles.shortcut}>Ctrl ↵</span>
-      </div>
+      </div></div>
 
       {showCurlImport && (
         <div style={styles.importPanel}>
           <div style={styles.panelTitle}><strong>从 cURL 导入</strong><span>支持 method、header 和 request body</span></div>
-          <textarea style={{ ...styles.textarea, minHeight: 110 }} value={curlText} onChange={(e) => setCurlText(e.target.value)} placeholder="curl -X POST 'https://api.example.com' -H 'Content-Type: application/json' --data-raw '{...}'" spellCheck={false} />
+          <textarea aria-label="导入 cURL 命令" style={{ ...styles.textarea, minHeight: 110 }} value={curlText} onChange={(e) => setCurlText(e.target.value)} placeholder="curl -X POST 'https://api.example.com' -H 'Content-Type: application/json' --data-raw '{...}'" spellCheck={false} />
           <div style={styles.row}><button style={styles.button} onClick={handleImportCurl}>导入请求</button><button style={styles.secondaryButton} onClick={() => setShowCurlImport(false)}>取消</button></div>
         </div>
       )}
@@ -836,7 +888,7 @@ export function HttpWorkbench({
       {(() => {
         const cookieEnabled = Boolean(onListCookies && onSetCookie && onDeleteCookie);
         const requestTabs = [
-          { id: "headers" as const, label: "Headers", hint: headersText.split("\n").filter((line) => line.trim()).length || undefined },
+          { id: "headers" as const, label: "Headers", hint: headerRows.filter((row) => row.key.trim()).length || undefined },
           { id: "body" as const, label: "Body" },
           { id: "auth" as const, label: "认证", hint: authKind !== "none" ? authKind : undefined },
           { id: "cookies" as const, label: "Cookie", hint: cookieEnabled ? cookies.length || undefined : undefined },
@@ -853,28 +905,67 @@ export function HttpWorkbench({
             event.preventDefault();
             const current = requestTabs.findIndex((tab) => tab.id === activeTab);
             const next = event.key === "Home" ? 0 : event.key === "End" ? requestTabs.length - 1 : event.key === "ArrowRight" ? (current + 1) % requestTabs.length : (current - 1 + requestTabs.length) % requestTabs.length;
+            const tabsRoot = event.currentTarget;
             setRequestTab(requestTabs[next].id);
+            queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus());
           }}>
-            {requestTabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} id={`http-request-tab-${tab.id}`} aria-controls={`http-request-panel-${tab.id}`} style={activeTab === tab.id ? styles.tabActive : styles.tab} onClick={() => setRequestTab(tab.id)}>{tab.label}{tab.hint != null && tab.hint !== "" ? <span style={styles.count}>{tab.hint}</span> : null}</button>)}
+            {requestTabs.map((tab) => <button key={tab.id} type="button" role="tab" tabIndex={activeTab === tab.id ? 0 : -1} aria-selected={activeTab === tab.id} id={`http-request-tab-${tab.id}`} aria-controls={`http-request-panel-${tab.id}`} style={activeTab === tab.id ? styles.tabActive : styles.tab} onClick={() => setRequestTab(tab.id)}>{tab.label}{tab.hint != null && tab.hint !== "" ? <span aria-label={`${tab.hint} 项`} style={styles.count}>{tab.hint}</span> : null}</button>)}
           </div>
           <div className="http-request-tab-panel" role="tabpanel" id={`http-request-panel-${activeTab}`} aria-labelledby={`http-request-tab-${activeTab}`}>
-            {activeTab === "headers" && <label style={styles.label}>Headers（每行 `Name: Value`）<textarea style={styles.textarea} value={headersText} onChange={(e) => setHeadersText(e.target.value)} rows={8} spellCheck={false} disabled={loading} /></label>}
-            {activeTab === "body" && (showBody ? <div style={styles.label}>
-              <div style={styles.row}>
-                <strong>Body</strong>
-                <select style={styles.select} value={bodyMode} onChange={(event) => setBodyMode(event.target.value as "raw" | "multipart")} disabled={loading}>
-                  <option value="raw">Raw</option>
-                  <option value="multipart">Multipart form-data</option>
-                </select>
+            {activeTab === "headers" && <div className="http-kv-editor" aria-label="请求 Headers">
+              <div className="http-kv-header" aria-hidden="true"><span>Key</span><span>Value</span><span>操作</span></div>
+              {headerRows.map((row, index) => <div className="http-kv-row" key={row.id}>
+                <input aria-label={`Header ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setHeaderRows((rows) => {
+                  const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item);
+                  return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
+                })} placeholder="例如 Content-Type" spellCheck={false} disabled={loading} />
+                <input aria-label={`Header ${index + 1} Value`} style={styles.input} value={row.value} onChange={(event) => setHeaderRows((rows) => {
+                  const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item);
+                  return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
+                })} placeholder="例如 application/json" spellCheck={false} disabled={loading} />
+                <button type="button" className="http-kv-delete" aria-label={`删除 Header ${index + 1}`} title="删除此 Header" onClick={() => setHeaderRows((rows) => {
+                  const next = rows.filter((item) => item.id !== row.id);
+                  return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createHeaderRow()];
+                })} disabled={loading || (!row.key && !row.value && headerRows.length === 1)}><Icon name="trash"/></button>
+              </div>)}
+              <button type="button" className="http-kv-add" style={styles.secondaryButton} onClick={() => setHeaderRows((rows) => [...rows, createHeaderRow()])} disabled={loading}>＋ 添加 Header</button>
+              <small>在最后一行输入时会自动增加新行；留空的行不会随请求发送。</small>
+            </div>}
+            {activeTab === "body" && <div style={styles.label}>
+              <div className="http-body-mode-tabs" role="tablist" aria-label="请求体类型">
+                {BODY_MODES.map((mode) => <button key={mode.id} type="button" role="tab" aria-selected={bodyMode === mode.id} className={bodyMode === mode.id ? "is-active" : ""} onClick={() => selectBodyMode(mode.id)} disabled={loading}>{mode.label}</button>)}
+                <button type="button" disabled title="需要字节请求体支持">Binary</button>
+                <button type="button" disabled title="需要 MessagePack 字节编码支持">msgpack</button>
               </div>
-              {bodyMode === "raw" ? (
-                <CodeEditor value={body} onChange={setBody} language="json" height={220} readOnly={loading} />
-              ) : (
+              {bodyMode === "none" && <div className="http-body-empty">当前请求不发送 Body。选择上方类型开始编辑。</div>}
+              {bodyMode !== "none" && bodyMode !== "multipart" && bodyMode !== "urlencoded" && <>
+                <div className="http-body-editor-label">请求内容</div>
+                <CodeEditor value={body} onChange={setBody} language={bodyMode === "json" ? "json" : bodyMode === "xml" ? "xml" : bodyMode === "graphql" ? "graphql" : "plaintext"} height={260} readOnly={loading} />
+              </>}
+              {bodyMode === "urlencoded" && <div className="http-kv-editor http-form-editor" aria-label="URL 编码表单">
+                <div className="http-kv-header" aria-hidden="true"><span>Key</span><span>Value</span><span>操作</span></div>
+                {formRows.map((row, index) => <div className="http-kv-row" key={row.id}>
+                  <input aria-label={`表单字段 ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setFormRows((rows) => {
+                    const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item);
+                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
+                  })} placeholder="字段名" disabled={loading}/>
+                  <input aria-label={`表单字段 ${index + 1} Value`} style={styles.input} value={row.value} onChange={(event) => setFormRows((rows) => {
+                    const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item);
+                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
+                  })} placeholder="字段值" disabled={loading}/>
+                  <button type="button" className="http-kv-delete" aria-label={`删除表单字段 ${index + 1}`} onClick={() => setFormRows((rows) => {
+                    const next = rows.filter((item) => item.id !== row.id);
+                    return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createHeaderRow()];
+                  })} disabled={loading}><Icon name="trash"/></button>
+                </div>)}
+                <button type="button" className="http-kv-add" style={styles.secondaryButton} onClick={() => setFormRows((rows) => [...rows, createHeaderRow()])} disabled={loading}>＋ 添加字段</button>
+              </div>}
+              {bodyMode === "multipart" && (
                 <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
                   {multipart.map((part, index) => (
                     <div key={index} style={{ display: "grid", gridTemplateColumns: "minmax(100px,.7fr) minmax(140px,1fr) auto auto", gap: 8 }}>
-                      <input style={styles.input} value={part.name} onChange={(event) => updateMultipart(index, { name: event.target.value })} placeholder="字段名" disabled={loading} />
-                      {part.fileName ? <input style={styles.input} value={part.fileName} readOnly title={part.contentType ?? undefined} /> : <input style={styles.input} value={part.value} onChange={(event) => updateMultipart(index, { value: event.target.value, base64: false })} placeholder="文本值" disabled={loading} />}
+                      <input aria-label={`Multipart 字段 ${index + 1} 名称`} style={styles.input} value={part.name} onChange={(event) => updateMultipart(index, { name: event.target.value })} placeholder="字段名" disabled={loading} />
+                      {part.fileName ? <input aria-label={`Multipart 字段 ${index + 1} 文件名`} style={styles.input} value={part.fileName} readOnly title={part.contentType ?? undefined} /> : <input aria-label={`Multipart 字段 ${index + 1} 文本值`} style={styles.input} value={part.value} onChange={(event) => updateMultipart(index, { value: event.target.value, base64: false })} placeholder="文本值" disabled={loading} />}
                       <label style={styles.secondaryButton}>选择文件<input type="file" hidden onChange={(event) => void attachMultipartFile(index, event.target.files?.[0] ?? null)} disabled={loading} /></label>
                       <button style={styles.secondaryButton} onClick={() => setMultipart((parts) => parts.filter((_, partIndex) => partIndex !== index))} disabled={loading}>删除</button>
                     </div>
@@ -883,7 +974,8 @@ export function HttpWorkbench({
                   <small style={{ color: "var(--apivoy-muted)" }}>文件内容以 Base64 保存在请求中；发送时自动生成 multipart boundary。</small>
                 </div>
               )}
-            </div> : <div style={styles.muted}>{method} 请求通常不包含 Body。切换到 POST / PUT 等方法后可在此编辑。</div>)}
+              {!showBody && <small className="http-body-method-note">{method} 请求通常不发送 Body；这里仍保留输入内容，切换到 POST / PUT / PATCH 后可直接使用。</small>}
+            </div>}
             {activeTab === "auth" && <label style={styles.label}>
               认证
               <select style={styles.selectWide} value={authKind} onChange={(e) => setAuthKind(e.target.value as AuthKind)} disabled={loading}>
@@ -897,10 +989,10 @@ export function HttpWorkbench({
               {authKind !== "none" && (
                 <div style={styles.authFields}>
                   {(authKind === "basic" || authKind.startsWith("oauth2_")) && (
-                    <input style={styles.input} value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder={authKind.startsWith("oauth2_") ? "Client ID（支持 {{var}}）" : "Username（支持 {{var}}）"} spellCheck={false} disabled={loading} />
+                    <input aria-label={authKind.startsWith("oauth2_") ? "OAuth Client ID" : "认证用户名"} style={styles.input} value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder={authKind.startsWith("oauth2_") ? "Client ID（支持 {{var}}）" : "Username（支持 {{var}}）"} spellCheck={false} disabled={loading} />
                   )}
-                  <input style={styles.input} value={authSecretRef} onChange={(e) => setAuthSecretRef(e.target.value)} placeholder={authKind === "basic" ? "Password secret_ref 名称" : authKind === "oauth2_client_credentials" ? "Client Secret secret_ref 名称" : authKind === "api_key" ? "API Key secret_ref 名称" : "Token secret_ref 名称"} spellCheck={false} disabled={loading} />
-                  {authKind === "api_key" && <input style={styles.input} value={authHeaderName} onChange={(e) => setAuthHeaderName(e.target.value)} placeholder="Header 名（默认 X-Api-Key）" spellCheck={false} disabled={loading} />}
+                  <input aria-label="认证 Secret Ref" style={styles.input} value={authSecretRef} onChange={(e) => setAuthSecretRef(e.target.value)} placeholder={authKind === "basic" ? "Password secret_ref 名称" : authKind === "oauth2_client_credentials" ? "Client Secret secret_ref 名称" : authKind === "api_key" ? "API Key secret_ref 名称" : "Token secret_ref 名称"} spellCheck={false} disabled={loading} />
+                  {authKind === "api_key" && <input aria-label="API Key Header 名称" style={styles.input} value={authHeaderName} onChange={(e) => setAuthHeaderName(e.target.value)} placeholder="Header 名（默认 X-Api-Key）" spellCheck={false} disabled={loading} />}
                   {authKind.startsWith("oauth2_") && <>
                     <input style={styles.input} value={oauthTokenUrl} onChange={(event) => setOauthTokenUrl(event.target.value)} placeholder="Token Endpoint URL" spellCheck={false} disabled={loading} />
                     <input style={styles.input} value={oauthScope} onChange={(event) => setOauthScope(event.target.value)} placeholder="Scopes（空格分隔，可选）" spellCheck={false} disabled={loading} />
@@ -918,7 +1010,7 @@ export function HttpWorkbench({
             </label>}
             {activeTab === "cookies" && (cookieEnabled ? <div style={styles.importPanel}>
               <div style={styles.panelTitle}><strong>Cookie Jar</strong><button style={styles.secondaryButton} onClick={() => void refreshCookies()}>刷新当前 URL</button></div>
-              <div style={styles.row}><input style={styles.input} value={cookieName} onChange={(event) => setCookieName(event.target.value)} placeholder="Cookie 名称" /><input style={styles.input} value={cookieValue} onChange={(event) => setCookieValue(event.target.value)} placeholder="Cookie 值" /><button style={styles.secondaryButton} onClick={() => void handleSetCookie()}>设置</button></div>
+              <div style={styles.row}><input aria-label="Cookie 名称" style={styles.input} value={cookieName} onChange={(event) => setCookieName(event.target.value)} placeholder="Cookie 名称" /><input aria-label="Cookie 值" style={styles.input} value={cookieValue} onChange={(event) => setCookieValue(event.target.value)} placeholder="Cookie 值" /><button style={styles.secondaryButton} onClick={() => void handleSetCookie()}>设置</button></div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>{cookies.map((cookie) => <span key={cookie.name} style={{ border: "1px solid var(--apivoy-border)", borderRadius: 999, padding: "4px 8px", fontSize: 11 }}><code>{cookie.name}={cookie.value}</code> <button aria-label={`删除 Cookie ${cookie.name}`} onClick={async () => { await onDeleteCookie!(url, cookie.name); await refreshCookies(); }}><Icon name="trash" /></button></span>)}</div>
             </div> : <div style={styles.muted}>当前通道未接入 Cookie Jar。</div>)}
             {activeTab === "pre" && <label style={styles.label}>前置脚本（QuickJS）<CodeEditor value={preScript} onChange={setPreScript} language="javascript" height={240} readOnly={loading} /></label>}
@@ -939,8 +1031,8 @@ export function HttpWorkbench({
               {onPutSecret ? (
                 <label style={styles.label}>
                   密钥存储（写入 OS Keychain / Agent，不明文进 SQLite）
-                  <input style={styles.input} value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="secret 名称，如 apiToken" spellCheck={false} disabled={loading} />
-                  <input style={styles.input} type="password" value={secretValue} onChange={(e) => setSecretValue(e.target.value)} placeholder="密钥值（仅写入安全存储）" disabled={loading} />
+                  <input aria-label="Secret 名称" style={styles.input} value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="secret 名称，如 apiToken" spellCheck={false} disabled={loading} />
+                  <input aria-label="Secret 值" style={styles.input} type="password" value={secretValue} onChange={(e) => setSecretValue(e.target.value)} placeholder="密钥值（仅写入安全存储）" disabled={loading} />
                   <div style={styles.row}>
                     <button style={styles.secondaryButton} disabled={loading} onClick={handlePutSecret}>存入密钥</button>
                     {secretRefs.length > 0 && <span style={styles.muted}>已关联: {secretRefs.join(", ")}</span>}
@@ -961,21 +1053,6 @@ export function HttpWorkbench({
           </div>
         </div>;
       })()}
-
-      {(onSave || onLoad) && (
-        <div style={styles.row}>
-          {onSave && (
-            <button style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}>
-              保存请求
-            </button>
-          )}
-          {onLoad && (
-            <button style={styles.secondaryButton} disabled={loading} onClick={handleLoad}>
-              打开最近请求
-            </button>
-          )}
-        </div>
-      )}
 
       {onListHistory && (
         <div style={styles.history} id="http-execution-history">
@@ -1095,21 +1172,23 @@ export function HttpWorkbench({
                   const modes: Array<"pretty" | "raw" | "hex" | "table"> = ["pretty", "raw", "hex", ...(responseTable ? ["table" as const] : [])];
                   const current = modes.indexOf(responseView);
                   const next = event.key === "ArrowRight" ? (current + 1) % modes.length : (current - 1 + modes.length) % modes.length;
+                  const tabsRoot = event.currentTarget;
                   setResponseView(modes[next]);
+                  queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')[next]?.focus());
                 }}>
-                  <button role="tab" aria-selected={responseView === "pretty"} style={responseView === "pretty" ? styles.tabActive : styles.tab} onClick={() => setResponseView("pretty")}>美化</button>
-                  <button role="tab" aria-selected={responseView === "raw"} style={responseView === "raw" ? styles.tabActive : styles.tab} onClick={() => setResponseView("raw")}>原文</button>
-                  <button role="tab" aria-selected={responseView === "hex"} style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
-                  <button role="tab" aria-selected={responseView === "table"} style={responseView === "table" ? styles.tabActive : styles.tab} disabled={!responseTable} onClick={() => setResponseView("table")}>表格</button>
+                  <button role="tab" tabIndex={responseView === "pretty" ? 0 : -1} aria-selected={responseView === "pretty"} style={responseView === "pretty" ? styles.tabActive : styles.tab} onClick={() => setResponseView("pretty")}>美化</button>
+                  <button role="tab" tabIndex={responseView === "raw" ? 0 : -1} aria-selected={responseView === "raw"} style={responseView === "raw" ? styles.tabActive : styles.tab} onClick={() => setResponseView("raw")}>原文</button>
+                  <button role="tab" tabIndex={responseView === "hex" ? 0 : -1} aria-selected={responseView === "hex"} style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
+                  <button role="tab" tabIndex={responseView === "table" ? 0 : -1} aria-selected={responseView === "table"} style={responseView === "table" ? styles.tabActive : styles.tab} disabled={!responseTable} onClick={() => setResponseView("table")}>表格</button>
                   {result.preview && <button style={styles.linkButton} onClick={() => void copyText(responsePreview, "响应内容已复制")}>复制</button>}
                   {result.preview && <button style={styles.linkButton} onClick={downloadResponse}>下载</button>}
                 </div>
               </div>
-              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return; event.preventDefault(); const tabs = ["body", "headers", "assertions", "timeline"] as const; const current = tabs.indexOf(responseTab); const next = event.key === "ArrowRight" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length; setResponseTab(tabs[next]); }}>
-                <button role="tab" aria-selected={responseTab === "body"} style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>响应体</button>
-                <button role="tab" aria-selected={responseTab === "headers"} style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Headers <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
-                <button role="tab" aria-selected={responseTab === "assertions"} style={responseTab === "assertions" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("assertions")}>断言 <span style={styles.count}>{result.assertions?.length ?? 0}</span></button>
-                <button role="tab" aria-selected={responseTab === "timeline"} style={responseTab === "timeline" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("timeline")}>时间线 <span style={styles.count}>{timeline.length}</span></button>
+              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return; event.preventDefault(); const tabs = ["body", "headers", "assertions", "timeline"] as const; const current = tabs.indexOf(responseTab); const next = event.key === "ArrowRight" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length; const tabsRoot = event.currentTarget; setResponseTab(tabs[next]); queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()); }}>
+                <button role="tab" tabIndex={responseTab === "body" ? 0 : -1} aria-selected={responseTab === "body"} style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>响应体</button>
+                <button role="tab" tabIndex={responseTab === "headers" ? 0 : -1} aria-selected={responseTab === "headers"} style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Headers <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
+                <button role="tab" tabIndex={responseTab === "assertions" ? 0 : -1} aria-selected={responseTab === "assertions"} style={responseTab === "assertions" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("assertions")}>断言 <span style={styles.count}>{result.assertions?.length ?? 0}</span></button>
+                <button role="tab" tabIndex={responseTab === "timeline" ? 0 : -1} aria-selected={responseTab === "timeline"} style={responseTab === "timeline" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("timeline")}>时间线 <span style={styles.count}>{timeline.length}</span></button>
               </div>
               {responseTab === "assertions" && result.assertions && result.assertions.length > 0 && (
                 <ul style={styles.assertList}>

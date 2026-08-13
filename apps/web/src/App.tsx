@@ -48,15 +48,21 @@ import {
   clearCapturesViaAgent,
   runCollectionViaAgent,
 } from "./agentClient";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RequestEnvelope } from "@apivoy/request-model";
+import { getWorkspaceTreeAbortable } from "./workspaceTreeClient";
 
 
 export function App() {
+  const initialRoute = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const [tree, setTree] = useState<WorkspaceTree | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState("default-project");
-  const [selectedCollectionId, setSelectedCollectionId] = useState("default-collection");
-  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [treeLoading, setTreeLoading] = useState(true);
+  const [treeError, setTreeError] = useState<string | null>(null);
+  const refreshSequence = useRef(0);
+  const treeAbort = useRef<AbortController | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(initialRoute.get("project") ?? "default-project");
+  const [selectedCollectionId, setSelectedCollectionId] = useState(initialRoute.get("collection") ?? "default-collection");
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(initialRoute.get("request"));
   const rpcEnvelope=(request:RpcWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:request.protocol,name:request.name,target:request.url,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:request.protocol==="soap"?{version:request.soapVersion,action:request.action,envelope:request.envelope,headers:request.headers}:{method:request.rpcMethod,params:request.params,id:request.id,headers:request.headers}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const redisEnvelope=(request:RedisWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"redis",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{username:request.username,passwordRef:request.passwordRef,database:request.database,commands:request.commands}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const mqttEnvelope=(request:MqttWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"mqtt",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,clientId:request.clientId,username:request.username,passwordRef:request.passwordRef,cleanSession:request.cleanSession,keepAliveSeconds:request.keepAliveSeconds,topic:request.topic,payload:request.payload,encoding:request.encoding,qos:request.qos,retain:request.retain,receiveLimit:request.receiveLimit,caPemRef:request.caPemRef,serverName:request.serverName}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
@@ -65,13 +71,34 @@ export function App() {
   const sqlEnvelope=(request:SqlWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"sql",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{username:request.username,passwordRef:request.passwordRef,sql:request.sql,parameters:request.parameters,transactional:request.transactional,rowLimit:request.rowLimit}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const [externalRequest, setExternalRequest] = useState<HttpWorkbenchRequest | null>(null);
 
-  async function refreshTree() { setTree(await getWorkspaceTreeViaAgent()); }
-  useEffect(() => { void refreshTree().catch(() => setTree(null)); }, []);
+  async function refreshTree() {
+    const sequence = ++refreshSequence.current;
+    treeAbort.current?.abort("superseded");
+    const controller = new AbortController(); treeAbort.current = controller;
+    const timer = window.setTimeout(() => controller.abort("timeout"), 10000);
+    setTreeLoading(true); setTreeError(null);
+    try {
+      const nextTree = await getWorkspaceTreeAbortable(controller.signal);
+      if (sequence === refreshSequence.current) setTree(nextTree);
+    } catch (error) {
+      if (sequence !== refreshSequence.current) return;
+      const message = controller.signal.aborted && controller.signal.reason === "timeout" ? "连接 Local Agent 超时（10 秒）" : error instanceof Error ? error.message : String(error);
+      setTreeError(/401|unauthorized|session exchange/i.test(message) ? "Local Agent 在线，但尚未完成配对。请在设置中填写 Agent Token 后刷新页面。" : message);
+    } finally { window.clearTimeout(timer); if (sequence === refreshSequence.current) setTreeLoading(false); }
+  }
+  useEffect(() => { void refreshTree(); }, []);
+  useEffect(() => () => treeAbort.current?.abort("unmount"), []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    params.set("project", selectedProjectId); params.set("collection", selectedCollectionId);
+    if (selectedRequestId) params.set("request", selectedRequestId); else params.delete("request");
+    history.replaceState(null, "", `#${params}`);
+  }, [selectedProjectId, selectedCollectionId, selectedRequestId]);
 
   return (
     <AppShell
       channelLabel="Web → Local Agent"
-      connectionStatus={null}
+      connectionStatus={treeLoading ? { label: "正在连接 Local Agent", tone: "warn" } : treeError ? { label: "Local Agent 连接异常", tone: "off" } : { label: "Local Agent 已连接", tone: "ok" }}
       environment={{
         onLoad: getEnvironmentViaAgent,
         onSave: async (variables, secretRefs) => { await saveEnvironmentViaAgent(variables, secretRefs); },
@@ -81,7 +108,7 @@ export function App() {
         comments: <CommentsWorkbench contextCollectionId={selectedCollectionId} contextRequestId={selectedRequestId} contextLabel={selectedRequestId ? `请求 ${selectedRequestId}` : selectedCollectionId ? `集合 ${selectedCollectionId}` : null} />,
         sso: <SsoWorkbench />,
       }}
-      explorer={<WorkspaceExplorer tree={tree} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
+      explorer={<WorkspaceExplorer tree={tree} loading={treeLoading} error={treeError} onRetry={() => void refreshTree()} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
       onSelectCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
       onOpenRequest={async (id) => { setSelectedRequestId(id); const envelope = await loadEnvelopeViaAgent(id); if (envelope) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: envelope })); setExternalRequest(envelope?.payload.type === "http" ? await loadRequestViaAgent(id) : null); }}
       onCreateWorkspace={async (name) => { await createWorkspaceViaAgent(name); await refreshTree(); }}

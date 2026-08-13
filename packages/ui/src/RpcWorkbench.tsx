@@ -137,7 +137,7 @@ export function RpcWorkbench({ onSend, onSave, onCancel }: RpcWorkbenchProps) {
       </header>
       <div style={styles.target}>
         <input style={styles.name} value={name} onChange={(event) => setName(event.target.value)} />
-        <input style={styles.url} value={url} onChange={(event) => setUrl(event.target.value)} />
+        <input aria-label={protocol === "soap" ? "SOAP 服务地址" : "JSON-RPC 服务地址"} style={styles.url} value={url} onChange={(event) => setUrl(event.target.value)} />
         <button style={styles.send} disabled={loading} onClick={() => void send()}>{loading ? "发送中…" : "发送"}</button>
         {loading && onCancel && <button style={styles.stop} onClick={() => executionId && void onCancel(executionId)}>取消</button>}
       </div>

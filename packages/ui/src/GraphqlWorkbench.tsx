@@ -109,13 +109,13 @@ export function GraphqlWorkbench({ onSend, onCancel, onSave, externalRequest }: 
   }
 
   return <section style={styles.root}>
-    <div style={styles.title}>
+    <div className="legacy-workbench-hero" style={styles.title}>
       <div><small style={styles.eyebrow}>SCHEMA API</small><h2 style={styles.h2}>GraphQL</h2></div>
       <span style={styles.pill}>QUERY · MUTATION · SUBSCRIPTION</span>
     </div>
     <div style={styles.row}>
-      <input style={styles.url} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="GraphQL endpoint" />
-      <input style={styles.operation} value={operationName} onChange={(event) => setOperationName(event.target.value)} placeholder="operationName（可选）" />
+      <input aria-label="GraphQL Endpoint" style={styles.url} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="GraphQL endpoint" />
+      <input aria-label="GraphQL Operation Name" style={styles.operation} value={operationName} onChange={(event) => setOperationName(event.target.value)} placeholder="operationName（可选）" />
       <button style={styles.run} disabled={busy} onClick={() => void run()}>{busy ? "执行中…" : "执行"}</button>
       <button style={styles.secondary} disabled={busy} onClick={() => void introspect()}>读取 Schema</button>
       {onSave && <button style={styles.secondary} disabled={busy} onClick={() => { try { void onSave(currentRequest()); } catch { setOutput("Variables 必须是合法 JSON"); } }}>保存</button>}

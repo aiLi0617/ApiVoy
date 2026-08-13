@@ -1,4 +1,4 @@
-import { Children, useEffect, useState, type ReactNode } from "react";
+import { Children, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
 import { useAppStore } from "./appStore";
 import { translateWorkbench, useI18n } from "./i18n";
@@ -51,8 +51,10 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
   const toggleFavorite = useAppStore((state) => state.toggleFavorite); const collapsed = useAppStore((state) => state.collapsedNavigation); const toggleNavigation = useAppStore((state) => state.toggleNavigation);
   const selected = resolveWorkbenchId(tabs, hashWorkbench() ?? active); const selectedIndex = tabs.findIndex((tab) => tab.id === selected); const tabMap = new Map(tabs.map((tab) => [tab.id, tab]));
   const [codeOpen, setCodeOpen] = useState(false);
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
 
-  function activate(id: string, writeHash = true) { if (!tabMap.has(id)) return; setActive(id); if (writeHash && typeof window !== "undefined") history.pushState(null, "", `#workbench=${encodeURIComponent(id)}`); }
+  function activate(id: string, writeHash = true) { if (!tabMap.has(id)) return; setActive(id); if (writeHash && typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.set("workbench", id); history.pushState(null, "", `#${params}`); } }
   useEffect(() => {
     const openRequest = (event: Event) => {
       const detail = (event as CustomEvent).detail;
@@ -77,17 +79,49 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
   }, [tabs, setActive]);
   useEffect(() => { if (selected !== active) setActive(selected); }, [active, selected, setActive]);
   useEffect(() => { setCodeOpen(false); }, [selected]);
+  useEffect(() => {
+    const explicit: Record<string, string[]> = {
+      amqp: ["请求名称", "AMQP Broker 地址"], kafka: ["请求名称", "Kafka Broker 地址"], sql: ["请求名称", "数据库连接地址"],
+      capture: ["代理监听地址"], mqtt: ["请求名称", "MQTT Broker 地址"], redis: ["请求名称", "Redis 地址"],
+    };
+    const ensureNames = () => {
+      const panel = document.querySelector<HTMLElement>(`.workbench-content[data-workbench-label] .workbench-panel`);
+      if (!panel) return;
+      let unlabeledIndex = 0;
+      panel.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input, select, textarea").forEach((control) => {
+        if (control.type === "hidden" || control.closest("label") || control.hasAttribute("aria-label") || control.hasAttribute("aria-labelledby")) return;
+        const placeholder = "placeholder" in control ? control.placeholder.trim() : "";
+        const fallback = (explicit[selected]?.[unlabeledIndex] ?? placeholder) || `${translateWorkbench(selectedTab?.id ?? selected, selectedTab?.label ?? selected)} 字段 ${unlabeledIndex + 1}`;
+        control.setAttribute("aria-label", fallback); control.dataset.autoLabel = "true"; unlabeledIndex += 1;
+      });
+    };
+    queueMicrotask(ensureNames);
+    const target = document.querySelector(".workbench-content");
+    const observer = new MutationObserver(ensureNames); if (target) observer.observe(target, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [selected]);
 
+  const renderShortcut = (tab: WorkbenchTab) => (
+    <button className="protocol-shortcut" key={tab.id} type="button" aria-label={translateWorkbench(tab.id, tab.label)} onClick={() => activate(tab.id)}>
+      <Icon name={tab.icon ?? WORKBENCH_ICONS[tab.id] ?? "bolt"}/><span>{translateWorkbench(tab.id, tab.label)}</span>
+    </button>
+  );
   const renderTab = (tab: WorkbenchTab) => (
     <div className="protocol-item-wrap" key={tab.id}>
-      <button className="protocol-item" data-testid={`workbench-${tab.id}`} role="tab" aria-selected={tab.id === selected} title={collapsed ? translateWorkbench(tab.id, tab.label) : undefined} onClick={() => activate(tab.id)}>
+      <button ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id); }} className="protocol-item" data-testid={`workbench-${tab.id}`} role="tab" aria-selected={tab.id === selected} tabIndex={tab.id === selected ? 0 : -1} aria-label={translateWorkbench(tab.id, tab.label)} title={collapsed ? translateWorkbench(tab.id, tab.label) : undefined} onClick={() => activate(tab.id)}>
         <span className="protocol-glyph" aria-hidden="true"><Icon name={tab.icon ?? WORKBENCH_ICONS[tab.id] ?? "bolt"} /></span>
         <span className="protocol-label">{translateWorkbench(tab.id, tab.label)}</span>
       </button>
       <button className={`favorite-button ${favorites.includes(tab.id) ? "is-favorite" : ""}`} aria-label={favorites.includes(tab.id) ? t("workbench.unfavorite", { name: tab.label }) : t("workbench.favorite", { name: tab.label })} onClick={() => toggleFavorite(tab.id)}><Icon name="star"/></button>
     </div>
   );
-  const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
+  function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const current = Math.max(0, tabs.findIndex((tab) => tab.id === selected));
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : event.key === "ArrowDown" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
+    activate(tabs[next].id); queueMicrotask(() => tabRefs.current.get(tabs[next].id)?.focus());
+  }
   const favoriteTabs = favorites.map((id) => tabMap.get(id)).filter(Boolean) as WorkbenchTab[];
   const showCode = selectedTab && ["graphql", "grpc", "websocket", "sse", "socket", "http"].includes(selectedTab.id);
   const frameStatus = (
@@ -122,9 +156,9 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
           <span>{t("workbench.navigation")}</span>
           <button className="ui-icon-button compact" onClick={toggleNavigation} aria-label={t("workbench.navigation.toggle")}><Icon name={collapsed ? "chevron" : "menu"}/></button>
         </div>
-        <div className="protocol-list" role="tablist" aria-orientation="vertical">
-          {!collapsed && favoriteTabs.length ? <div className="protocol-group"><div className="protocol-group-title"><Icon name="star"/><span>{t("workbench.favorites")}</span></div>{favoriteTabs.map(renderTab)}</div> : null}
-          {!collapsed && recent.length ? <div className="protocol-group"><div className="protocol-group-title"><Icon name="activity"/><span>{t("workbench.recent")}</span></div>{recent.slice(0,3).map((id) => tabMap.get(id)).filter(Boolean).map((tab) => renderTab(tab!))}</div> : null}
+        {!collapsed && favoriteTabs.length ? <div className="protocol-shortcuts" aria-label={t("workbench.favorites")}><div className="protocol-group-title"><Icon name="star"/><span>{t("workbench.favorites")}</span></div>{favoriteTabs.map(renderShortcut)}</div> : null}
+        {!collapsed && recent.length ? <div className="protocol-shortcuts" aria-label={t("workbench.recent")}><div className="protocol-group-title"><Icon name="activity"/><span>{t("workbench.recent")}</span></div>{recent.slice(0,3).map((id) => tabMap.get(id)).filter(Boolean).map((tab) => renderShortcut(tab!))}</div> : null}
+        <div className="protocol-list" role="tablist" aria-orientation="vertical" onKeyDown={onTabKeyDown}>
           {DEFAULT_WORKBENCH_GROUPS.map((group) => {
             const groupTabs = group.workbenchIds.map((id) => tabMap.get(id)).filter(Boolean) as WorkbenchTab[];
             return groupTabs.length ? <div className="protocol-group" key={group.id}><div className="protocol-group-title"><Icon name={group.icon}/><span>{group.label}</span></div>{groupTabs.map(renderTab)}</div> : null;

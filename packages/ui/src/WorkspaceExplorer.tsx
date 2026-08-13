@@ -1,5 +1,5 @@
 import { exportApiVoyProject, importDocument, type PortableRequest } from "@apivoy/import-export";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useFeedback } from "./Feedback";
 import { Icon } from "./Icons";
@@ -13,6 +13,9 @@ export interface WorkspaceTree { workspaces: WorkspaceRecord[]; projects: Projec
 
 export interface WorkspaceExplorerProps {
   tree: WorkspaceTree | null;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   selectedCollectionId?: string | null;
   selectedRequestId?: string | null;
   onSelectCollection: (projectId: string, collectionId: string) => void;
@@ -53,6 +56,22 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const toggleExplorer = useAppStore((state) => state.toggleExplorer);
   const importInput = useRef<HTMLInputElement>(null);
   const { notify, confirm, prompt } = useFeedback();
+  function onTreeKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const root = event.currentTarget;
+    const items = Array.from(root.querySelectorAll<HTMLElement>('[role="treeitem"]')).filter((item) => item.offsetParent !== null);
+    if (!items.length) return;
+    const activeItem = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[role="treeitem"]');
+    const current = Math.max(0, activeItem ? items.indexOf(activeItem) : 0);
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      const chevron = items[current].querySelector<HTMLButtonElement>(".tree-chevron");
+      if (chevron && ((event.key === "ArrowLeft" && chevron.getAttribute("aria-expanded") === "true") || (event.key === "ArrowRight" && chevron.getAttribute("aria-expanded") === "false"))) { event.preventDefault(); chevron.click(); }
+      return;
+    }
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowDown" ? Math.min(items.length - 1, current + 1) : Math.max(0, current - 1);
+    (items[next].querySelector<HTMLElement>(".tree-main, .tree-chevron") ?? items[next]).focus();
+  }
 
   useEffect(() => {
     const openImport = () => importInput.current?.click();
@@ -162,7 +181,9 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   }
 
   const tree = props.tree;
-  if (!tree) return <div style={styles.empty}>正在加载工作区…</div>;
+  if (props.loading) return <div style={styles.empty} role="status" aria-live="polite">正在加载工作区…</div>;
+  if (props.error) return <div className="workspace-load-error" role="alert"><Icon name="archive"/><strong>无法加载工作区</strong><span>{props.error}</span><div><button type="button" className="ui-button primary" onClick={props.onRetry}>重试</button><button type="button" className="ui-button secondary" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-settings"))}>检查 Local Agent 设置</button></div></div>;
+  if (!tree) return <div style={styles.empty} role="status">尚未加载工作区</div>;
   const workspace = tree.workspaces.find((item) => item.id === selectedWorkspaceId) ?? tree.workspaces[0];
   const selectedProjectIds = [...new Set(tree.requests.filter((item) => selectedIds.includes(item.id)).map((item) => item.projectId))];
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -245,7 +266,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       {!isCollapsed && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
     </div>;
   }
-  return <section style={styles.root} role="tree" aria-label="工作区资源树">
+  return <section style={styles.root} role="tree" aria-label="工作区资源树" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End" tabIndex={0} onKeyDown={onTreeKeyDown}>
     <div style={styles.workspaceBar}>
       <select aria-label="选择工作区" style={styles.workspaceSelect} value={workspace?.id ?? ""} onChange={(event) => { setSelectedWorkspaceId(event.target.value); void props.onTouchWorkspace(event.target.value); }}>
         {tree.workspaces.map((item) => <option key={item.id} value={item.id}>{item.archived ? `【已归档】${item.name}` : item.name}</option>)}

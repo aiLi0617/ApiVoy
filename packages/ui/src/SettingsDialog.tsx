@@ -21,6 +21,7 @@ import {
   setGatewayUrl,
 } from "./userPreferences";
 import { EnvironmentEditor, type EnvironmentEditorProps } from "./EnvironmentEditor";
+import { useDialogFocus } from "./useDialogFocus";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -35,6 +36,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
   const setThemeMode = useAppStore((state) => state.setThemeMode);
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const [collaborationUrl, setCollaborationUrlState] = useState(getCollaborationUrl);
   const [agentUrl, setAgentUrlState] = useState(getAgentUrl);
@@ -44,6 +46,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
   const [aiSecretRef, setAiSecretRefState] = useState(getAiSecretRef);
   const [gatewayUrl, setGatewayUrlState] = useState(getGatewayUrl);
   const [gatewayKey, setGatewayKeyState] = useState(getGatewayKey);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -55,26 +58,22 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
     setAiSecretRefState(getAiSecretRef());
     setGatewayUrlState(getGatewayUrl());
     setGatewayKeyState(getGatewayKey());
-    queueMicrotask(() => closeRef.current?.focus());
+    setSaved(false);
   }, [open]);
+  useDialogFocus(open, dialogRef, onClose, closeRef);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  function saveSettings() {
+    setCollaborationUrl(collaborationUrl); setAgentUrl(agentUrl); setAgentToken(agentToken);
+    setAiEndpoint(aiEndpoint); setAiModel(aiModel); setAiSecretRef(aiSecretRef);
+    setGatewayUrl(gatewayUrl); setGatewayKey(gatewayKey); setSaved(true);
+  }
 
   if (!open) return null;
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="settings-dialog"
         role="dialog"
         aria-modal="true"
@@ -132,7 +131,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={agentUrl}
                 onChange={(event) => {
                   setAgentUrlState(event.target.value);
-                  setAgentUrl(event.target.value);
+                  setSaved(false);
                 }}
                 spellCheck={false}
               />
@@ -144,7 +143,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={agentToken}
                 onChange={(event) => {
                   setAgentTokenState(event.target.value);
-                  setAgentToken(event.target.value);
+                  setSaved(false);
                 }}
                 autoComplete="off"
               />
@@ -161,7 +160,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={collaborationUrl}
                 onChange={(event) => {
                   setCollaborationUrlState(event.target.value);
-                  setCollaborationUrl(event.target.value);
+                  setSaved(false);
                 }}
                 spellCheck={false}
               />
@@ -179,7 +178,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={aiEndpoint}
                 onChange={(event) => {
                   setAiEndpointState(event.target.value);
-                  setAiEndpoint(event.target.value);
+                  setSaved(false);
                 }}
                 spellCheck={false}
               />
@@ -190,7 +189,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={aiModel}
                 onChange={(event) => {
                   setAiModelState(event.target.value);
-                  setAiModel(event.target.value);
+                  setSaved(false);
                 }}
                 spellCheck={false}
               />
@@ -201,7 +200,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={aiSecretRef}
                 onChange={(event) => {
                   setAiSecretRefState(event.target.value);
-                  setAiSecretRef(event.target.value);
+                  setSaved(false);
                 }}
                 spellCheck={false}
               />
@@ -223,7 +222,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={gatewayUrl}
                 onChange={(event) => {
                   setGatewayUrlState(event.target.value);
-                  setGatewayUrl(event.target.value);
+                  setSaved(false);
                 }}
                 spellCheck={false}
               />
@@ -235,7 +234,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
                 value={gatewayKey}
                 onChange={(event) => {
                   setGatewayKeyState(event.target.value);
-                  setGatewayKey(event.target.value);
+                  setSaved(false);
                 }}
                 autoComplete="off"
               />
@@ -254,9 +253,9 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
         </div>
 
         <footer className="settings-dialog-footer">
-          <button type="button" className="ui-button primary" onClick={onClose}>
-            {t("action.close")}
-          </button>
+          <span role="status" aria-live="polite">{saved ? (locale === "zh-CN" ? "设置已保存；Agent 连接设置将在刷新后完全生效。" : "Settings saved; Agent connection changes fully apply after reload.") : ""}</span>
+          <button type="button" className="ui-button secondary" onClick={onClose}>{t("action.cancel")}</button>
+          <button type="button" className="ui-button primary" onClick={saveSettings}>{t("action.save")}</button>
         </footer>
       </div>
     </div>

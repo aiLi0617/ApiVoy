@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { useI18n } from "./i18n";
+import { useDialogFocus } from "./useDialogFocus";
 
 export type CollaborationTab = "team" | "comments" | "sso";
 
@@ -17,39 +18,41 @@ export function CollaborationHub({ open, onClose, team, comments, sso, initialTa
   const { t } = useI18n();
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef(new Map<CollaborationTab, HTMLButtonElement>());
   const [tab, setTab] = useState<CollaborationTab>(initialTab);
 
   useEffect(() => {
     if (!open) return;
     setTab(initialTab);
-    queueMicrotask(() => closeRef.current?.focus());
   }, [open, initialTab]);
 
   useEffect(() => {
     if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
     const onSelectTab = (event: Event) => {
       const next = (event as CustomEvent<CollaborationTab>).detail;
       if (next === "team" || next === "comments" || next === "sso") setTab(next);
     };
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("apivoy-collaboration-tab", onSelectTab);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("apivoy-collaboration-tab", onSelectTab);
     };
-  }, [open, onClose]);
+  }, [open]);
+  useDialogFocus(open, dialogRef, onClose, closeRef);
+  const tabs: CollaborationTab[] = ["team", "comments", "sso"];
+  function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault(); const current = tabs.indexOf(tab);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : event.key === "ArrowRight" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
+    setTab(tabs[next]); queueMicrotask(() => tabRefs.current.get(tabs[next])?.focus());
+  }
 
   if (!open) return null;
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="collaboration-dialog"
         role="dialog"
         aria-modal="true"
@@ -65,12 +68,10 @@ export function CollaborationHub({ open, onClose, team, comments, sso, initialTa
             <Icon name="close" />
           </button>
         </header>
-        <div className="collaboration-tabs" role="tablist" aria-label={t("collaboration.title")}>
-          <button type="button" role="tab" aria-selected={tab === "team"} className={tab === "team" ? "is-active" : undefined} onClick={() => setTab("team")}>{t("collaboration.tab.team")}</button>
-          <button type="button" role="tab" aria-selected={tab === "comments"} className={tab === "comments" ? "is-active" : undefined} onClick={() => setTab("comments")}>{t("collaboration.tab.comments")}</button>
-          <button type="button" role="tab" aria-selected={tab === "sso"} className={tab === "sso" ? "is-active" : undefined} onClick={() => setTab("sso")}>{t("collaboration.tab.sso")}</button>
+        <div className="collaboration-tabs" role="tablist" aria-label={t("collaboration.title")} onKeyDown={onTabKeyDown}>
+          {tabs.map((item) => <button ref={(node) => { if (node) tabRefs.current.set(item, node); else tabRefs.current.delete(item); }} key={item} id={`collaboration-tab-${item}`} type="button" role="tab" tabIndex={tab === item ? 0 : -1} aria-selected={tab === item} aria-controls={`collaboration-panel-${item}`} className={tab === item ? "is-active" : undefined} onClick={() => setTab(item)}>{t(`collaboration.tab.${item}`)}</button>)}
         </div>
-        <div className="collaboration-dialog-body" role="tabpanel">
+        <div className="collaboration-dialog-body" role="tabpanel" id={`collaboration-panel-${tab}`} aria-labelledby={`collaboration-tab-${tab}`}>
           {tab === "team" ? team : null}
           {tab === "comments" ? comments : null}
           {tab === "sso" ? sso : null}
