@@ -172,6 +172,8 @@ fn load_collection(path: &PathBuf) -> Result<Vec<RequestEnvelope>, Box<dyn std::
                     .get("body")
                     .and_then(|item| item.as_str())
                     .map(str::to_owned),
+                body_encoding: "text".into(),
+                body_source: None,
                 multipart: vec![],
                 follow_redirects: true,
             });

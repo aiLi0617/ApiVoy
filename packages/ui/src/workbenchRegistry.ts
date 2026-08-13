@@ -11,13 +11,11 @@ export interface WorkbenchRegistryEntry extends WorkbenchTab {
  * child panels must be rendered in this same order.
  */
 export const WORKBENCH_REGISTRY: WorkbenchRegistryEntry[] = [
-  { id: "http", label: "HTTP", protocol: "http" },
+  { id: "http", label: "HTTP", protocols: ["http", "graphql", "soap", "jsonrpc"] },
   { id: "sse", label: "SSE", protocol: "sse" },
   { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] },
-  { id: "graphql", label: "GraphQL", protocol: "graphql" },
   { id: "websocket", label: "WebSocket", protocol: "websocket" },
   { id: "grpc", label: "gRPC", protocol: "grpc" },
-  { id: "rpc", label: "SOAP / RPC", protocols: ["soap", "jsonrpc"] },
   { id: "redis", label: "Redis", protocol: "redis" },
   { id: "mqtt", label: "MQTT", protocol: "mqtt" },
   { id: "amqp", label: "AMQP", protocol: "amqp" },

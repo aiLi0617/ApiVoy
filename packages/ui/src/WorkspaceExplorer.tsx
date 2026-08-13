@@ -216,10 +216,23 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   function toggleSelected(id: string) {
     setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
+  async function deleteRequest(id: string, name: string, showSuccess = true): Promise<boolean> {
+    try {
+      await props.onDeleteRequest(id);
+      setSelectedIds((current) => current.filter((item) => item !== id));
+      if (showSuccess) notify(`已删除请求“${name}”`, "success");
+      return true;
+    } catch (error) {
+      notify(`删除请求失败：${error instanceof Error ? error.message : String(error)}`, "danger");
+      return false;
+    }
+  }
   async function batchDelete() {
     if (!selectedIds.length || !(await confirm({ title: "删除请求", description: `确定删除选中的 ${selectedIds.length} 个请求吗？`, tone: "danger", confirmLabel: "删除" }))) return;
-    for (const id of selectedIds) await props.onDeleteRequest(id);
-    setSelectedIds([]);
+    const targets = tree!.requests.filter((item) => selectedIds.includes(item.id));
+    let deleted = 0;
+    for (const request of targets) if (await deleteRequest(request.id, request.name, false)) deleted += 1;
+    if (deleted) notify(`已删除 ${deleted} 个请求`, "success");
   }
   async function batchMove() {
     const target = tree!.collections.find((item) => item.id === batchTarget);
@@ -261,7 +274,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       {!isCollapsed && requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request, requestIndex, visibleRequests) => <div draggable onDragStart={(event) => setDrag(event, "request", request.id)} className={`tree-row${selectedIds.length ? " is-batch" : ""}${props.selectedRequestId === request.id ? " is-active" : ""}`} role="treeitem" aria-level={depth + 2} aria-setsize={visibleRequests.length} aria-posinset={requestIndex + 1} key={request.id} style={{...styles.requestRow, paddingLeft: 39 + depth * 14, ...(props.selectedRequestId === request.id ? styles.active : {})}}>
         <span className="tree-actions tree-actions-leading"><input type="checkbox" checked={selectedIds.includes(request.id)} onChange={() => toggleSelected(request.id)} title="批量选择" /></span>
         <button type="button" className="tree-main" style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}><b>{request.method ?? "HTTP"}</b><span className="tree-label">{request.name}</span></button>
-        <span className="tree-actions"><button type="button" style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteRequest(request.id); }}><Icon name="trash" /></button></span>
+        <span className="tree-actions"><button type="button" style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) await deleteRequest(request.id, request.name); }}><Icon name="trash" /></button></span>
       </div>)}
       {!isCollapsed && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
     </div>;

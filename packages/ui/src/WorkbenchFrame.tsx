@@ -1,29 +1,41 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { useAppStore, type WorkbenchLayoutPreference } from "./appStore";
 
-export interface SplitPaneProps { id: string; primary: ReactNode; secondary: ReactNode; direction?: WorkbenchLayoutPreference; minPrimary?: number; minSecondary?: number; primaryLabel?: string; secondaryLabel?: string }
-export function SplitPane({ id, primary, secondary, direction = "vertical", minPrimary = 280, minSecondary = 240, primaryLabel = "请求", secondaryLabel = "响应" }: SplitPaneProps) {
+export interface SplitPaneProps { id: string; primary: ReactNode; secondary: ReactNode; secondaryActions?: ReactNode; direction?: WorkbenchLayoutPreference; minPrimary?: number; minSecondary?: number; primaryLabel?: string; secondaryLabel?: string }
+export function SplitPane({ id, primary, secondary, secondaryActions, direction = "vertical", minPrimary = 280, minSecondary = 240, primaryLabel = "请求", secondaryLabel = "响应" }: SplitPaneProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const saved = useAppStore((state) => state.splitPreferences[id]);
   const setPreference = useAppStore((state) => state.setSplitPreference);
   const [ratio, setRatio] = useState(() => saved?.ratio ?? .42);
+  const [collapsedPanel, setCollapsedPanel] = useState<"primary" | "secondary" | null>(null);
+  const expandedRatioRef = useRef(saved?.ratio && saved.ratio < .9 ? saved.ratio : .42);
   const actualDirection = saved?.direction ?? direction;
   useEffect(() => setRatio(saved?.ratio ?? .42), [saved?.ratio]);
   function persist(nextDirection: WorkbenchLayoutPreference, nextRatio: number) {
-    const value = Math.min(.75, Math.max(.25, nextRatio));
+    const value = Math.min(.99, Math.max(.25, nextRatio));
     setRatio(value);
     setPreference(id, { direction: nextDirection, ratio: value });
   }
-  function update(next: number) { persist(actualDirection, next); }
+  function update(next: number) { if (next < .94) expandedRatioRef.current = next; persist(actualDirection, next); }
+  function toggleSecondary() {
+    if (collapsedPanel === "secondary") { setCollapsedPanel(null); persist(actualDirection, expandedRatioRef.current); }
+    else { if (ratio < .94) expandedRatioRef.current = ratio; setCollapsedPanel("secondary"); }
+  }
   function setDirection(next: WorkbenchLayoutPreference) { persist(next, ratio); }
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     const root = rootRef.current; if (!root) return; event.currentTarget.setPointerCapture(event.pointerId);
     const bounds = root.getBoundingClientRect(); const vertical = getComputedStyle(root).gridTemplateColumns.split(" ").length === 1;
-    const move = (moveEvent: globalThis.PointerEvent) => update(vertical ? (moveEvent.clientY - bounds.top) / bounds.height : (moveEvent.clientX - bounds.left) / bounds.width);
+    let dragCollapsed = collapsedPanel === "secondary";
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const next = vertical ? (moveEvent.clientY - bounds.top) / bounds.height : (moveEvent.clientX - bounds.left) / bounds.width;
+      if (next >= .97) { if (!dragCollapsed) { if (ratio < .94) expandedRatioRef.current = ratio; dragCollapsed = true; setCollapsedPanel("secondary"); } return; }
+      if (dragCollapsed) { dragCollapsed = false; setCollapsedPanel(null); }
+      update(next);
+    };
     const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
   }
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) { if (["ArrowLeft","ArrowUp"].includes(event.key)) { event.preventDefault(); update(ratio - .05); } if (["ArrowRight","ArrowDown"].includes(event.key)) { event.preventDefault(); update(ratio + .05); } if (event.key === "Home") update(.25); if (event.key === "End") update(.75); }
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) { if (["ArrowLeft","ArrowUp"].includes(event.key)) { event.preventDefault(); if (collapsedPanel === "secondary") toggleSecondary(); else update(ratio - .05); } if (["ArrowRight","ArrowDown"].includes(event.key)) { event.preventDefault(); update(ratio + .05); } if (event.key === "Home") update(.25); if (event.key === "End") { expandedRatioRef.current = ratio < .94 ? ratio : expandedRatioRef.current; setCollapsedPanel("secondary"); } }
   const layouts: Array<{ id: WorkbenchLayoutPreference; label: string; title: string }> = [
     { id: "vertical", label: "上下", title: "请求在上、响应在下（适合阅读正文）" },
     { id: "horizontal", label: "左右", title: "请求在左、响应在右" },
@@ -34,10 +46,10 @@ export function SplitPane({ id, primary, secondary, direction = "vertical", minP
       <span className="split-layout-label">分栏</span>
       {layouts.map((layout) => <button key={layout.id} type="button" className={`split-layout-button${actualDirection === layout.id ? " is-active" : ""}`} aria-pressed={actualDirection === layout.id} title={layout.title} onClick={() => setDirection(layout.id)}>{layout.label}</button>)}
     </div>
-    <div ref={rootRef} className={`split-pane split-${actualDirection}`} style={{ "--split-ratio": `${ratio * 100}%`, "--split-min-primary": `${minPrimary}px`, "--split-min-secondary": `${minSecondary}px` } as React.CSSProperties}>
+    <div ref={rootRef} className={`split-pane split-${actualDirection}${collapsedPanel ? ` split-${collapsedPanel}-collapsed` : ""}`} style={{ "--split-ratio": `${ratio * 100}%`, "--split-min-primary": `${minPrimary}px`, "--split-min-secondary": `${minSecondary}px` } as React.CSSProperties}>
       <section className="split-panel" aria-label={primaryLabel}>{primary}</section>
-      <div className="split-handle" role="separator" tabIndex={0} aria-label={`调整${primaryLabel}和${secondaryLabel}区域大小`} aria-orientation={actualDirection === "horizontal" ? "vertical" : "horizontal"} aria-valuemin={25} aria-valuemax={75} aria-valuenow={Math.round(ratio * 100)} onPointerDown={onPointerDown} onKeyDown={onKeyDown} onDoubleClick={() => update(.42)}><span/></div>
-      <section className="split-panel" aria-label={secondaryLabel}>{secondary}</section>
+      <div className="split-handle" role="separator" tabIndex={0} aria-label={`调整${primaryLabel}和${secondaryLabel}区域大小`} aria-orientation={actualDirection === "horizontal" ? "vertical" : "horizontal"} aria-valuemin={25} aria-valuemax={99} aria-valuenow={collapsedPanel === "secondary" ? 99 : Math.round(ratio * 100)} onPointerDown={onPointerDown} onKeyDown={onKeyDown} onDoubleClick={() => { setCollapsedPanel(null); update(.42); }}><span/><button type="button" className="split-response-toggle" aria-label={collapsedPanel === "secondary" ? `展开${secondaryLabel}` : `收起${secondaryLabel}`} aria-expanded={collapsedPanel !== "secondary"} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); toggleSecondary(); }}><span className="split-response-toggle-icon" aria-hidden="true"/><span className="split-response-toggle-label">返回响应</span></button>{secondaryActions ? <div className="split-secondary-actions" onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>{secondaryActions}</div> : null}</div>
+      <section className="split-panel split-secondary-panel" aria-label={secondaryLabel}><div className="split-secondary-horizontal-header"><button type="button" className="split-secondary-header-toggle" aria-label={collapsedPanel === "secondary" ? `展开${secondaryLabel}` : `收起${secondaryLabel}`} aria-expanded={collapsedPanel !== "secondary"} onClick={toggleSecondary}><span className="split-response-toggle-icon" aria-hidden="true"/><span>{secondaryLabel === "响应检查器" ? "返回响应" : secondaryLabel}</span></button>{secondaryActions ? <div className="split-secondary-header-actions">{secondaryActions}</div> : null}</div><div className="split-secondary-content">{secondary}</div></section>
     </div>
   </div>;
 }

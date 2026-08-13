@@ -106,6 +106,8 @@ pub fn resolve_request(
         ProtocolPayload::Http(HttpPayload {
             headers,
             body,
+            body_encoding,
+            body_source: _,
             multipart,
             method: _,
             follow_redirects: _,
@@ -114,8 +116,10 @@ pub fn resolve_request(
                 *k = resolve_template(k, &vars)?;
                 *v = resolve_template(v, &vars)?;
             }
-            if let Some(b) = body.as_mut() {
-                *b = resolve_template(b, &vars)?;
+            if body_encoding != "base64" {
+                if let Some(b) = body.as_mut() {
+                    *b = resolve_template(b, &vars)?;
+                }
             }
             for part in multipart {
                 part.name = resolve_template(&part.name, &vars)?;
@@ -219,6 +223,8 @@ mod tests {
             method: "GET".into(),
             headers: vec![("X-Token".into(), "{{token}}".into())],
             body: None,
+            body_encoding: "text".into(),
+            body_source: None,
             multipart: vec![],
             follow_redirects: true,
         });

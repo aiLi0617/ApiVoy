@@ -1498,6 +1498,8 @@ mod tests {
             method: "POST".into(),
             headers: vec![],
             body: Some(large.clone()),
+            body_encoding: "text".into(),
+            body_source: None,
             multipart: vec![],
             follow_redirects: true,
         });

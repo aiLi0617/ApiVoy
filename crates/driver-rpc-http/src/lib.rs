@@ -166,6 +166,8 @@ fn to_http(kind: Kind, mut request: RequestEnvelope) -> Result<RequestEnvelope, 
         method: "POST".into(),
         headers,
         body: Some(body),
+        body_encoding: "text".into(),
+        body_source: None,
         multipart: vec![],
         follow_redirects: true,
     });

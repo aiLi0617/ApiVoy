@@ -64,7 +64,44 @@ impl HttpDriver {
     }
 
     pub fn delete_cookie(&self, url: &str, name: &str) -> Result<(), DriverError> {
-        self.set_cookie(url, &format!("{name}=; Path=/; Max-Age=0"))
+        let url = Url::parse(url).map_err(|error| DriverError::Validation(error.to_string()))?;
+        let mut paths = vec!["/".to_owned()];
+        let segments: Vec<_> = url
+            .path()
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        let mut path = String::new();
+        for segment in segments {
+            path.push('/');
+            path.push_str(segment);
+            paths.push(path.clone());
+            paths.push(format!("{path}/"));
+        }
+        paths.sort();
+        paths.dedup();
+
+        let mut domains = Vec::new();
+        if let Some(host) = url.host_str() {
+            let labels: Vec<_> = host.split('.').collect();
+            // Try the request host and each registrable-looking parent. Invalid/public
+            // suffix candidates are ignored by the cookie jar.
+            for offset in 0..labels.len().saturating_sub(1) {
+                domains.push(labels[offset..].join("."));
+            }
+        }
+
+        for path in &paths {
+            self.cookie_jar
+                .add_cookie_str(&format!("{name}=; Path={path}; Max-Age=0"), &url);
+            for domain in &domains {
+                self.cookie_jar.add_cookie_str(
+                    &format!("{name}=; Path={path}; Domain={domain}; Max-Age=0"),
+                    &url,
+                );
+            }
+        }
+        Ok(())
     }
 
     fn client_for(
@@ -128,13 +165,53 @@ fn map_reqwest_error(error: reqwest::Error) -> DriverError {
     }
 }
 
+fn merge_cookie_values(jar: Option<&str>, request_values: &[&str]) -> Option<String> {
+    let mut cookies: Vec<(String, String)> = Vec::new();
+    let mut add = |source: &str| {
+        for item in source.split(';') {
+            let Some((name, value)) = item.trim().split_once('=') else {
+                continue;
+            };
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(existing) = cookies.iter_mut().find(|(key, _)| key == name) {
+                existing.1 = value.trim().to_owned();
+            } else {
+                cookies.push((name.to_owned(), value.trim().to_owned()));
+            }
+        }
+    };
+    if let Some(value) = jar {
+        add(value);
+    }
+    for value in request_values {
+        add(value);
+    }
+    (!cookies.is_empty()).then(|| {
+        cookies
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
 fn apply_http_body(
     mut builder: RequestBuilder,
     payload: &HttpPayload,
 ) -> Result<RequestBuilder, DriverError> {
     if payload.multipart.is_empty() {
         if let Some(body) = &payload.body {
-            builder = builder.body(body.clone());
+            if payload.body_encoding == "base64" {
+                let bytes = BASE64.decode(body).map_err(|error| {
+                    DriverError::Validation(format!("invalid HTTP Base64 body: {error}"))
+                })?;
+                builder = builder.body(bytes);
+            } else {
+                builder = builder.body(body.clone());
+            }
         }
         return Ok(builder);
     }
@@ -294,15 +371,38 @@ impl ProtocolDriver for HttpDriver {
             .map_err(|e| DriverError::Validation(e.to_string()))?;
 
         let client = self.client_for(&request, payload.follow_redirects)?;
+        let target_url = Url::parse(&request.target)
+            .map_err(|error| DriverError::Validation(error.to_string()))?;
+        let request_cookie_values: Vec<_> = payload
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+            .map(|(_, value)| value.as_str())
+            .collect();
+        let merged_cookies = if request_cookie_values.is_empty() {
+            None
+        } else {
+            let jar_cookies = self
+                .cookie_jar
+                .cookies(&target_url)
+                .and_then(|value| value.to_str().ok().map(str::to_owned));
+            merge_cookie_values(jar_cookies.as_deref(), &request_cookie_values)
+        };
         let timeout = Duration::from_millis(request.timeout_ms.max(1));
         let mut attempt = 0u32;
         let response = loop {
             let mut builder = client.request(method.clone(), &request.target);
             for (k, v) in &payload.headers {
+                if k.eq_ignore_ascii_case("cookie") {
+                    continue;
+                }
                 if !payload.multipart.is_empty() && k.eq_ignore_ascii_case("content-type") {
                     continue;
                 }
                 builder = builder.header(k, v);
+            }
+            if let Some(cookies) = &merged_cookies {
+                builder = builder.header("Cookie", cookies);
             }
             builder = apply_http_body(builder, payload)?;
 
@@ -634,6 +734,45 @@ mod tests {
             vec![("token".into(), "abc".into())]
         );
         driver.delete_cookie(url, "token").unwrap();
+        assert!(driver.cookies_for(url).unwrap().is_empty());
+    }
+
+    #[test]
+    fn request_cookies_merge_with_jar_and_override_matching_names() {
+        assert_eq!(
+            merge_cookie_values(
+                Some("session=from-jar; theme=dark"),
+                &["session=from-request; local=yes"]
+            ),
+            Some("session=from-request; theme=dark; local=yes".into())
+        );
+    }
+
+    #[test]
+    fn cookie_delete_covers_non_root_paths_and_parent_domains() {
+        let driver = HttpDriver::new();
+        let url = "https://api.example.com/v1/users";
+        driver
+            .set_cookie(url, "scoped=abc; Path=/v1; Domain=example.com")
+            .unwrap();
+        assert_eq!(
+            driver.cookies_for(url).unwrap(),
+            vec![("scoped".into(), "abc".into())]
+        );
+        driver.delete_cookie(url, "scoped").unwrap();
+        assert!(driver.cookies_for(url).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cookie_delete_covers_paths_with_a_trailing_slash() {
+        let driver = HttpDriver::new();
+        let url = "https://api.example.com/v1/users/";
+        driver.set_cookie(url, "scoped=abc; Path=/v1/").unwrap();
+        assert_eq!(
+            driver.cookies_for(url).unwrap(),
+            vec![("scoped".into(), "abc".into())]
+        );
+        driver.delete_cookie(url, "scoped").unwrap();
         assert!(driver.cookies_for(url).unwrap().is_empty());
     }
 

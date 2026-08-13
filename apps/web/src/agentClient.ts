@@ -118,7 +118,6 @@ export async function checkAgentHandshake(): Promise<AgentHealth> {
       if (!response.ok) throw new Error(`Agent session exchange failed: ${response.status}`);
       const session = await response.json() as { token: string };
       activeAgentToken = session.token;
-      localStorage.setItem("apivoy-agent-token", session.token);
     })();
   }
   await sessionPromise;
@@ -132,6 +131,8 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
     method: request.method,
     headers: request.headers,
     body: request.body,
+    bodyEncoding: request.bodyEncoding,
+    bodySource: request.bodySource,
     multipart: request.multipart,
     timeoutMs: request.timeoutMs,
     variables: request.variables,
@@ -158,6 +159,8 @@ export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string)
     method: payload.method,
     headers: payload.headers,
     body: payload.body ?? undefined,
+    bodyEncoding: payload.bodyEncoding ?? "text",
+    bodySource: payload.bodySource ?? undefined,
     multipart: payload.multipart ?? [],
     timeoutMs: envelope.timeoutMs,
     variables: envelope.variables ?? {},

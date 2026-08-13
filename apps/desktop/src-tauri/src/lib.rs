@@ -163,6 +163,10 @@ struct HttpExecuteRequest {
     headers: Vec<(String, String)>,
     body: Option<String>,
     #[serde(default)]
+    body_encoding: Option<String>,
+    #[serde(default)]
+    body_source: Option<String>,
+    #[serde(default)]
     multipart: Vec<MultipartPart>,
     timeout_ms: u64,
     #[serde(default)]
@@ -616,6 +620,8 @@ async fn http_get(
             method: "GET".into(),
             headers: vec![],
             body: None,
+            body_encoding: None,
+            body_source: None,
             multipart: vec![],
             timeout_ms: 30_000,
             variables: HashMap::new(),
@@ -1254,6 +1260,11 @@ fn build_envelope(request: &HttpExecuteRequest) -> RequestEnvelope {
         method: request.method.clone(),
         headers: request.headers.clone(),
         body: request.body.clone(),
+        body_encoding: request
+            .body_encoding
+            .clone()
+            .unwrap_or_else(|| "text".into()),
+        body_source: request.body_source.clone(),
         multipart: request.multipart.clone(),
         follow_redirects: request.follow_redirects,
     });

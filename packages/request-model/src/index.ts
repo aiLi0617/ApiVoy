@@ -17,6 +17,8 @@ export interface HttpPayload {
   method: string;
   headers: Array<[string, string]>;
   body?: string | null;
+  bodyEncoding?: "text" | "base64";
+  bodySource?: string | null;
   multipart?: MultipartPart[];
   followRedirects: boolean;
 }
@@ -182,6 +184,8 @@ export interface CreateHttpRequestOptions {
   method?: string;
   headers?: Array<[string, string]>;
   body?: string | null;
+  bodyEncoding?: "text" | "base64";
+  bodySource?: string | null;
   multipart?: MultipartPart[];
   timeoutMs?: number;
   followRedirects?: boolean;
@@ -215,6 +219,8 @@ export function createHttpRequest(options: CreateHttpRequestOptions): RequestEnv
       method,
       headers: options.headers ?? [],
       body: options.body ?? null,
+      bodyEncoding: options.bodyEncoding ?? "text",
+      bodySource: options.bodySource ?? null,
       multipart: options.multipart ?? [],
       followRedirects: options.followRedirects ?? true,
     },

@@ -369,6 +369,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let origins = allowed_origins()?;
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+            Method::HEAD,
+        ])
         .allow_headers(AllowHeaders::list([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,

@@ -210,7 +210,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
           </section>
 
           <section className="settings-section">
-            <h3>{t("settings.section.environments")}</h3>
+            <h3>{locale === "zh-CN" ? "全局参数" : "Global parameters"}</h3>
             {environment ? <EnvironmentEditor {...environment} /> : <p className="settings-hint">{t("environments.unavailable")}</p>}
           </section>
 

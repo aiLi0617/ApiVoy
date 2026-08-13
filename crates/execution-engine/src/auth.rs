@@ -429,6 +429,8 @@ mod tests {
             method: "GET".into(),
             headers: vec![("Authorization".into(), "Bearer stale".into())],
             body: None,
+            body_encoding: "text".into(),
+            body_source: None,
             multipart: vec![],
             follow_redirects: true,
         });

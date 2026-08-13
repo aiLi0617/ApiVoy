@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import type {
   Assertion,
   AssertionResultEvent,
@@ -25,6 +25,8 @@ export interface HttpWorkbenchRequest {
   method: string;
   headers: Array<[string, string]>;
   body?: string;
+  bodyEncoding?: "text" | "base64";
+  bodySource?: string;
   multipart?: MultipartPart[];
   timeoutMs: number;
   variables: Record<string, string>;
@@ -75,13 +77,33 @@ export interface HistoryFilter {
   requestId?: string;
 }
 
+type RowValueType = "string" | "integer" | "number" | "decimal" | "boolean" | "array" | "object" | "json" | "date" | "datetime" | "uuid" | "null";
+
+const ROW_VALUE_TYPES: Array<{ value: RowValueType; label: string }> = [
+  { value: "string", label: "String" },
+  { value: "integer", label: "Integer" },
+  { value: "number", label: "Number" },
+  { value: "decimal", label: "Decimal" },
+  { value: "boolean", label: "Boolean" },
+  { value: "array", label: "Array" },
+  { value: "object", label: "Object" },
+  { value: "json", label: "JSON" },
+  { value: "date", label: "Date" },
+  { value: "datetime", label: "DateTime" },
+  { value: "uuid", label: "UUID" },
+  { value: "null", label: "Null" },
+];
+
 interface HeaderRow {
   id: string;
   key: string;
   value: string;
+  enabled: boolean;
+  valueType: RowValueType;
+  description: string;
 }
 
-type BodyMode = "none" | "multipart" | "urlencoded" | "json" | "xml" | "text" | "graphql";
+type BodyMode = "none" | "multipart" | "urlencoded" | "json" | "xml" | "text" | "graphql" | "jsonrpc" | "soap" | "binary" | "msgpack";
 
 const BODY_MODES: Array<{ id: BodyMode; label: string; contentType?: string }> = [
   { id: "none", label: "none" },
@@ -90,27 +112,123 @@ const BODY_MODES: Array<{ id: BodyMode; label: string; contentType?: string }> =
   { id: "json", label: "JSON", contentType: "application/json" },
   { id: "xml", label: "XML", contentType: "application/xml" },
   { id: "text", label: "Text", contentType: "text/plain" },
-  { id: "graphql", label: "GraphQL", contentType: "application/graphql" },
+  { id: "graphql", label: "GraphQL", contentType: "application/json" },
+  { id: "jsonrpc", label: "JSON-RPC", contentType: "application/json" },
+  { id: "soap", label: "SOAP", contentType: "application/soap+xml" },
+  { id: "binary", label: "Binary", contentType: "application/octet-stream" },
+  { id: "msgpack", label: "MessagePack", contentType: "application/msgpack" },
 ];
 
-function createHeaderRow(key = "", value = ""): HeaderRow {
-  return { id: crypto.randomUUID(), key, value };
+function createHeaderRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
+  return { id: crypto.randomUUID(), key, value, enabled: true, valueType, description };
 }
 
 function headerRowsFromPairs(headers: Array<[string, string]>): HeaderRow[] {
   return [...headers.map(([key, value]) => createHeaderRow(key, value)), createHeaderRow()];
 }
 
+function cookieRowsFromHeaders(headers: Array<[string, string]>): HeaderRow[] {
+  const parsed = headers
+    .filter(([key]) => key.toLowerCase() === "cookie")
+    .flatMap(([, value]) => value.split(";"))
+    .flatMap((item) => {
+      const trimmed = item.trim();
+      const separator = trimmed.indexOf("=");
+      return separator > 0 ? [createQueryRow(trimmed.slice(0, separator).trim(), trimmed.slice(separator + 1).trim())] : [];
+    });
+  return [...parsed, createQueryRow()];
+}
+
+function createQueryRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
+  return createHeaderRow(key, value, valueType, description);
+}
+
+function queryRowsFromUrl(url: string): HeaderRow[] {
+  const query = url.split("#", 1)[0].split("?", 2)[1] ?? "";
+  return [...Array.from(new URLSearchParams(query).entries()).map(([key, value]) => createQueryRow(key, value)), createQueryRow()];
+}
+
+function urlWithQueryRows(url: string, rows: HeaderRow[]): string {
+  const hashIndex = url.indexOf("#"); const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
+  const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+  const base = withoutHash.split("?", 1)[0];
+  const query = new URLSearchParams(rows.filter((row) => row.enabled && row.key.trim()).map((row) => [row.key, row.value])).toString();
+  return `${base}${query ? `?${query}` : ""}${hash}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function base64Bytes(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function charsetFromContentType(contentType?: string | null): string {
+  return contentType?.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1]?.toLowerCase() ?? "utf-8";
+}
+
+function requestSize(request: HttpWorkbenchRequest | null): number {
+  if (!request) return 0;
+  return requestHeaderSize(request) + requestBodySize(request);
+}
+
+function requestHeaderSize(request: HttpWorkbenchRequest | null): number {
+  return request?.headers.reduce((size, [name, value]) => size + new TextEncoder().encode(`${name}: ${value}\r\n`).length, 0) ?? 0;
+}
+
+function requestBodySize(request: HttpWorkbenchRequest | null): number {
+  return new TextEncoder().encode(request?.body ?? "").length;
+}
+
+function responseHeaderSize(meta: ResponseMeta | null | undefined): number {
+  return meta?.headers.reduce((size, [name, value]) => size + new TextEncoder().encode(`${name}: ${value}\r\n`).length, 0) ?? 0;
+}
+
+interface KeyValueRowsProps {
+  rows: HeaderRow[];
+  setRows: Dispatch<SetStateAction<HeaderRow[]>>;
+  kind: string;
+  nameLabel: string;
+  valueLabel: string;
+  addPlaceholder: string;
+  loading?: boolean;
+  fixedStringType?: boolean;
+  onRowsChange?: (rows: HeaderRow[]) => void;
+}
+
+function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPlaceholder, loading = false, fixedStringType = false, onRowsChange }: KeyValueRowsProps) {
+  const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
+  const update = (producer: (current: HeaderRow[]) => HeaderRow[]) => setRows((current) => { const next = producer(current); onRowsChange?.(next); return next; });
+  const remove = (row: HeaderRow) => {
+    if (deletePendingId !== row.id) { setDeletePendingId(row.id); return; }
+    setDeletePendingId(null);
+    update((current) => { const next = current.filter((item) => item.id !== row.id); return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createQueryRow()]; });
+  };
+  return <div className="http-kv-editor" aria-label={kind}>
+    <div className="http-param-header" aria-hidden="true"><span/><span>{nameLabel}</span><span>{valueLabel}</span><span>类型</span><span>说明</span><span/></div>
+    {rows.map((row, index) => {
+      const removable = index < rows.length - 1 || Boolean(row.key || row.value);
+      const pending = deletePendingId === row.id;
+      return <div className={`http-param-row${index === rows.length - 1 ? " is-new" : ""}`} key={row.id} onFocus={() => { if (deletePendingId && !pending) setDeletePendingId(null); }}>
+        <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} ${kind} ${index + 1}`} checked={row.enabled} onChange={(event) => update((current) => current.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item))} disabled={loading}/>
+        <input aria-label={`${kind} ${index + 1} 名称`} style={styles.input} value={row.key} onChange={(event) => update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item); return index === current.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next; })} placeholder={index === rows.length - 1 ? addPlaceholder : nameLabel} spellCheck={false} disabled={loading}/>
+        <input aria-label={`${kind} ${index + 1} 值`} style={styles.input} value={row.value} onChange={(event) => update((current) => current.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item))} placeholder={valueLabel} spellCheck={false} disabled={loading}/>
+        <select aria-label={`${kind} ${index + 1} 类型`} style={styles.input} value={fixedStringType ? "string" : row.valueType} onChange={(event) => update((current) => current.map((item) => item.id === row.id ? { ...item, valueType: event.target.value as HeaderRow["valueType"] } : item))} disabled={loading || fixedStringType}>{(fixedStringType ? ROW_VALUE_TYPES.slice(0, 1) : ROW_VALUE_TYPES).map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select>
+        <input aria-label={`${kind} ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => update((current) => current.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
+        {removable ? <button type="button" data-native-delete-confirm className={`http-kv-delete${pending ? " is-confirming" : ""}`} aria-label={pending ? `确认删除 ${kind} ${index + 1}` : `准备删除 ${kind} ${index + 1}`} title={pending ? "再次点击确认删除" : "点击后再次确认删除"} onClick={() => remove(row)} disabled={loading}>{pending ? "×" : "−"}</button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
+      </div>;
+    })}
+  </div>;
+}
+
 export interface HttpWorkbenchProps {
   onSend: (request: HttpWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>;
   onCancel?: (executionId: string) => Promise<void>;
   onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
-  onLoad?: () => Promise<HttpWorkbenchRequest | null>;
-  onLoadEnvironment?: () => Promise<{ variables: Record<string, string>; secretRefs: string[] }>;
-  onSaveEnvironment?: (
-    variables: Record<string, string>,
-    secretRefs: string[],
-  ) => Promise<void>;
   onPutSecret?: (name: string, value: string) => Promise<void>;
   onListCookies?: (url: string) => Promise<Array<{ name: string; value: string }>>;
   onSetCookie?: (url: string, name: string, value: string) => Promise<void>;
@@ -177,6 +295,35 @@ function prettyPreview(preview: string): string {
   } catch {
     return preview;
   }
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
+export function encodeMessagePack(value: unknown): Uint8Array {
+  const output: number[] = []; const text = new TextEncoder();
+  const push16 = (n: number) => output.push((n >>> 8) & 255, n & 255);
+  const encode = (item: unknown): void => {
+    if (item === null) { output.push(0xc0); return; }
+    if (item === false || item === true) { output.push(item ? 0xc3 : 0xc2); return; }
+    if (typeof item === "number") {
+      if (Number.isInteger(item) && item >= 0 && item <= 0x7f) output.push(item);
+      else if (Number.isInteger(item) && item >= -32 && item < 0) output.push(0x100 + item);
+      else if (Number.isInteger(item) && item >= 0 && item <= 0xff) output.push(0xcc, item);
+      else if (Number.isInteger(item) && item >= 0 && item <= 0xffff) { output.push(0xcd); push16(item); }
+      else if (Number.isInteger(item) && item >= -128 && item < 0) output.push(0xd0, item & 255);
+      else { const buffer = new ArrayBuffer(9); const view = new DataView(buffer); view.setUint8(0, 0xcb); view.setFloat64(1, item, false); output.push(...new Uint8Array(buffer)); }
+      return;
+    }
+    if (typeof item === "string") { const bytes = text.encode(item); if (bytes.length < 32) output.push(0xa0 | bytes.length); else if (bytes.length <= 0xff) output.push(0xd9, bytes.length); else { output.push(0xda); push16(bytes.length); } output.push(...bytes); return; }
+    if (Array.isArray(item)) { if (item.length < 16) output.push(0x90 | item.length); else { output.push(0xdc); push16(item.length); } item.forEach(encode); return; }
+    if (typeof item === "object") { const entries = Object.entries(item as Record<string, unknown>); if (entries.length < 16) output.push(0x80 | entries.length); else { output.push(0xde); push16(entries.length); } entries.forEach(([key, child]) => { encode(key); encode(child); }); return; }
+    throw new Error(`MessagePack 不支持 ${typeof item}`);
+  };
+  encode(value); return new Uint8Array(output);
 }
 
 function hexPreview(preview: string): string {
@@ -330,24 +477,19 @@ export function HttpWorkbench({
   onSend,
   onCancel,
   onSave,
-  onLoad,
-  onLoadEnvironment,
-  onSaveEnvironment,
   onPutSecret,
-  onListCookies,
-  onSetCookie,
-  onDeleteCookie,
   onListHistory,
   onReplayHistory,
   externalRequest,
 }: HttpWorkbenchProps) {
   const [method, setMethod] = useState<string>("GET");
-  const [url, setUrl] = useState("https://{{host}}");
-  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createHeaderRow("Accept", "application/json"), createHeaderRow()]);
+  const [url, setUrl] = useState("");
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createHeaderRow()]);
+  const [queryRows, setQueryRows] = useState<HeaderRow[]>(() => [createQueryRow()]);
   const [body, setBody] = useState("");
   const [bodyMode, setBodyMode] = useState<BodyMode>("none");
   const [multipart, setMultipart] = useState<MultipartPart[]>([]);
-  const [formRows, setFormRows] = useState<HeaderRow[]>(() => [createHeaderRow()]);
+  const [formRows, setFormRows] = useState<HeaderRow[]>(() => [createQueryRow()]);
   const [timeoutMs, setTimeoutMs] = useState(30_000);
   const [followRedirects, setFollowRedirects] = useState(true);
   const [retryMax, setRetryMax] = useState(0);
@@ -357,12 +499,13 @@ export function HttpWorkbench({
   const [tlsClientCertRef, setTlsClientCertRef] = useState("");
   const [preScript, setPreScript] = useState("");
   const [postScript, setPostScript] = useState("");
-  const [variablesText, setVariablesText] = useState("host=example.com");
-  const [envText, setEnvText] = useState("host=example.com");
-  const [secretRefs, setSecretRefs] = useState<string[]>([]);
-  const [assertionsText, setAssertionsText] = useState("status == 200\nbody contains Example");
+  const [variablesText, setVariablesText] = useState("");
+  const [assertionsText, setAssertionsText] = useState("");
+  const [assertionsEnabled, setAssertionsEnabled] = useState(true);
+  const [assertionConfigOpen, setAssertionConfigOpen] = useState(false);
+  const [assertionsDraft, setAssertionsDraft] = useState("");
   const [authKind, setAuthKind] = useState<AuthKind>("none");
-  const [authSecretRef, setAuthSecretRef] = useState("apiToken");
+  const [authSecretRef, setAuthSecretRef] = useState("");
   const [authUsername, setAuthUsername] = useState("");
   const [authHeaderName, setAuthHeaderName] = useState("X-Api-Key");
   const [oauthTokenUrl, setOauthTokenUrl] = useState("");
@@ -373,43 +516,137 @@ export function HttpWorkbench({
   const [oauthAuthorizationCode, setOauthAuthorizationCode] = useState("");
   const [oauthCodeRef] = useState(() => `oauth-code-${crypto.randomUUID()}`);
   const [oauthVerifierRef] = useState(() => `oauth-verifier-${crypto.randomUUID()}`);
-  const [secretName, setSecretName] = useState("apiToken");
-  const [secretValue, setSecretValue] = useState("");
-  const [cookies, setCookies] = useState<Array<{ name: string; value: string }>>([]);
-  const [cookieName, setCookieName] = useState("");
-  const [cookieValue, setCookieValue] = useState("");
+  const [cookieRows, setCookieRows] = useState<HeaderRow[]>(() => [createQueryRow()]);
   const [loading, setLoading] = useState(false);
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [result, setResult] = useState<HttpRunResult | null>(null);
   const [livePreview, setLivePreview] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [historyStateFilter, setHistoryStateFilter] = useState("");
   const [historyStatusFilter, setHistoryStatusFilter] = useState("");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [showCurlImport, setShowCurlImport] = useState(false);
   const [codeRequest, setCodeRequest] = useState<HttpWorkbenchRequest | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const toolsRef = useRef<HTMLDivElement>(null);
   const [curlText, setCurlText] = useState("");
-  const [responseView, setResponseView] = useState<"pretty" | "raw" | "hex" | "table">("pretty");
-  const [responseTab, setResponseTab] = useState<"body" | "headers" | "assertions" | "timeline">("body");
-  const [requestTab, setRequestTab] = useState<"headers" | "body" | "auth" | "cookies" | "pre" | "post" | "proxy" | "assertions" | "variables">("headers");
+  const [responseView, setResponseView] = useState<"pretty" | "raw" | "hex" | "table" | "preview">("pretty");
+  const [responseCharset, setResponseCharset] = useState("auto");
+  const [responseFormat, setResponseFormat] = useState<"auto" | "json" | "xml" | "html" | "text">("auto");
+  const [responseWrap, setResponseWrap] = useState(false);
+  const [responseSearch, setResponseSearch] = useState("");
+  const [responseSearchOpen, setResponseSearchOpen] = useState(false);
+  const [responseSearchCase, setResponseSearchCase] = useState(false);
+  const [responseSearchWord, setResponseSearchWord] = useState(false);
+  const [responseSearchRegex, setResponseSearchRegex] = useState(false);
+  const [responseSearchIndex, setResponseSearchIndex] = useState(0);
+  const [responseBytes, setResponseBytes] = useState<Uint8Array | null>(null);
+  const [responseMediaUrl, setResponseMediaUrl] = useState("");
+  const [responseTab, setResponseTab] = useState<"body" | "cookies" | "headers" | "console" | "request">("body");
+  const [lastRequest, setLastRequest] = useState<HttpWorkbenchRequest | null>(null);
+  const [requestWallMs, setRequestWallMs] = useState(0);
+  const [requestTab, setRequestTab] = useState<"params" | "headers" | "body" | "auth" | "cookies" | "pre" | "post" | "proxy">("params");
   const [timeline, setTimeline] = useState<Array<{ at: number; event: ExecutionEvent }>>([]);
-  const [responseOffset, setResponseOffset] = useState(0);
+  const [graphqlQuery, setGraphqlQuery] = useState("query Example {\n  __typename\n}");
+  const [graphqlVariables, setGraphqlVariables] = useState("{}");
+  const [graphqlOperationName, setGraphqlOperationName] = useState("");
+  const [rpcMethod, setRpcMethod] = useState("users.list");
+  const [rpcParams, setRpcParams] = useState("{}");
+  const [rpcId, setRpcId] = useState("1");
+  const [soapVersion, setSoapVersion] = useState<"1.1" | "1.2">("1.2");
+  const [soapAction, setSoapAction] = useState("");
+  const [soapEnvelope, setSoapEnvelope] = useState('<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">\n  <soap:Body>\n  </soap:Body>\n</soap:Envelope>');
+  const [binaryBase64, setBinaryBase64] = useState("");
+  const [binaryFileName, setBinaryFileName] = useState("");
+  const [binarySize, setBinarySize] = useState(0);
+  const [messagePackJson, setMessagePackJson] = useState("{}" );
 
+  useEffect(() => {
+    const confirmLegacyDelete = (event: MouseEvent) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".http-kv-delete:not([data-native-delete-confirm])");
+      document.querySelectorAll(".http-kv-delete.is-confirming:not([data-native-delete-confirm])").forEach((item) => { if (item !== button) item.classList.remove("is-confirming"); });
+      if (!button || button.classList.contains("is-confirming")) return;
+      event.preventDefault(); event.stopPropagation();
+      button.classList.add("is-confirming");
+      button.title = "再次点击确认删除";
+      button.setAttribute("aria-label", `确认${button.getAttribute("aria-label") ?? "删除"}`);
+    };
+    document.addEventListener("click", confirmLegacyDelete, true);
+    return () => document.removeEventListener("click", confirmLegacyDelete, true);
+  }, []);
+
+  const decodedResponse = useMemo(() => {
+    if (!responseBytes?.length) return result?.preview ?? livePreview;
+    const charset = responseCharset === "auto" ? charsetFromContentType(result?.responseMeta?.contentType) : responseCharset;
+    try { return new TextDecoder(charset).decode(responseBytes); } catch { return new TextDecoder("utf-8").decode(responseBytes); }
+  }, [responseBytes, responseCharset, result?.preview, result?.responseMeta?.contentType, livePreview]);
+  const responseHasBody = Boolean(responseBytes?.length || decodedResponse.length);
+  const responseContentType = (result?.responseMeta?.contentType ?? "").toLowerCase();
+  const responsePreviewKind = responseContentType.includes("text/html") || responseFormat === "html" ? "html" : responseContentType.startsWith("image/") ? "image" : responseContentType.startsWith("audio/") ? "audio" : null;
+  useEffect(() => {
+    if (!responseBytes?.length || (responsePreviewKind !== "image" && responsePreviewKind !== "audio")) { setResponseMediaUrl(""); return; }
+    const url = URL.createObjectURL(new Blob([new Uint8Array(responseBytes).buffer], { type: result?.responseMeta?.contentType ?? "application/octet-stream" }));
+    setResponseMediaUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [responseBytes, responsePreviewKind, result?.responseMeta?.contentType]);
   const responsePreview = useMemo(() => {
-    const preview = result?.preview ?? livePreview;
-    if (responseView === "pretty") return prettyPreview(preview);
+    const preview = decodedResponse;
+    if (responseView === "pretty") return responseFormat === "text" || responseFormat === "html" ? preview : prettyPreview(preview);
     if (responseView === "hex") return hexPreview(preview);
     return preview;
-  }, [result?.preview, livePreview, responseView]);
-  const responseTable = useMemo(() => jsonRows(result?.preview ?? livePreview), [result?.preview, livePreview]);
-  const responseWindow = responsePreview.slice(responseOffset, responseOffset + 10000);
+  }, [decodedResponse, responseView, responseFormat]);
+  const responseLanguage = useMemo(() => {
+    if (responseView === "hex") return "plaintext";
+    if (responseFormat !== "auto") return responseFormat === "text" ? "plaintext" : responseFormat;
+    if (responseContentType.includes("json") || responseContentType.includes("+json")) return "json";
+    if (responseContentType.includes("html")) return "html";
+    if (responseContentType.includes("xml") || responseContentType.includes("+xml")) return "xml";
+    if (responseContentType.includes("javascript")) return "javascript";
+    if (responseContentType.includes("css")) return "css";
+    const source = decodedResponse.trimStart();
+    if (source.startsWith("{") || source.startsWith("[")) { try { JSON.parse(source); return "json"; } catch { /* use plain text */ } }
+    if (/^<!doctype\s+html|^<html[\s>]/i.test(source)) return "html";
+    if (/^<\?xml|^<[A-Za-z_][\w:.-]*(?:\s|>)/.test(source)) return "xml";
+    return "plaintext";
+  }, [decodedResponse, responseContentType, responseFormat, responseView]);
+  const responseTable = useMemo(() => jsonRows(decodedResponse), [decodedResponse]);
+  const responseSearchMatches = useMemo(() => {
+    if (!responseSearch) return [];
+    try {
+      const escaped = responseSearchRegex ? responseSearch : responseSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const expression = new RegExp(responseSearchWord ? `\\b(?:${escaped})\\b` : escaped, responseSearchCase ? "g" : "gi");
+      return Array.from(responsePreview.matchAll(expression), (match) => match.index ?? 0);
+    } catch { return []; }
+  }, [responsePreview, responseSearch, responseSearchCase, responseSearchWord, responseSearchRegex]);
+  const responseSearchCount = responseSearchMatches.length;
+  const responseSearchLine = useMemo(() => {
+    const offset = responseSearchMatches[responseSearchIndex];
+    return offset === undefined ? undefined : responsePreview.slice(0, offset).split("\n").length;
+  }, [responsePreview, responseSearchMatches, responseSearchIndex]);
+  useEffect(() => { setResponseSearchIndex(0); }, [responseSearch, responseSearchCase, responseSearchWord, responseSearchRegex]);
+  const responseCookies = useMemo(() => (result?.responseMeta?.headers ?? [])
+    .filter(([name]) => name.toLowerCase() === "set-cookie")
+    .map(([, value]) => value), [result?.responseMeta?.headers]);
 
   function buildRequest(): HttpWorkbenchRequest {
     const headers = headerRows
-      .filter((row) => row.key.trim())
+      .filter((row) => row.enabled && row.key.trim())
       .map((row) => [row.key.trim(), row.value.trim()] as [string, string]);
+    const requestCookies = cookieRows.filter((row) => row.enabled && row.key.trim());
+    if (requestCookies.length) {
+      headers.push(["Cookie", requestCookies.map((row) => `${row.key.trim()}=${row.value}`).join("; ")]);
+    }
+    if (bodyMode === "soap" && soapAction.trim()) {
+      if (soapVersion === "1.1") headers.push(["SOAPAction", `"${soapAction.trim()}"`]);
+      else {
+        const contentType = headers.find((header) => header[0].toLowerCase() === "content-type");
+        if (contentType) contentType[1] = `application/soap+xml; action="${soapAction.trim()}"`;
+      }
+    }
 
+    const encodedBody = bodyMode === "binary" ? binaryBase64 : bodyMode === "msgpack" ? bytesToBase64(encodeMessagePack(JSON.parse(messagePackJson || "null"))) : undefined;
     return {
       url: url.trim(),
       method,
@@ -417,12 +654,20 @@ export function HttpWorkbench({
       body: method === "GET" || method === "HEAD" || bodyMode === "none" || bodyMode === "multipart"
         ? undefined
         : bodyMode === "urlencoded"
-          ? new URLSearchParams(formRows.filter((row) => row.key.trim()).map((row) => [row.key, row.value])).toString()
-          : body,
+          ? new URLSearchParams(formRows.filter((row) => row.enabled && row.key.trim()).map((row) => [row.key, row.value])).toString()
+          : bodyMode === "graphql"
+            ? JSON.stringify({ query: graphqlQuery, variables: JSON.parse(graphqlVariables || "{}"), ...(graphqlOperationName.trim() ? { operationName: graphqlOperationName.trim() } : {}) })
+            : bodyMode === "jsonrpc"
+              ? JSON.stringify({ jsonrpc: "2.0", method: rpcMethod, params: JSON.parse(rpcParams || "{}"), id: rpcId === "null" ? null : Number.isNaN(Number(rpcId)) ? rpcId : Number(rpcId) })
+              : bodyMode === "soap" ? soapEnvelope
+              : bodyMode === "binary" || bodyMode === "msgpack" ? encodedBody
+            : body,
+      bodyEncoding: bodyMode === "binary" || bodyMode === "msgpack" ? "base64" : "text",
+      bodySource: bodyMode === "msgpack" ? messagePackJson : undefined,
       multipart: bodyMode === "multipart" ? multipart.filter((part) => part.name.trim()) : [],
       timeoutMs,
       variables: parseKv(variablesText),
-      assertions: parseAssertions(assertionsText),
+      assertions: assertionsEnabled ? parseAssertions(assertionsText) : [],
       auth: buildAuth(authKind, authSecretRef, authUsername, authHeaderName, oauthTokenUrl, oauthScope, oauthAudience, oauthAuthorizationUrl, oauthRedirectUri, oauthCodeRef, oauthVerifierRef),
       followRedirects,
       retryMax,
@@ -440,7 +685,10 @@ export function HttpWorkbench({
       const parsed = parseCurl(curlText);
       if (parsed.method) setMethod(parsed.method);
       if (parsed.url) setUrl(parsed.url);
-      if (parsed.headers) setHeaderRows(headerRowsFromPairs(parsed.headers));
+      if (parsed.headers) {
+        setHeaderRows(headerRowsFromPairs(parsed.headers.filter(([key]) => key.toLowerCase() !== "cookie")));
+        setCookieRows(cookieRowsFromHeaders(parsed.headers));
+      }
       if (parsed.body !== undefined) setBody(parsed.body);
       setShowCurlImport(false);
       setStatusMsg("已从 cURL 导入请求");
@@ -467,10 +715,11 @@ export function HttpWorkbench({
   }
 
   function downloadResponse() {
-    if (!responsePreview) return;
+    if (!responsePreview && !responseBytes?.length) return;
     const type = result?.responseMeta?.contentType ?? "text/plain;charset=utf-8";
-    const extension = type.includes("json") ? "json" : type.includes("xml") ? "xml" : type.includes("html") ? "html" : "txt";
-    const href = URL.createObjectURL(new Blob([responsePreview], { type }));
+    const extension = type.includes("json") ? "json" : type.includes("xml") ? "xml" : type.includes("html") ? "html" : type.includes("png") ? "png" : type.includes("jpeg") ? "jpg" : type.includes("gif") ? "gif" : type.includes("svg") ? "svg" : type.includes("mpeg") ? "mp3" : type.includes("wav") ? "wav" : type.includes("ogg") ? "ogg" : "txt";
+    const body = responseBytes?.length ? new Uint8Array(responseBytes).buffer : responsePreview;
+    const href = URL.createObjectURL(new Blob([body], { type }));
     const anchor = document.createElement("a");
     anchor.href = href;
     anchor.download = `apivoy-response-${result?.executionId?.slice(0, 8) ?? "latest"}.${extension}`;
@@ -493,20 +742,27 @@ export function HttpWorkbench({
   function applyRequest(loaded: HttpWorkbenchRequest) {
     setMethod(loaded.method);
     setUrl(loaded.url);
-    setHeaderRows(headerRowsFromPairs(loaded.headers));
+    setQueryRows(queryRowsFromUrl(loaded.url));
+    setHeaderRows(headerRowsFromPairs(loaded.headers.filter(([key]) => key.toLowerCase() !== "cookie")));
+    setCookieRows(cookieRowsFromHeaders(loaded.headers));
     const contentType = loaded.headers.find(([key]) => key.toLowerCase() === "content-type")?.[1].toLowerCase() ?? "";
     const nextBodyMode: BodyMode = loaded.multipart?.length ? "multipart"
       : contentType.includes("x-www-form-urlencoded") ? "urlencoded"
       : contentType.includes("graphql") ? "graphql"
+      : loaded.bodyEncoding === "base64" && contentType.includes("msgpack") ? "msgpack"
+      : loaded.bodyEncoding === "base64" ? "binary"
       : contentType.includes("json") ? "json"
       : contentType.includes("xml") ? "xml"
       : loaded.body ? "text" : "none";
     setBody(loaded.body ?? "");
+    if (nextBodyMode === "binary") { setBinaryBase64(loaded.body ?? ""); setBinaryFileName("saved-binary"); setBinarySize(Math.floor((loaded.body?.length ?? 0) * .75)); }
+    if (nextBodyMode === "msgpack") setMessagePackJson(loaded.bodySource ?? "{}");
+    if (nextBodyMode === "graphql") setGraphqlQuery(loaded.body ?? "");
     setMultipart(loaded.multipart ?? []);
     setBodyMode(nextBodyMode);
     setFormRows(nextBodyMode === "urlencoded"
-      ? headerRowsFromPairs(Array.from(new URLSearchParams(loaded.body ?? "").entries()))
-      : [createHeaderRow()]);
+      ? [...Array.from(new URLSearchParams(loaded.body ?? "").entries()).map(([key, value]) => createQueryRow(key, value)), createQueryRow()]
+      : [createQueryRow()]);
     setTimeoutMs(loaded.timeoutMs);
     setFollowRedirects(loaded.followRedirects ?? true);
     setRetryMax(loaded.retryMax ?? 0);
@@ -518,6 +774,7 @@ export function HttpWorkbench({
     setPostScript(loaded.postScripts?.join("\n") ?? "");
     setVariablesText(formatKv(loaded.variables));
     setAssertionsText(formatAssertions(loaded.assertions));
+    setAssertionsEnabled(loaded.assertions.length > 0);
     const auth = loaded.auth;
     if (!auth || auth.kind === "none") {
       setAuthKind("none");
@@ -537,7 +794,8 @@ export function HttpWorkbench({
   }
 
   function selectBodyMode(nextMode: BodyMode) {
-    const contentType = BODY_MODES.find((mode) => mode.id === nextMode)?.contentType;
+    const contentType = nextMode === "soap" && soapVersion === "1.1" ? "text/xml" : BODY_MODES.find((mode) => mode.id === nextMode)?.contentType;
+    if (["graphql", "jsonrpc", "soap", "binary", "msgpack"].includes(nextMode)) setMethod("POST");
     setBodyMode(nextMode);
     setHeaderRows((rows) => {
       const withoutContentType = rows.filter((row) => row.key.toLowerCase() !== "content-type");
@@ -563,6 +821,21 @@ export function HttpWorkbench({
   }, [externalRequest]);
 
   useWorkbenchHydration("http", (raw) => {
+    const envelope = raw as { target?: string; payload?: { type?: string; query?: string; variables?: unknown; operationName?: string | null; headers?: Array<[string, string]> } };
+    if (envelope?.payload?.type === "graphql") {
+      setMethod("POST"); setUrl(envelope.target ?? "https://"); setBodyMode("graphql");
+      setGraphqlQuery(envelope.payload.query ?? ""); setGraphqlVariables(JSON.stringify(envelope.payload.variables ?? {}, null, 2)); setGraphqlOperationName(envelope.payload.operationName ?? "");
+      setHeaderRows(headerRowsFromPairs([["Content-Type", "application/json"], ...(envelope.payload.headers ?? []).filter(([name]) => name.toLowerCase() !== "content-type")]));
+      setResult(null); setStatusMsg("已在 HTTP 工作台中载入 GraphQL 请求"); return;
+    }
+    const rpcEnvelope = raw as { protocolId?: string; target?: string; payload?: { type?: string; value?: { version?: "1.1" | "1.2"; action?: string; envelope?: string; method?: string; params?: unknown; id?: string | number | null; headers?: Array<[string, string]> } } };
+    if (rpcEnvelope?.payload?.type === "raw" && (rpcEnvelope.protocolId === "soap" || rpcEnvelope.protocolId === "jsonrpc")) {
+      const value = rpcEnvelope.payload.value ?? {}; setMethod("POST"); setUrl(rpcEnvelope.target ?? "https://"); setBodyMode(rpcEnvelope.protocolId);
+      setHeaderRows(headerRowsFromPairs(value.headers ?? []));
+      if (rpcEnvelope.protocolId === "soap") { setSoapVersion(value.version ?? "1.2"); setSoapAction(value.action ?? ""); setSoapEnvelope(value.envelope ?? ""); }
+      else { setRpcMethod(value.method ?? ""); setRpcParams(JSON.stringify(value.params ?? {}, null, 2)); setRpcId(value.id == null ? "null" : String(value.id)); }
+      setResult(null); setStatusMsg(`已在 HTTP 工作台中载入 ${rpcEnvelope.protocolId === "soap" ? "SOAP" : "JSON-RPC"} 请求`); return;
+    }
     const detail = raw as { request?: HttpWorkbenchRequest; aiAssertions?: string };
     if (!detail?.request) return;
     applyRequest(detail.request);
@@ -572,6 +845,13 @@ export function HttpWorkbench({
   });
 
   useAutosaveDraft("http", buildRequest);
+  useEffect(() => {
+    if (!toolsOpen) return;
+    const close = (event: MouseEvent) => { if (!toolsRef.current?.contains(event.target as Node)) setToolsOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setToolsOpen(false); };
+    document.addEventListener("mousedown", close); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape); };
+  }, [toolsOpen]);
 
   async function startPkceAuthorization() {
     if (!oauthAuthorizationUrl.trim() || !authUsername.trim() || !oauthRedirectUri.trim()) {
@@ -596,13 +876,15 @@ export function HttpWorkbench({
     setStatusMsg("授权页面已打开；完成授权后粘贴回调中的 code");
   }
 
-  async function handleSend(responseView: "body" | "timeline" = "body") {
+  async function handleSend() {
+    const wallStartedAt = performance.now();
     setLoading(true);
     setResult(null);
     setLivePreview("");
+    setResponseBytes(null);
+    setResponseSearch("");
     setTimeline([]);
-    setResponseOffset(0);
-    setResponseTab(responseView);
+    setResponseTab("body");
     setExecutionId(null);
     setStatusMsg(null);
     try {
@@ -610,16 +892,30 @@ export function HttpWorkbench({
         if (!onPutSecret) throw new Error("当前执行端未提供安全密钥存储，无法保存短期授权码");
         await onPutSecret(oauthCodeRef, oauthAuthorizationCode.trim());
       }
-      const next = await onSend(buildRequest(), {
+      const request = buildRequest();
+      setLastRequest(request);
+      const next = await onSend(request, {
         onStarted: (id) => setExecutionId(id),
         onChunk: (preview) => setLivePreview((current) => current + preview),
-        onEvent: (event) => setTimeline((current) => [...current, { at: performance.now(), event }]),
+        onEvent: (event) => {
+          setTimeline((current) => [...current, { at: performance.now(), event }]);
+          if (event.type === "response_chunk" && event.dataBase64) {
+            const chunk = base64Bytes(event.dataBase64);
+            setResponseBytes((current) => {
+              if (!current?.length) return chunk;
+              const combined = new Uint8Array(current.length + chunk.length);
+              combined.set(current); combined.set(chunk, current.length); return combined;
+            });
+          }
+        },
       });
       setResult(next);
+      setRequestWallMs(Math.round(performance.now() - wallStartedAt));
       if (onListHistory) {
         setHistory(await onListHistory(currentHistoryFilter()));
       }
     } catch (err) {
+      setRequestWallMs(Math.round(performance.now() - wallStartedAt));
       setResult({
         summary: failedSummary(),
         eventCount: 0,
@@ -655,91 +951,6 @@ export function HttpWorkbench({
     }
   }
 
-  async function handleLoad() {
-    if (!onLoad) {
-      return;
-    }
-    try {
-      const loaded = await onLoad();
-      if (!loaded) {
-        setStatusMsg("本地库中暂无已保存请求");
-        return;
-      }
-      applyRequest(loaded);
-      setStatusMsg("已从本地库打开请求");
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handleLoadEnv() {
-    if (!onLoadEnvironment) {
-      return;
-    }
-    try {
-      const env = await onLoadEnvironment();
-      setEnvText(formatKv(env.variables));
-      setSecretRefs(env.secretRefs ?? []);
-      setStatusMsg("已加载环境变量");
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handleSaveEnv() {
-    if (!onSaveEnvironment) {
-      return;
-    }
-    try {
-      const refs = [...secretRefs];
-      if (authKind !== "none" && authSecretRef.trim() && !refs.includes(authSecretRef.trim())) {
-        refs.push(authSecretRef.trim());
-      }
-      if (tlsClientCertRef.trim() && !refs.includes(tlsClientCertRef.trim())) {
-        refs.push(tlsClientCertRef.trim());
-      }
-      await onSaveEnvironment(parseKv(envText), refs);
-      setSecretRefs(refs);
-      setStatusMsg("环境变量已保存");
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handlePutSecret() {
-    if (!onPutSecret) {
-      return;
-    }
-    const name = secretName.trim();
-    if (!name || !secretValue) {
-      setStatusMsg("请填写密钥名称与值");
-      return;
-    }
-    try {
-      await onPutSecret(name, secretValue);
-      setSecretValue("");
-      setAuthSecretRef(name);
-      const refs = secretRefs.includes(name) ? secretRefs : [...secretRefs, name];
-      setSecretRefs(refs);
-      if (onSaveEnvironment) {
-        await onSaveEnvironment(parseKv(envText), refs);
-      }
-      setStatusMsg(`密钥 ${name} 已写入安全存储（不明文落盘）`);
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function refreshCookies() {
-    if (!onListCookies) return;
-    try { setCookies(await onListCookies(url)); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); }
-  }
-
-  async function handleSetCookie() {
-    if (!onSetCookie || !cookieName.trim()) return;
-    try { await onSetCookie(url, cookieName.trim(), cookieValue); await refreshCookies(); setCookieName(""); setCookieValue(""); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); }
-  }
-
   function currentHistoryFilter(): HistoryFilter | undefined {
     const status = historyStatusFilter.trim()
       ? Number(historyStatusFilter.trim())
@@ -768,8 +979,8 @@ export function HttpWorkbench({
 
   useEffect(() => {
     const focusHistory = () => {
+      setHistoryOpen(true);
       void handleRefreshHistory();
-      queueMicrotask(() => document.getElementById("http-execution-history")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     };
     window.addEventListener("apivoy-focus-history", focusHistory);
     return () => window.removeEventListener("apivoy-focus-history", focusHistory);
@@ -801,6 +1012,7 @@ export function HttpWorkbench({
         window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: loaded }));
         if (loaded.payload.type === "http") applyRequest({ name: loaded.name, url: loaded.target, method: loaded.payload.method, headers: loaded.payload.headers, body: loaded.payload.body ?? undefined, multipart: loaded.payload.multipart ?? [], timeoutMs: loaded.timeoutMs, variables: loaded.variables ?? {}, assertions: loaded.assertions ?? [], auth: loaded.authRef ?? null, followRedirects: loaded.payload.followRedirects, retryMax: loaded.retryPolicy.max_retries, retryBackoffMs: loaded.retryPolicy.backoff_ms, proxy: loaded.proxy ?? null, tlsVerify: loaded.tls.verify, tlsClientCertRef: loaded.tls.client_cert_ref ?? null, preScripts: loaded.preScripts ?? [], postScripts: loaded.postScripts ?? [] });
       } else applyRequest(loaded);
+      setHistoryOpen(false);
       setStatusMsg("已从历史恢复请求，可再次发送");
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
@@ -826,11 +1038,35 @@ export function HttpWorkbench({
     });
   }
 
-  const showBody = method !== "GET" && method !== "HEAD";
+  const responseHeaderBytes = responseHeaderSize(result?.responseMeta);
+  const responseBodyBytes = result?.summary.bytesReceived ?? 0;
+  const responseTotalBytes = responseHeaderBytes + responseBodyBytes;
+  const requestHeaderBytes = requestHeaderSize(lastRequest);
+  const requestBodyBytes = requestBodySize(lastRequest);
+  const responseMetrics = result && !result.error ? <>
+    <strong className="http-status-code">{result.summary.status ?? "—"}</strong>
+    <span className="http-metric-popover" tabIndex={0}>{result.summary.durationMs} ms<span className="http-metric-card http-timing-card" role="tooltip"><b>事件 <i>时间</i></b><span className="http-timing-progress-row"><em>前置操作执行</em><span className="http-timing-progress" aria-label="前置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row"><em>接口请求</em><span className="http-timing-progress" aria-label={`接口请求占总耗时 ${Math.round(result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%`}><i style={{ width: `${Math.min(100, result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%` }}/></span><i>{result.summary.durationMs} ms</i></span><span className="http-timing-progress-row"><em>后置操作执行</em><span className="http-timing-progress" aria-label="后置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row http-timing-total"><em>总耗时</em><span className="http-timing-progress" aria-label="总耗时 100%"><i style={{ width: "100%" }}/></span><i>{requestWallMs || result.summary.durationMs} ms</i></span></span></span>
+    <span className="http-metric-popover" tabIndex={0}>{formatBytes(responseTotalBytes)}<span className="http-metric-card http-size-card" role="tooltip"><b>↓ 响应大小 <i>{formatBytes(responseTotalBytes)}</i></b><span>Header <i>{formatBytes(responseHeaderBytes)}</i></span><span>Body <i>{formatBytes(responseBodyBytes)}</i></span><hr/><b>↑ 请求大小 <i>{formatBytes(requestSize(lastRequest))}</i></b><span>Header <i>{formatBytes(requestHeaderBytes)}</i></span><span>Body <i>{formatBytes(requestBodyBytes)}</i></span></span></span>
+  </> : null;
+  const responseHeaderActions = <div className="http-response-header-actions">
+    {!loading && !result ? <label className="http-response-validation-control" title="启用或停用响应校验"><span>校验响应</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
+    {!loading && !result ? <div className="http-assertion-config">
+      <button type="button" className="http-assertion-summary" aria-expanded={assertionConfigOpen} onClick={() => { setAssertionsDraft(assertionsText); setAssertionConfigOpen((open) => !open); }}>
+        <span>配置</span><span className="http-assertion-chevron"><Icon name="chevron"/></span>
+      </button>
+      {assertionConfigOpen ? <div className="http-assertion-editor" role="dialog" aria-label="响应校验配置">
+        <strong>响应校验配置</strong>
+        <span>每行一条：status == 200 / body contains … / jsonpath $.a == 1</span>
+        <textarea style={styles.textarea} value={assertionsDraft} onChange={(event) => setAssertionsDraft(event.target.value)} rows={5} spellCheck={false}/>
+        <div className="http-assertion-editor-actions"><button type="button" style={styles.secondaryButton} onClick={() => setAssertionConfigOpen(false)}>取消</button><button type="button" style={styles.primaryButton} onClick={() => { setAssertionsText(assertionsDraft); setAssertionConfigOpen(false); setStatusMsg("响应校验配置已保存"); }}>保存</button></div>
+      </div> : null}
+    </div> : null}
+    {result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null}
+  </div>;
 
   return (
     <WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪 · Ctrl + Enter 发送</span>}>
-      <SplitPane id="http-workbench" direction="vertical" primaryLabel="请求配置" secondaryLabel="响应检查器" primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
+      <SplitPane id="http-workbench" direction="vertical" minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
 <div className="http-request-commandbar"><div className="http-request-primary-actions">
         <select
           aria-label="HTTP 方法"
@@ -845,14 +1081,19 @@ export function HttpWorkbench({
             </option>
           ))}
         </select>
-        <label className="http-target-field">目标 URL<input id="http-target-url" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://{{host}}/api" spellCheck={false} disabled={loading} aria-describedby="http-target-url-help" aria-invalid={!url.trim()} /><small id="http-target-url-help">支持环境变量，例如 https://&#123;&#123;host&#125;&#125;/api</small></label>
-        <button className="http-send-button" style={styles.button} disabled={loading || !url.trim()} onClick={() => void handleSend("body")}>
+        <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="输入请求 URL" spellCheck={false} disabled={loading} /></label>
+        <button className="http-send-button" style={styles.button} disabled={loading || !url.trim()} onClick={() => void handleSend()}>
           <Icon name="send"/>{loading ? "发送中…" : "发送"}
         </button>
-        <button className="http-debug-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => void handleSend("timeline")} title="发送请求并打开时间线诊断">
-          <Icon name="activity"/>调试
-        </button>
         {onSave && <button className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}><Icon name="archive"/>保存</button>}
+        <div className="http-tools-menu" ref={toolsRef}>
+          <button type="button" className="http-tools-trigger" style={styles.secondaryButton} disabled={loading} aria-haspopup="menu" aria-expanded={toolsOpen} onClick={() => setToolsOpen((value) => !value)}><Icon name="command"/>更多</button>
+          {toolsOpen ? <div className="http-tools-popover" role="menu" aria-label="请求转换工具">
+            <button type="button" role="menuitem" onClick={() => { setShowCurlImport(true); setToolsOpen(false); }}>导入 cURL</button>
+            <button type="button" role="menuitem" disabled={!url.trim()} onClick={() => { handleCopyCurl(); setToolsOpen(false); }}>复制 cURL</button>
+            <button type="button" role="menuitem" disabled={!url.trim()} onClick={() => { try { setCodeRequest(buildRequest()); setToolsOpen(false); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } }}>生成代码</button>
+          </div> : null}
+        </div>
         {onCancel && (
           <button
             style={styles.secondaryButton}
@@ -863,17 +1104,6 @@ export function HttpWorkbench({
           </button>
         )}
         <span style={styles.shortcut}>Ctrl ↵</span>
-      </div><div className="http-request-utility-actions" aria-label="请求文件与代码工具">
-        {onLoad && <button style={styles.secondaryButton} disabled={loading} onClick={handleLoad}><Icon name="activity"/>打开最近保存</button>}
-        <button style={styles.secondaryButton} disabled={loading} onClick={() => setShowCurlImport((v) => !v)}>
-          导入 cURL
-        </button>
-        <button style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleCopyCurl}>
-          复制 cURL
-        </button>
-        <button style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => { try { setCodeRequest(buildRequest()); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } }}>
-          生成代码
-        </button>
       </div></div>
 
       {showCurlImport && (
@@ -886,19 +1116,17 @@ export function HttpWorkbench({
       {codeRequest && <CodeGenerator request={codeRequest} />}
 
       {(() => {
-        const cookieEnabled = Boolean(onListCookies && onSetCookie && onDeleteCookie);
         const requestTabs = [
-          { id: "headers" as const, label: "Headers", hint: headerRows.filter((row) => row.key.trim()).length || undefined },
+          { id: "params" as const, label: "Params", hint: queryRows.filter((row) => row.key.trim()).length || undefined },
           { id: "body" as const, label: "Body" },
-          { id: "auth" as const, label: "认证", hint: authKind !== "none" ? authKind : undefined },
-          { id: "cookies" as const, label: "Cookie", hint: cookieEnabled ? cookies.length || undefined : undefined },
-          { id: "pre" as const, label: "前置脚本", hint: preScript.trim() ? "·" : undefined },
-          { id: "post" as const, label: "后置脚本", hint: postScript.trim() ? "·" : undefined },
-          { id: "proxy" as const, label: "代理与传输", hint: proxy.trim() ? "·" : undefined },
-          { id: "assertions" as const, label: "断言" },
-          { id: "variables" as const, label: "变量与密钥" },
+          { id: "headers" as const, label: "Headers", hint: headerRows.filter((row) => row.key.trim()).length || undefined },
+          { id: "cookies" as const, label: "Cookies", hint: cookieRows.filter((row) => row.key.trim()).length || undefined },
+          { id: "auth" as const, label: "Auth", hint: authKind !== "none" ? "·" : undefined },
+          { id: "pre" as const, label: "前置操作", hint: preScript.trim() ? "·" : undefined },
+          { id: "post" as const, label: "后置操作", hint: postScript.trim() ? "·" : undefined },
+          { id: "proxy" as const, label: "设置", hint: proxy.trim() ? "·" : undefined },
         ];
-        const activeTab = requestTabs.some((tab) => tab.id === requestTab) ? requestTab : "headers";
+        const activeTab = requestTabs.some((tab) => tab.id === requestTab) ? requestTab : "params";
         return <div className="http-request-tabs">
           <div style={styles.requestTabs} role="tablist" aria-label="请求配置" onKeyDown={(event) => {
             if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -912,9 +1140,23 @@ export function HttpWorkbench({
             {requestTabs.map((tab) => <button key={tab.id} type="button" role="tab" tabIndex={activeTab === tab.id ? 0 : -1} aria-selected={activeTab === tab.id} id={`http-request-tab-${tab.id}`} aria-controls={`http-request-panel-${tab.id}`} style={activeTab === tab.id ? styles.tabActive : styles.tab} onClick={() => setRequestTab(tab.id)}>{tab.label}{tab.hint != null && tab.hint !== "" ? <span aria-label={`${tab.hint} 项`} style={styles.count}>{tab.hint}</span> : null}</button>)}
           </div>
           <div className="http-request-tab-panel" role="tabpanel" id={`http-request-panel-${activeTab}`} aria-labelledby={`http-request-tab-${activeTab}`}>
+            {activeTab === "params" && <div className="http-kv-editor" aria-label="URL Query Params">
+              <div className="http-section-heading">Query 参数</div>
+              <div className="http-param-header" aria-hidden="true"><span/><span>参数名</span><span>参数值</span><span>类型</span><span>说明</span><span/></div>
+              {queryRows.map((row, index) => <div className="http-param-row" key={row.id}>
+                <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} Param ${index + 1}`} checked={row.enabled} onChange={(event) => setQueryRows((rows) => { const next = rows.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item); setUrl((current) => urlWithQueryRows(current, next)); return next; })} disabled={loading}/>
+                <input aria-label={`Param ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setQueryRows((rows) => { const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item); const normalized = index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next; setUrl((current) => urlWithQueryRows(current, normalized)); return normalized; })} placeholder="添加参数" spellCheck={false} disabled={loading}/>
+                <input aria-label={`Param ${index + 1} Value`} style={styles.input} value={row.value} onChange={(event) => setQueryRows((rows) => { const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item); const normalized = index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next; setUrl((current) => urlWithQueryRows(current, normalized)); return normalized; })} placeholder="参数值" spellCheck={false} disabled={loading}/>
+                <select aria-label={`Param ${index + 1} 类型`} style={styles.input} value={row.valueType} onChange={(event) => setQueryRows((rows) => rows.map((item) => item.id === row.id ? { ...item, valueType: event.target.value as HeaderRow["valueType"] } : item))} disabled={loading}>{ROW_VALUE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select>
+                <input aria-label={`Param ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => setQueryRows((rows) => rows.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
+                {index < queryRows.length - 1 || row.key || row.value ? <button type="button" className="http-kv-delete" aria-label={`删除 Param ${index + 1}`} title="删除此 Param" onClick={() => setQueryRows((rows) => { const next = rows.filter((item) => item.id !== row.id); const normalized = next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createQueryRow()]; setUrl((current) => urlWithQueryRows(current, normalized)); return normalized; })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
+              </div>)}
+            </div>}
             {activeTab === "headers" && <div className="http-kv-editor" aria-label="请求 Headers">
-              <div className="http-kv-header" aria-hidden="true"><span>Key</span><span>Value</span><span>操作</span></div>
-              {headerRows.map((row, index) => <div className="http-kv-row" key={row.id}>
+              <div className="http-section-heading">请求 Headers</div>
+              <div className="http-param-header" aria-hidden="true"><span/><span>Header 名称</span><span>Header 值</span><span>类型</span><span>说明</span><span/></div>
+              {headerRows.map((row, index) => <div className="http-param-row" key={row.id}>
+                <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} Header ${index + 1}`} checked={row.enabled} onChange={(event) => setHeaderRows((rows) => rows.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item))} disabled={loading}/>
                 <input aria-label={`Header ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setHeaderRows((rows) => {
                   const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item);
                   return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
@@ -923,42 +1165,50 @@ export function HttpWorkbench({
                   const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item);
                   return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
                 })} placeholder="例如 application/json" spellCheck={false} disabled={loading} />
-                <button type="button" className="http-kv-delete" aria-label={`删除 Header ${index + 1}`} title="删除此 Header" onClick={() => setHeaderRows((rows) => {
+                <select aria-label={`Header ${index + 1} 类型`} style={styles.input} value="string" disabled><option value="string">String</option></select>
+                <input aria-label={`Header ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => setHeaderRows((rows) => rows.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
+                {index < headerRows.length - 1 || row.key || row.value ? <button type="button" className="http-kv-delete" aria-label={`删除 Header ${index + 1}`} title="删除此 Header" onClick={() => setHeaderRows((rows) => {
                   const next = rows.filter((item) => item.id !== row.id);
                   return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createHeaderRow()];
-                })} disabled={loading || (!row.key && !row.value && headerRows.length === 1)}><Icon name="trash"/></button>
+                })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
               </div>)}
-              <button type="button" className="http-kv-add" style={styles.secondaryButton} onClick={() => setHeaderRows((rows) => [...rows, createHeaderRow()])} disabled={loading}>＋ 添加 Header</button>
-              <small>在最后一行输入时会自动增加新行；留空的行不会随请求发送。</small>
             </div>}
             {activeTab === "body" && <div style={styles.label}>
               <div className="http-body-mode-tabs" role="tablist" aria-label="请求体类型">
                 {BODY_MODES.map((mode) => <button key={mode.id} type="button" role="tab" aria-selected={bodyMode === mode.id} className={bodyMode === mode.id ? "is-active" : ""} onClick={() => selectBodyMode(mode.id)} disabled={loading}>{mode.label}</button>)}
-                <button type="button" disabled title="需要字节请求体支持">Binary</button>
-                <button type="button" disabled title="需要 MessagePack 字节编码支持">msgpack</button>
               </div>
               {bodyMode === "none" && <div className="http-body-empty">当前请求不发送 Body。选择上方类型开始编辑。</div>}
-              {bodyMode !== "none" && bodyMode !== "multipart" && bodyMode !== "urlencoded" && <>
+              {bodyMode !== "none" && bodyMode !== "multipart" && bodyMode !== "urlencoded" && !["graphql", "jsonrpc", "soap", "binary", "msgpack"].includes(bodyMode) && <>
                 <div className="http-body-editor-label">请求内容</div>
-                <CodeEditor value={body} onChange={setBody} language={bodyMode === "json" ? "json" : bodyMode === "xml" ? "xml" : bodyMode === "graphql" ? "graphql" : "plaintext"} height={260} readOnly={loading} />
+                <CodeEditor value={body} onChange={setBody} language={bodyMode === "json" ? "json" : bodyMode === "xml" ? "xml" : "plaintext"} height={260} readOnly={loading} />
               </>}
+              {bodyMode === "graphql" && <div className="http-graphql-editor">
+                <div className="http-body-editor-label">Query</div><CodeEditor value={graphqlQuery} onChange={setGraphqlQuery} language="graphql" height={220} readOnly={loading}/>
+                <div className="http-graphql-fields"><label>Operation Name<input style={styles.input} value={graphqlOperationName} onChange={(event) => setGraphqlOperationName(event.target.value)} disabled={loading}/></label><label>Variables (JSON)<CodeEditor value={graphqlVariables} onChange={setGraphqlVariables} language="json" height={130} readOnly={loading}/></label></div>
+              </div>}
+              {bodyMode === "jsonrpc" && <div className="http-specialized-editor"><div className="http-specialized-row"><label>Method<input style={styles.input} value={rpcMethod} onChange={(event) => setRpcMethod(event.target.value)} disabled={loading}/></label><label>Request ID<input style={styles.input} value={rpcId} onChange={(event) => setRpcId(event.target.value)} disabled={loading}/></label></div><div className="http-body-editor-label">Params (JSON)</div><CodeEditor value={rpcParams} onChange={setRpcParams} language="json" height={220} readOnly={loading}/></div>}
+              {bodyMode === "soap" && <div className="http-specialized-editor"><div className="http-specialized-row"><label>SOAP Version<select style={styles.input} value={soapVersion} onChange={(event) => { const version = event.target.value as "1.1" | "1.2"; setSoapVersion(version); setHeaderRows((rows) => headerRowsFromPairs([["Content-Type", version === "1.1" ? "text/xml" : "application/soap+xml"], ...rows.filter((row) => row.key && row.key.toLowerCase() !== "content-type").map((row) => [row.key, row.value] as [string, string])])); }} disabled={loading}><option>1.1</option><option>1.2</option></select></label><label>SOAP Action<input style={styles.input} value={soapAction} onChange={(event) => setSoapAction(event.target.value)} disabled={loading}/></label></div><div className="http-body-editor-label">XML Envelope</div><CodeEditor value={soapEnvelope} onChange={setSoapEnvelope} language="xml" height={260} readOnly={loading}/></div>}
+              {bodyMode === "binary" && <div className="http-binary-editor"><label className="http-binary-picker"><Icon name="archive"/><strong>{binaryFileName || "选择二进制文件"}</strong><span>{binaryFileName ? `${binarySize.toLocaleString()} bytes` : "文件将以 Base64 保存，发送时还原为原始字节"}</span><input type="file" disabled={loading} onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { const value = String(reader.result ?? ""); setBinaryBase64(value.slice(value.indexOf(",") + 1)); setBinaryFileName(file.name); setBinarySize(file.size); setHeaderRows((rows) => headerRowsFromPairs([["Content-Type", file.type || "application/octet-stream"], ...rows.filter((row) => row.key && row.key.toLowerCase() !== "content-type").map((row) => [row.key, row.value] as [string, string])])); }; reader.readAsDataURL(file); }}/></label>{binaryFileName ? <button type="button" style={styles.secondaryButton} disabled={loading} onClick={() => { setBinaryBase64(""); setBinaryFileName(""); setBinarySize(0); }}>移除文件</button> : null}</div>}
+              {bodyMode === "msgpack" && <div className="http-specialized-editor"><div className="http-body-editor-label">JSON 数据（发送时编码为 MessagePack）</div><CodeEditor value={messagePackJson} onChange={setMessagePackJson} language="json" height={280} readOnly={loading}/></div>}
               {bodyMode === "urlencoded" && <div className="http-kv-editor http-form-editor" aria-label="URL 编码表单">
-                <div className="http-kv-header" aria-hidden="true"><span>Key</span><span>Value</span><span>操作</span></div>
-                {formRows.map((row, index) => <div className="http-kv-row" key={row.id}>
+                <div className="http-param-header" aria-hidden="true"><span/><span>字段名</span><span>字段值</span><span>类型</span><span>说明</span><span/></div>
+                {formRows.map((row, index) => <div className="http-param-row" key={row.id}>
+                  <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} 表单字段 ${index + 1}`} checked={row.enabled} onChange={(event) => setFormRows((rows) => rows.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item))} disabled={loading}/>
                   <input aria-label={`表单字段 ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setFormRows((rows) => {
                     const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item);
-                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
-                  })} placeholder="字段名" disabled={loading}/>
+                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next;
+                  })} placeholder="添加字段" disabled={loading}/>
                   <input aria-label={`表单字段 ${index + 1} Value`} style={styles.input} value={row.value} onChange={(event) => setFormRows((rows) => {
                     const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item);
-                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
+                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next;
                   })} placeholder="字段值" disabled={loading}/>
-                  <button type="button" className="http-kv-delete" aria-label={`删除表单字段 ${index + 1}`} onClick={() => setFormRows((rows) => {
+                  <select aria-label={`表单字段 ${index + 1} 类型`} style={styles.input} value={row.valueType} onChange={(event) => setFormRows((rows) => rows.map((item) => item.id === row.id ? { ...item, valueType: event.target.value as HeaderRow["valueType"] } : item))} disabled={loading}>{ROW_VALUE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select>
+                  <input aria-label={`表单字段 ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => setFormRows((rows) => rows.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
+                  {index < formRows.length - 1 || row.key || row.value ? <button type="button" className="http-kv-delete" aria-label={`删除表单字段 ${index + 1}`} onClick={() => setFormRows((rows) => {
                     const next = rows.filter((item) => item.id !== row.id);
-                    return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createHeaderRow()];
-                  })} disabled={loading}><Icon name="trash"/></button>
+                    return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createQueryRow()];
+                  })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
                 </div>)}
-                <button type="button" className="http-kv-add" style={styles.secondaryButton} onClick={() => setFormRows((rows) => [...rows, createHeaderRow()])} disabled={loading}>＋ 添加字段</button>
               </div>}
               {bodyMode === "multipart" && (
                 <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
@@ -974,7 +1224,6 @@ export function HttpWorkbench({
                   <small style={{ color: "var(--apivoy-muted)" }}>文件内容以 Base64 保存在请求中；发送时自动生成 multipart boundary。</small>
                 </div>
               )}
-              {!showBody && <small className="http-body-method-note">{method} 请求通常不发送 Body；这里仍保留输入内容，切换到 POST / PUT / PATCH 后可直接使用。</small>}
             </div>}
             {activeTab === "auth" && <label style={styles.label}>
               认证
@@ -1008,11 +1257,10 @@ export function HttpWorkbench({
                 </div>
               )}
             </label>}
-            {activeTab === "cookies" && (cookieEnabled ? <div style={styles.importPanel}>
-              <div style={styles.panelTitle}><strong>Cookie Jar</strong><button style={styles.secondaryButton} onClick={() => void refreshCookies()}>刷新当前 URL</button></div>
-              <div style={styles.row}><input aria-label="Cookie 名称" style={styles.input} value={cookieName} onChange={(event) => setCookieName(event.target.value)} placeholder="Cookie 名称" /><input aria-label="Cookie 值" style={styles.input} value={cookieValue} onChange={(event) => setCookieValue(event.target.value)} placeholder="Cookie 值" /><button style={styles.secondaryButton} onClick={() => void handleSetCookie()}>设置</button></div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>{cookies.map((cookie) => <span key={cookie.name} style={{ border: "1px solid var(--apivoy-border)", borderRadius: 999, padding: "4px 8px", fontSize: 11 }}><code>{cookie.name}={cookie.value}</code> <button aria-label={`删除 Cookie ${cookie.name}`} onClick={async () => { await onDeleteCookie!(url, cookie.name); await refreshCookies(); }}><Icon name="trash" /></button></span>)}</div>
-            </div> : <div style={styles.muted}>当前通道未接入 Cookie Jar。</div>)}
+            {activeTab === "cookies" && <div className="http-request-editor-section">
+              <div className="http-section-heading">请求 Cookies</div>
+              <KeyValueRows rows={cookieRows} setRows={setCookieRows} kind="Cookie" nameLabel="Cookie 名称" valueLabel="Cookie 值" addPlaceholder="添加 Cookie" loading={loading}/>
+            </div>}
             {activeTab === "pre" && <label style={styles.label}>前置脚本（QuickJS）<CodeEditor value={preScript} onChange={setPreScript} language="javascript" height={240} readOnly={loading} /></label>}
             {activeTab === "post" && <label style={styles.label}>后置脚本（QuickJS）<CodeEditor value={postScript} onChange={setPostScript} language="javascript" height={240} readOnly={loading} /></label>}
             {activeTab === "proxy" && <div style={styles.grid3}>
@@ -1025,39 +1273,16 @@ export function HttpWorkbench({
               {!tlsVerify && <span style={styles.dangerHint}>仅在可信测试环境关闭证书校验</span>}
               <label style={styles.label}>客户端证书密钥引用<input style={styles.input} value={tlsClientCertRef} onChange={(event) => setTlsClientCertRef(event.target.value)} placeholder="Keychain 中的合并 PEM 名称" disabled={loading} /></label>
             </div>}
-            {activeTab === "assertions" && <label style={styles.label}>断言（每行一条：`status == 200` / `body contains …` / `jsonpath $.a == 1`）<textarea style={styles.textarea} value={assertionsText} onChange={(e) => setAssertionsText(e.target.value)} rows={8} spellCheck={false} disabled={loading} /></label>}
-            {activeTab === "variables" && <div style={styles.grid2}>
-              <label style={styles.label}>请求变量（`key=value`，覆盖环境）<textarea style={styles.textarea} value={variablesText} onChange={(e) => setVariablesText(e.target.value)} rows={6} spellCheck={false} disabled={loading} /></label>
-              {onPutSecret ? (
-                <label style={styles.label}>
-                  密钥存储（写入 OS Keychain / Agent，不明文进 SQLite）
-                  <input aria-label="Secret 名称" style={styles.input} value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="secret 名称，如 apiToken" spellCheck={false} disabled={loading} />
-                  <input aria-label="Secret 值" style={styles.input} type="password" value={secretValue} onChange={(e) => setSecretValue(e.target.value)} placeholder="密钥值（仅写入安全存储）" disabled={loading} />
-                  <div style={styles.row}>
-                    <button style={styles.secondaryButton} disabled={loading} onClick={handlePutSecret}>存入密钥</button>
-                    {secretRefs.length > 0 && <span style={styles.muted}>已关联: {secretRefs.join(", ")}</span>}
-                  </div>
-                </label>
-              ) : <div />}
-              {(onLoadEnvironment || onSaveEnvironment) && (
-                <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
-                  环境变量（Default env，`key=value`）
-                  <textarea style={styles.textarea} value={envText} onChange={(e) => setEnvText(e.target.value)} rows={4} spellCheck={false} disabled={loading} />
-                  <div style={styles.row}>
-                    {onLoadEnvironment && <button style={styles.secondaryButton} disabled={loading} onClick={handleLoadEnv}>加载环境</button>}
-                    {onSaveEnvironment && <button style={styles.secondaryButton} disabled={loading} onClick={handleSaveEnv}>保存环境</button>}
-                  </div>
-                </label>
-              )}
-            </div>}
           </div>
         </div>;
       })()}
 
-      {onListHistory && (
-        <div style={styles.history} id="http-execution-history">
+      {onListHistory && historyOpen && (
+        <div className="execution-history-layer" role="presentation" onMouseDown={() => setHistoryOpen(false)}>
+        <aside className="execution-history-drawer" role="dialog" aria-modal="true" aria-label="执行历史" id="http-execution-history" onMouseDown={(event) => event.stopPropagation()}>
           <div style={styles.row}>
             <strong style={{ color: "var(--apivoy-text)" }}>执行历史</strong>
+            <button type="button" className="ui-icon-button" aria-label="关闭执行历史" onClick={() => setHistoryOpen(false)}><Icon name="close"/></button>
             <button style={styles.secondaryButton} disabled={loading} onClick={handleRefreshHistory}>
               刷新
             </button>
@@ -1143,33 +1368,33 @@ export function HttpWorkbench({
               })}
             </div>
           )}
+        </aside>
         </div>
       )}
 
       </div>} secondary={<div className="http-response-pane">
       {!result && !loading ? <div className="response-empty"><span className="response-empty-icon">↗</span><strong>等待响应</strong><p>发送请求后，状态、响应头、正文、断言与时间线会显示在这里。</p></div> : null}
-      {statusMsg && <div role="status" aria-live="polite" style={styles.status}>{statusMsg}</div>}
 
-      {loading && livePreview && <div style={styles.panel}><div style={styles.responseHeader}><strong>响应流正在接收…</strong><span>{new TextEncoder().encode(livePreview).length} bytes</span></div><pre style={styles.pre}>{prettyPreview(livePreview).slice(0, 10000)}</pre></div>}
+      {loading && livePreview && <div className="http-response-content"><div style={styles.responseHeader}><strong>响应流正在接收…</strong><span>{new TextEncoder().encode(livePreview).length} bytes</span></div><pre className="http-response-body">{prettyPreview(livePreview).slice(0, 10000)}</pre></div>}
 
       {result && (
-        <div style={styles.panel}>
+        <div className="http-response-content">
+          {!result.error && <div className="http-response-inline-metrics">{responseMetrics}</div>}
           {result.error ? (
             <div style={styles.error}>{result.error}</div>
           ) : (
             <>
-              <div style={styles.responseHeader}>
-                <div style={styles.meta}>
-                  <span style={styles.statusBadge}>状态 {result.summary.status ?? "—"}</span>
-                  <span>{result.summary.durationMs} ms</span>
-                  <span>{result.summary.bytesReceived} bytes</span>
-                  <span>{result.eventCount} events</span>
-                  {result.executionId && <span>id {result.executionId.slice(0, 8)}</span>}
-                </div>
-                <div style={styles.row} role="tablist" aria-label="响应显示模式" onKeyDown={(event) => {
+              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return; event.preventDefault(); const tabs = ["body", "cookies", "headers", "console", "request"] as const; const current = tabs.indexOf(responseTab); const next = event.key === "ArrowRight" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length; const tabsRoot = event.currentTarget; setResponseTab(tabs[next]); queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()); }}>
+                <button role="tab" tabIndex={responseTab === "body" ? 0 : -1} aria-selected={responseTab === "body"} style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>Body</button>
+                <button role="tab" tabIndex={responseTab === "cookies" ? 0 : -1} aria-selected={responseTab === "cookies"} style={responseTab === "cookies" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("cookies")}>Cookie <span style={styles.count}>{responseCookies.length}</span></button>
+                <button role="tab" tabIndex={responseTab === "headers" ? 0 : -1} aria-selected={responseTab === "headers"} style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Header <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
+                <button role="tab" tabIndex={responseTab === "console" ? 0 : -1} aria-selected={responseTab === "console"} style={responseTab === "console" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("console")}>控制台</button>
+                <button role="tab" tabIndex={responseTab === "request" ? 0 : -1} aria-selected={responseTab === "request"} style={responseTab === "request" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("request")}>实时请求</button>
+              </div>
+              {responseTab === "body" && responseHasBody && <div className="http-response-view-toolbar" role="tablist" aria-label="响应显示模式" onKeyDown={(event) => {
                   if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
                   event.preventDefault();
-                  const modes: Array<"pretty" | "raw" | "hex" | "table"> = ["pretty", "raw", "hex", ...(responseTable ? ["table" as const] : [])];
+                  const modes: Array<"pretty" | "raw" | "hex" | "table" | "preview"> = ["pretty", "raw", "hex", ...(responseTable ? ["table" as const] : []), ...(responsePreviewKind ? ["preview" as const] : [])];
                   const current = modes.indexOf(responseView);
                   const next = event.key === "ArrowRight" ? (current + 1) % modes.length : (current - 1 + modes.length) % modes.length;
                   const tabsRoot = event.currentTarget;
@@ -1180,17 +1405,25 @@ export function HttpWorkbench({
                   <button role="tab" tabIndex={responseView === "raw" ? 0 : -1} aria-selected={responseView === "raw"} style={responseView === "raw" ? styles.tabActive : styles.tab} onClick={() => setResponseView("raw")}>原文</button>
                   <button role="tab" tabIndex={responseView === "hex" ? 0 : -1} aria-selected={responseView === "hex"} style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
                   <button role="tab" tabIndex={responseView === "table" ? 0 : -1} aria-selected={responseView === "table"} style={responseView === "table" ? styles.tabActive : styles.tab} disabled={!responseTable} onClick={() => setResponseView("table")}>表格</button>
-                  {result.preview && <button style={styles.linkButton} onClick={() => void copyText(responsePreview, "响应内容已复制")}>复制</button>}
-                  {result.preview && <button style={styles.linkButton} onClick={downloadResponse}>下载</button>}
-                </div>
-              </div>
-              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return; event.preventDefault(); const tabs = ["body", "headers", "assertions", "timeline"] as const; const current = tabs.indexOf(responseTab); const next = event.key === "ArrowRight" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length; const tabsRoot = event.currentTarget; setResponseTab(tabs[next]); queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()); }}>
-                <button role="tab" tabIndex={responseTab === "body" ? 0 : -1} aria-selected={responseTab === "body"} style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>响应体</button>
-                <button role="tab" tabIndex={responseTab === "headers" ? 0 : -1} aria-selected={responseTab === "headers"} style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Headers <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
-                <button role="tab" tabIndex={responseTab === "assertions" ? 0 : -1} aria-selected={responseTab === "assertions"} style={responseTab === "assertions" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("assertions")}>断言 <span style={styles.count}>{result.assertions?.length ?? 0}</span></button>
-                <button role="tab" tabIndex={responseTab === "timeline" ? 0 : -1} aria-selected={responseTab === "timeline"} style={responseTab === "timeline" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("timeline")}>时间线 <span style={styles.count}>{timeline.length}</span></button>
-              </div>
-              {responseTab === "assertions" && result.assertions && result.assertions.length > 0 && (
+                  <button role="tab" tabIndex={responseView === "preview" ? 0 : -1} aria-selected={responseView === "preview"} style={responseView === "preview" ? styles.tabActive : styles.tab} disabled={!responsePreviewKind} onClick={() => setResponseView("preview")}>预览</button>
+                  <select className="http-response-tool-select" aria-label="响应内容类型" value={responseFormat} onChange={(event) => setResponseFormat(event.target.value as typeof responseFormat)}><option value="auto">自动类型</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="text">Text</option></select>
+                  <select className="http-response-tool-select" aria-label="响应字符集" value={responseCharset} onChange={(event) => setResponseCharset(event.target.value)}><option value="auto">自动字符集</option><option value="utf-8">UTF-8</option><option value="gb18030">GBK / GB18030</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option><option value="windows-1252">Windows-1252</option><option value="iso-8859-1">ISO-8859-1</option></select>
+                  <button type="button" className={responseWrap ? "http-response-icon-button is-active" : "http-response-icon-button"} aria-label="自动换行" title="自动换行" aria-pressed={responseWrap} onClick={() => setResponseWrap((wrap) => !wrap)}><Icon name="wrap"/></button>
+                  <div className="http-response-toolbar-actions">
+                    {result.preview && <button type="button" className="http-response-icon-button" aria-label="下载响应内容" title="下载响应内容" onClick={downloadResponse}><Icon name="download"/></button>}
+                    {result.preview && <button type="button" className="http-response-icon-button" aria-label="复制响应内容" title="复制响应内容" onClick={() => void copyText(responsePreview, "响应内容已复制")}><Icon name="copy"/></button>}
+                    <button type="button" className={responseSearchOpen ? "http-response-icon-button is-active" : "http-response-icon-button"} aria-label="搜索响应内容" title="搜索响应内容" aria-pressed={responseSearchOpen} onClick={() => setResponseSearchOpen((open) => !open)}><Icon name="search"/></button>
+                    {responseSearchOpen && <div className="http-response-find" role="search">
+                      <div className="http-response-find-input"><input autoFocus value={responseSearch} onChange={(event) => setResponseSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && responseSearchCount) setResponseSearchIndex((index) => event.shiftKey ? (index - 1 + responseSearchCount) % responseSearchCount : (index + 1) % responseSearchCount); if (event.key === "Escape") setResponseSearchOpen(false); }} placeholder="Find" aria-label="搜索响应内容"/><button type="button" className={responseSearchCase ? "is-active" : ""} aria-label="区分大小写" title="区分大小写" onClick={() => setResponseSearchCase((value) => !value)}>Aa</button><button type="button" className={responseSearchWord ? "is-active" : ""} aria-label="全词匹配" title="全词匹配" onClick={() => setResponseSearchWord((value) => !value)}><u>ab</u></button><button type="button" className={responseSearchRegex ? "is-active" : ""} aria-label="使用正则表达式" title="使用正则表达式" onClick={() => setResponseSearchRegex((value) => !value)}>.*</button></div>
+                      <span className="http-response-find-count">{responseSearch ? (responseSearchCount ? `${responseSearchIndex + 1} / ${responseSearchCount}` : "No results") : "No results"}</span>
+                      <button type="button" aria-label="上一个结果" title="上一个结果" disabled={!responseSearchCount} onClick={() => setResponseSearchIndex((index) => (index - 1 + responseSearchCount) % responseSearchCount)}>↑</button>
+                      <button type="button" aria-label="下一个结果" title="下一个结果" disabled={!responseSearchCount} onClick={() => setResponseSearchIndex((index) => (index + 1) % responseSearchCount)}>↓</button>
+                      <button type="button" aria-label="关闭搜索" title="关闭搜索" onClick={() => setResponseSearchOpen(false)}>×</button>
+                    </div>}
+                  </div>
+              </div>}
+              <div className={`http-response-scroll is-${responseTab}`}>
+              {responseTab === "console" && <div className="http-response-console"><label className="http-console-assertions"><span>校验响应</span><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><textarea style={styles.textarea} value={assertionsText} onChange={(event) => setAssertionsText(event.target.value)} rows={4} spellCheck={false} disabled={!assertionsEnabled}/></label>{result.assertions && result.assertions.length > 0 && (
                 <ul style={styles.assertList}>
                   {result.assertions.map((a, i) => (
                     <li key={`${a.name}-${i}`} style={a.passed ? styles.assertPass : styles.assertFail}>
@@ -1199,18 +1432,29 @@ export function HttpWorkbench({
                     </li>
                   ))}
                 </ul>
-              )}
-              {responseTab === "assertions" && (!result.assertions || result.assertions.length === 0) && <div style={styles.muted}>当前请求没有断言结果。</div>}
-              {responseTab === "headers" && <div style={styles.headerTable}>
+              )}<VirtualList items={timeline} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="HTTP execution timeline" className="http-timeline" renderItem={({ at, event }, index) => <div style={styles.timelineRow}><time>+{index === 0 ? "0.0" : (at - timeline[0].at).toFixed(1)}ms</time><b>{event.type}</b><span>{event.type === "state_changed" ? `${event.state}${event.phase ? ` · ${event.phase}` : ""}` : event.type === "response_chunk" ? `${event.size} bytes${event.done ? " · done" : ""}` : event.type === "response_meta" ? `${event.status ?? ""} ${event.statusText ?? ""}` : event.type === "warning" || event.type === "failed" ? event.message : event.type === "metric" ? `${event.name}: ${event.value} ${event.unit}` : ""}</span></div>} empty={<div style={styles.muted}>暂无执行事件。</div>} /></div>}
+              {responseTab === "headers" && !result.responseMeta?.headers.length && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
+              {responseTab === "headers" && Boolean(result.responseMeta?.headers.length) && <div style={styles.headerTable}>
                 <div style={styles.headerSummary}><span>{result.responseMeta?.contentType ?? "未知 Content-Type"}</span><span>预估 {result.responseMeta?.sizeHint ?? result.summary.bytesReceived} bytes</span></div>
                 {(result.responseMeta?.headers ?? []).map(([name, value], index) => <div key={`${name}-${index}`} style={styles.headerRow}><strong>{name}</strong><span>{value}</span></div>)}
-                {!result.responseMeta?.headers.length && <div style={styles.muted}>没有可用的响应 Header。</div>}
               </div>}
-              {responseTab === "timeline" && <VirtualList items={timeline} itemHeight={31} height={420} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="HTTP execution timeline" className="http-timeline" renderItem={({ at, event }, index) => <div style={styles.timelineRow}><time>+{index === 0 ? "0.0" : (at - timeline[0].at).toFixed(1)}ms</time><b>{event.type}</b><span>{event.type === "state_changed" ? `${event.state}${event.phase ? ` · ${event.phase}` : ""}` : event.type === "response_chunk" ? `${event.size} bytes${event.done ? " · done" : ""}` : event.type === "response_meta" ? `${event.status ?? ""} ${event.statusText ?? ""}` : event.type === "warning" || event.type === "failed" ? event.message : event.type === "metric" ? `${event.name}: ${event.value} ${event.unit}` : ""}</span></div>} empty={<div style={styles.muted}>暂无执行事件。</div>} />}
-              {responseTab === "body" && result.preview && responseView === "table" && responseTable && <div style={styles.jsonTableWrap}><table style={styles.jsonTable}><thead><tr>{responseTable.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{responseTable.rows.slice(0, 1000).map((row, index) => <tr key={index}>{responseTable.columns.map((column) => <td key={column}>{typeof row[column] === "object" ? JSON.stringify(row[column]) : String(row[column] ?? "")}</td>)}</tr>)}</tbody></table>{responseTable.rows.length > 1000 && <div style={styles.muted}>仅显示前 1000 行，共 {responseTable.rows.length} 行。</div>}</div>}
-              {responseTab === "body" && result.preview && responseView !== "table" && (
-                <><pre style={styles.pre}>{responseWindow}</pre>{responsePreview.length > 10000 && <div style={styles.windowNav}><button disabled={responseOffset === 0} onClick={() => setResponseOffset(Math.max(0, responseOffset - 10000))}>上一段</button><span>{responseOffset + 1}–{Math.min(responsePreview.length, responseOffset + 10000)} / {responsePreview.length} 字符</span><button disabled={responseOffset + 10000 >= responsePreview.length} onClick={() => setResponseOffset(responseOffset + 10000)}>下一段</button></div>}</>
+              {responseTab === "cookies" && responseCookies.length === 0 && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
+              {responseTab === "cookies" && responseCookies.length > 0 && <div style={styles.headerTable}>{responseCookies.map((cookie, index) => <div key={index} style={styles.headerRow}><strong>{cookie.split("=", 1)[0]}</strong><span>{cookie}</span></div>)}</div>}
+              {responseTab === "request" && (lastRequest ? <div className="http-live-request">
+                <section><h4>请求信息</h4><div className="http-request-summary"><strong>{lastRequest.method}</strong><code>{lastRequest.url}</code></div></section>
+                <section><h4>请求 Header <span>{lastRequest.headers.length}</span></h4><div className="http-request-data">{lastRequest.headers.length ? lastRequest.headers.map(([name, value], index) => <div key={`${name}-${index}`}><strong>{name}</strong><span>{value}</span></div>) : <p>没有发送请求 Header。</p>}</div></section>
+                <section><h4>请求 Body <span>{formatBytes(requestBodySize(lastRequest))}</span></h4><pre className="http-request-body">{lastRequest.body || "没有发送请求 Body。"}</pre></section>
+                <section><CodeGenerator request={lastRequest}/></section>
+              </div> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
+              {responseTab === "body" && !responseHasBody && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
+              {responseTab === "body" && responseHasBody && responseView === "table" && responseTable && <div style={styles.jsonTableWrap}><table style={styles.jsonTable}><thead><tr>{responseTable.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{responseTable.rows.slice(0, 1000).map((row, index) => <tr key={index}>{responseTable.columns.map((column) => <td key={column}>{typeof row[column] === "object" ? JSON.stringify(row[column]) : String(row[column] ?? "")}</td>)}</tr>)}</tbody></table>{responseTable.rows.length > 1000 && <div style={styles.muted}>仅显示前 1000 行，共 {responseTable.rows.length} 行。</div>}</div>}
+              {responseTab === "body" && responseHasBody && responseView === "preview" && responsePreviewKind === "html" && <iframe className="http-response-html-preview" title="HTML 响应预览" sandbox="allow-forms allow-modals allow-popups" srcDoc={decodedResponse}/>}
+              {responseTab === "body" && responseHasBody && responseView === "preview" && responsePreviewKind === "image" && responseMediaUrl && <div className="http-response-media-preview"><img src={responseMediaUrl} alt="响应图片预览"/></div>}
+              {responseTab === "body" && responseHasBody && responseView === "preview" && responsePreviewKind === "audio" && responseMediaUrl && <div className="http-response-media-preview"><audio src={responseMediaUrl} controls/></div>}
+              {responseTab === "body" && responseHasBody && responseView !== "table" && responseView !== "preview" && (
+                <CodeEditor value={responsePreview} onChange={() => {}} language={responseLanguage} height="100%" readOnly bare wordWrap={responseWrap} revealLine={responseSearchLine}/>
               )}
+              </div>
             </>
           )}
         </div>
@@ -1354,9 +1598,9 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 14,
     fontWeight: 600,
     color: "#041018",
-    background: "var(--apivoy-panel)",
+    background: "var(--apivoy-accent)",
     border: "none",
-    borderRadius: 9,
+    borderRadius: 10,
     padding: "12px 18px",
     cursor: "pointer",
     boxShadow: "0 8px 22px rgba(31,111,184,.22)",
@@ -1402,7 +1646,7 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap", paddingBottom: 12, marginBottom: 12, borderBottom: "1px solid var(--apivoy-border)",
   },
   responseTabs: { display: "flex", gap: 4, marginBottom: 12 },
-  requestTabs: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid var(--apivoy-border)" },
+  requestTabs: { display: "flex", flexWrap: "wrap", gap: 2, marginBottom: 12, borderBottom: "1px solid var(--apivoy-border)" },
   jsonTableWrap: { maxHeight: 420, overflow: "auto", border: "1px solid var(--apivoy-border)", borderRadius: 8 },
   jsonTable: { width: "100%", borderCollapse: "collapse", fontSize: 11, textAlign: "left" },
   timeline: { display: "grid", gap: 1, maxHeight: 420, overflow: "auto", border: "1px solid var(--apivoy-border)", borderRadius: 8 },
@@ -1418,11 +1662,11 @@ const styles: Record<string, CSSProperties> = {
   },
   tab: {
     border: 0, background: "transparent", color: "var(--apivoy-muted)",
-    padding: "5px 8px", cursor: "pointer", borderRadius: 6,
+    padding: "8px 10px", cursor: "pointer", borderRadius: 0, borderBottom: "2px solid transparent",
   },
   tabActive: {
-    border: 0, background: "var(--apivoy-accent-soft)", color: "var(--apivoy-accent)",
-    padding: "5px 8px", cursor: "pointer", borderRadius: 6,
+    border: 0, background: "transparent", color: "var(--apivoy-accent)",
+    padding: "8px 10px", cursor: "pointer", borderRadius: 0, borderBottom: "2px solid var(--apivoy-accent)",
   },
   pre: {
     margin: 0,

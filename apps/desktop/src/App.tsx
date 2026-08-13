@@ -5,7 +5,6 @@ import {
   HttpWorkbench,
   SseWorkbench,
   SocketWorkbench,
-  GraphqlWorkbench,
   WebSocketWorkbench,
   GrpcWorkbench,
   PluginCenter,
@@ -17,8 +16,6 @@ import {
   CommentsWorkbench,
   SsoWorkbench,
   AiWorkbench,
-  RpcWorkbench,
-  type RpcWorkbenchRequest,
   RedisWorkbench,
   type RedisWorkbenchRequest,
   MqttWorkbench,
@@ -123,12 +120,6 @@ interface HistoryRecord {
   preview?: string | null;
 }
 
-interface EnvironmentRecord {
-  id: string;
-  variables: Record<string, string>;
-  secretRefs?: string[];
-}
-
 function toInvokeRequest(request: HttpWorkbenchRequest) {
   const auth = request.auth
     ? {
@@ -151,6 +142,8 @@ function toInvokeRequest(request: HttpWorkbenchRequest) {
     method: request.method,
     headers: request.headers,
     body: request.body ?? null,
+    bodyEncoding: request.bodyEncoding ?? "text",
+    bodySource: request.bodySource ?? null,
     multipart: request.multipart ?? [],
     timeoutMs: request.timeoutMs,
     variables: request.variables,
@@ -178,6 +171,8 @@ function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpW
     method: payload.method,
     headers: payload.headers,
     body: payload.body ?? undefined,
+    bodyEncoding: payload.bodyEncoding ?? "text",
+    bodySource: payload.bodySource ?? undefined,
     multipart: payload.multipart ?? [],
     timeoutMs: envelope.timeoutMs,
     variables: envelope.variables ?? {},
@@ -199,13 +194,17 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState("default-project");
   const [selectedCollectionId, setSelectedCollectionId] = useState("default-collection");
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
-  const rpcEnvelope=(request:RpcWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:request.protocol,name:request.name,target:request.url,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:request.protocol==="soap"?{version:request.soapVersion,action:request.action,envelope:request.envelope,headers:request.headers}:{method:request.rpcMethod,params:request.params,id:request.id,headers:request.headers}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const redisEnvelope=(request:RedisWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"redis",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{username:request.username,passwordRef:request.passwordRef,database:request.database,commands:request.commands}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const mqttEnvelope=(request:MqttWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"mqtt",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,clientId:request.clientId,username:request.username,passwordRef:request.passwordRef,cleanSession:request.cleanSession,keepAliveSeconds:request.keepAliveSeconds,topic:request.topic,payload:request.payload,encoding:request.encoding,qos:request.qos,retain:request.retain,receiveLimit:request.receiveLimit,caPemRef:request.caPemRef,serverName:request.serverName}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const amqpEnvelope=(request:AmqpWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"amqp",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,username:request.username,passwordRef:request.passwordRef,exchange:request.exchange,exchangeType:request.exchangeType,routingKey:request.routingKey,queue:request.queue,declare:request.declare,durable:request.durable,autoAck:request.autoAck,receiveLimit:request.receiveLimit,payload:request.payload,encoding:request.encoding,contentType:request.contentType}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const kafkaEnvelope=(request:KafkaWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"kafka",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,topic:request.topic,key:request.key,payload:request.payload,encoding:request.encoding,partition:request.partition,groupId:request.groupId,offsetReset:request.offsetReset,autoCommit:request.autoCommit,receiveLimit:request.receiveLimit,securityProtocol:request.securityProtocol,saslMechanism:request.saslMechanism,username:request.username,passwordRef:request.passwordRef,caPemRef:request.caPemRef,certificatePemRef:request.certificatePemRef,keyPemRef:request.keyPemRef,keyPasswordRef:request.keyPasswordRef}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const sqlEnvelope=(request:SqlWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"sql",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{username:request.username,passwordRef:request.passwordRef,sql:request.sql,parameters:request.parameters,transactional:request.transactional,rowLimit:request.rowLimit}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const [externalRequest, setExternalRequest] = useState<HttpWorkbenchRequest | null>(null);
+  useEffect(() => {
+    const reset = () => { setSelectedRequestId(null); setExternalRequest(null); };
+    window.addEventListener("apivoy-new-workbench", reset);
+    return () => window.removeEventListener("apivoy-new-workbench", reset);
+  }, []);
 
   async function refreshTree() {
     const raw = await invoke<Omit<WorkspaceTree, "requests"> & { requests: Array<WorkspaceTree["requests"][number] & { envelope?: RequestEnvelope }> }>("get_workspace_tree");
@@ -232,6 +231,7 @@ export function App() {
       environment={{
         onLoad: async () => invoke<{ variables: Record<string, string>; secretRefs?: string[] }>("get_environment", { id: "default-env" }),
         onSave: async (variables, secretRefs) => { await invoke("save_environment", { environment: { id: "default-env", variables, secretRefs } }); },
+        onPutSecret: async (name, value) => { await invoke("put_secret", { request: { name, value } }); },
       }}
       collaboration={{
         team: <TeamWorkbench onExportSnapshot={async () => { const snapshotTree = await invoke<WorkspaceTree>("get_workspace_tree"); return exportTeamSnapshot(snapshotTree, async (id) => (await invoke<StoredRequest | null>("get_request", { id }))?.envelope ?? null); }} onRestoreSnapshot={async (snapshot) => { await restoreTeamSnapshot(snapshot, { getTree: async () => invoke<WorkspaceTree>("get_workspace_tree"), createWorkspace: async (name) => invoke("create_workspace", { name, rootPath: null }), createProject: async (workspaceId, name) => invoke("create_project", { workspaceId, name }), createCollection: async (projectId, parentId, name) => invoke("create_collection", { projectId, parentId, name }), saveEnvelope: async (request, projectId, collectionId) => { await invoke("save_envelope", { request, projectId, collectionId }); } }); await refreshTree(); }} />,
@@ -310,43 +310,6 @@ export function App() {
           await invoke("save_request", { request: toInvokeRequest(request), projectId: selectedProjectId, collectionId: selectedCollectionId });
           await refreshTree();
         }}
-        onLoad={async () => {
-          const stored = await invoke<StoredRequest | null>("load_latest_request");
-          if (!stored) {
-            return null;
-          }
-          const payload = stored.envelope.payload;
-          if (payload.type !== "http") {
-            throw new Error("最近保存的请求不是 HTTP");
-          }
-          return {
-            url: stored.target,
-            method: payload.method,
-            headers: payload.headers,
-            body: payload.body ?? undefined,
-            timeoutMs: stored.envelope.timeoutMs,
-            variables: stored.envelope.variables ?? {},
-            assertions: stored.envelope.assertions ?? [],
-            auth: stored.envelope.authRef ?? null,
-            followRedirects: payload.followRedirects,
-            retryMax: stored.envelope.retryPolicy?.max_retries ?? 0,
-            retryBackoffMs: stored.envelope.retryPolicy?.backoff_ms ?? 250,
-            proxy: stored.envelope.proxy ?? null,
-            tlsVerify: stored.envelope.tls?.verify ?? true,
-          };
-        }}
-        onLoadEnvironment={async () => {
-          const env = await invoke<EnvironmentRecord>("get_environment");
-          return {
-            variables: env.variables ?? {},
-            secretRefs: env.secretRefs ?? [],
-          };
-        }}
-        onSaveEnvironment={async (variables, secretRefs) => {
-          await invoke("save_environment", {
-            request: { variables, secretRefs },
-          });
-        }}
         onPutSecret={async (name, value) => {
           await invoke("put_secret", { request: { name, value } });
         }}
@@ -408,18 +371,6 @@ export function App() {
         onCancel={async (executionId) => { await invoke<boolean>("cancel_execution", { id: executionId }); }}
         onSave={async (request) => { const envelope: RequestEnvelope = { id: crypto.randomUUID(), protocolId: request.protocol, name: request.name, target: request.target, environmentRef: "default-env", authRef: null, timeoutMs: request.timeoutMs, retryPolicy: { max_retries: 0, backoff_ms: 0 }, proxy: null, tls: { verify: true, client_cert_ref: null }, metadata: {}, payload: request.protocol === "tcp" ? { type: "tcp", data: request.data, encoding: request.encoding, framing: request.framing, delimiter: request.delimiter, fixedLength: request.fixedLength, sendCount: request.sendCount, intervalMs: request.intervalMs, tls: request.tls, serverName: request.serverName, caCertRef: request.caCertRef } : { type: "udp", data: request.data, encoding: request.encoding, sendCount: request.sendCount, intervalMs: request.intervalMs }, preScripts: [], postScripts: [], assertions: [], variables: {}, createdAt: new Date().toISOString() }; await invoke("save_envelope", { request: envelope, projectId: selectedProjectId, collectionId: selectedCollectionId }); await refreshTree(); }}
       />
-      <GraphqlWorkbench
-        onSend={async (request, hooks) => {
-          const stop = await listen<string>("execution-started", (event) => hooks?.onStarted?.(event.payload));
-          try {
-            const envelope: RequestEnvelope = { id: crypto.randomUUID(), protocolId: "graphql", name: request.name, target: request.url, environmentRef: "default-env", authRef: null, timeoutMs: 30000, retryPolicy: { max_retries: 0, backoff_ms: 0 }, proxy: null, tls: { verify: true, client_cert_ref: null }, metadata: {}, payload: { type: "graphql", query: request.query, variables: request.variables, operationName: request.operationName ?? null, headers: request.headers }, preScripts: [], postScripts: [], assertions: [], variables: {}, createdAt: new Date().toISOString() };
-            const data = await invoke<ExecuteResponse>("execute_protocol", { request: envelope });
-            return { summary: data.summary, eventCount: data.eventCount, preview: data.responseBody ?? data.preview, executionId: data.executionId, assertions: [], responseMeta: data.responseMeta ?? null };
-          } finally { stop(); }
-        }}
-        onCancel={async (executionId) => { await invoke<boolean>("cancel_execution", { id: executionId }); }}
-        onSave={async (request) => { const envelope: RequestEnvelope = { id: crypto.randomUUID(), protocolId: "graphql", name: request.name, target: request.url, environmentRef: "default-env", authRef: null, timeoutMs: 30000, retryPolicy: { max_retries: 0, backoff_ms: 0 }, proxy: null, tls: { verify: true, client_cert_ref: null }, metadata: {}, payload: { type: "graphql", query: request.query, variables: request.variables, operationName: request.operationName ?? null, headers: request.headers }, preScripts: [], postScripts: [], assertions: [], variables: {}, createdAt: new Date().toISOString() }; await invoke("save_envelope", { request: envelope, projectId: selectedProjectId, collectionId: selectedCollectionId }); await refreshTree(); }}
-      />
       <WebSocketWorkbench
         onConnect={async (request, hooks) => {
           let activeExecutionId: string | null = null;
@@ -446,7 +397,6 @@ export function App() {
         onCancel={async (executionId) => { await invoke<boolean>("cancel_execution", { id: executionId }); }}
         onSave={async (request) => { const envelope: RequestEnvelope = { id: crypto.randomUUID(), protocolId: "grpc", name: request.name, target: request.target, environmentRef: "default-env", authRef: null, timeoutMs: request.timeoutMs, retryPolicy: { max_retries: 0, backoff_ms: 0 }, proxy: null, tls: { verify: true, client_cert_ref: null }, metadata: {}, payload: { type: "grpc", service: request.service, method: request.method, messageBase64: request.messageBase64, messageJson: request.messageJson, descriptorSetBase64: request.descriptorSetBase64, mode: request.mode, metadata: request.metadata }, preScripts: [], postScripts: [], assertions: [], variables: {}, createdAt: new Date().toISOString() }; await invoke("save_envelope", { request: envelope, projectId: selectedProjectId, collectionId: selectedCollectionId }); await refreshTree(); }}
       />
-      <RpcWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:rpcEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:rpcEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
       <RedisWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:redisEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:redisEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
       <MqttWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:mqttEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:mqttEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
       <AmqpWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:amqpEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:amqpEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />

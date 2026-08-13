@@ -79,6 +79,8 @@ impl RequestEnvelope {
                 method: "GET".into(),
                 headers: vec![],
                 body: None,
+                body_encoding: "text".into(),
+                body_source: None,
                 multipart: vec![],
                 follow_redirects: true,
             }),
@@ -232,6 +234,10 @@ pub struct HttpPayload {
     pub method: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<String>,
+    #[serde(default = "default_text_encoding")]
+    pub body_encoding: String,
+    #[serde(default)]
+    pub body_source: Option<String>,
     #[serde(default)]
     pub multipart: Vec<MultipartPart>,
     pub follow_redirects: bool,
