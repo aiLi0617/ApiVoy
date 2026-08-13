@@ -68,7 +68,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: ApiVoy ${{ github.ref_name }}
           releaseBody: ${{ steps.release-notes.outputs.body }}
-          releaseDraft: true
+          releaseDraft: false
 
   agent-cli:
     strategy:
