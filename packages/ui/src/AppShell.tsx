@@ -147,8 +147,8 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
       </div>
       <div className="header-actions">
         <button className="ui-icon-button" aria-label={t("command.history")} title={t("command.history")} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-focus-history"))}><Icon name="activity"/></button>
-        <button className="command-trigger" aria-label={t("command.open")} onClick={() => setPaletteOpen(true)}><Icon name="search"/><span>{t("command.open")}</span><kbd>⌘ K</kbd></button>
-        <button className="ui-icon-button" aria-label={t("command.theme")} title={`${t("settings.theme")}: ${themeMode}`} onClick={cycleTheme}><Icon name={themeMode === "light" ? "sun" : "moon"}/></button>
+        <button data-testid="command-trigger" className="command-trigger" aria-label={t("command.open")} onClick={() => setPaletteOpen(true)}><Icon name="search"/><span>{t("command.open")}</span><kbd>⌘ K</kbd></button>
+        <button data-testid="theme-toggle" className="ui-icon-button" aria-label={t("command.theme")} title={`${t("settings.theme")}: ${themeMode}`} onClick={cycleTheme}><Icon name={themeMode === "light" ? "sun" : "moon"}/></button>
         {collaboration ? <button className={`ui-icon-button${collaborationOpen ? " is-active" : ""}`} aria-label={t("collaboration.open")} title={t("collaboration.open")} onClick={() => openCollaboration("team")}><Icon name="users"/></button> : null}
         <button className="ui-icon-button" aria-label={t("settings.open")} title={`${t("settings.open")} ⌘,`} onClick={openSettings}><Icon name="settings"/></button>
       </div>
