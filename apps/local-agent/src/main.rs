@@ -43,7 +43,7 @@ use execution_engine::{
 use futures::stream::{self, Stream};
 use futures::{SinkExt, StreamExt};
 use local_store::{
-    CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore,
+    CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore, ScriptRecord,
     ProjectRecord, StoredRequest, WorkspaceRecord,
 };
 use plugin_runtime::{InstalledPlugin, PluginManager, PluginManifest, PluginPermission};
@@ -207,10 +207,26 @@ struct StartCaptureBody {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveEnvironmentBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
     variables: HashMap<String, String>,
     #[serde(default)]
     secret_refs: Vec<String>,
 }
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct EnvironmentQuery { project_id: Option<String> }
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct SaveScriptBody { project_id:String, name:String, language:String, source:String }
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct ScriptQuery { project_id:String }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -408,6 +424,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/v1/environments/default", get(get_default_environment))
         .route("/v1/environments/default", put(put_default_environment))
+        .route("/v1/environments", get(list_environments).post(create_environment))
+        .route("/v1/environments/{id}", put(put_environment).delete(delete_environment))
+        .route("/v1/scripts", get(list_scripts).post(create_script))
+        .route("/v1/scripts/{id}", put(put_script).delete(delete_script))
         .route("/v1/history", get(list_history))
         .route("/v1/history/{id}", get(get_history_item))
         .route("/v1/history/{id}/body", get(get_history_body))
@@ -1189,6 +1209,39 @@ async fn put_default_environment(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(env))
 }
+
+async fn list_environments(State(state): State<AppState>, headers: HeaderMap, Query(query): Query<EnvironmentQuery>) -> Result<Json<Vec<EnvironmentRecord>>, (StatusCode,String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.list_environments(query.project_id.as_deref()).map(Json).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))
+}
+
+async fn create_environment(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<SaveEnvironmentBody>) -> Result<(StatusCode,Json<EnvironmentRecord>),(StatusCode,String)> {
+    check_protocol_version(&headers)?;
+    let env = EnvironmentRecord { id: format!("env-{}", uuid::Uuid::new_v4()), project_id: body.project_id.unwrap_or_else(|| "default-project".into()), name: body.name.unwrap_or_else(|| "New environment".into()), variables: body.variables, secret_refs: body.secret_refs, updated_at: Utc::now() };
+    state.store.lock().await.save_environment(&env).map_err(|e| (StatusCode::BAD_REQUEST,e.to_string()))?;
+    Ok((StatusCode::CREATED,Json(env)))
+}
+
+async fn put_environment(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<SaveEnvironmentBody>) -> Result<Json<EnvironmentRecord>,(StatusCode,String)> {
+    check_protocol_version(&headers)?;
+    let mut env = state.store.lock().await.get_environment(&id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))?.ok_or((StatusCode::NOT_FOUND,"environment not found".into()))?;
+    if let Some(name) = body.name { env.name = name; }
+    if let Some(project_id) = body.project_id { env.project_id = project_id; }
+    env.variables = body.variables; env.secret_refs = body.secret_refs; env.updated_at = Utc::now();
+    state.store.lock().await.save_environment(&env).map_err(|e| (StatusCode::BAD_REQUEST,e.to_string()))?;
+    Ok(Json(env))
+}
+
+async fn delete_environment(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode,(StatusCode,String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.delete_environment(&id).map_err(|e| (StatusCode::BAD_REQUEST,e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_scripts(State(state):State<AppState>,headers:HeaderMap,Query(query):Query<ScriptQuery>)->Result<Json<Vec<ScriptRecord>>,(StatusCode,String)>{check_protocol_version(&headers)?;state.store.lock().await.list_scripts(&query.project_id).map(Json).map_err(|e|(StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))}
+async fn create_script(State(state):State<AppState>,headers:HeaderMap,Json(body):Json<SaveScriptBody>)->Result<(StatusCode,Json<ScriptRecord>),(StatusCode,String)>{check_protocol_version(&headers)?;if body.language!="javascript"&&body.language!="typescript"{return Err((StatusCode::BAD_REQUEST,"unsupported script language".into()))}let now=Utc::now();let item=ScriptRecord{id:format!("script-{}",uuid::Uuid::new_v4()),project_id:body.project_id,name:body.name,language:body.language,source:body.source,created_at:now,updated_at:now};state.store.lock().await.save_script(&item).map_err(|e|(StatusCode::BAD_REQUEST,e.to_string()))?;Ok((StatusCode::CREATED,Json(item)))}
+async fn put_script(State(state):State<AppState>,headers:HeaderMap,Path(id):Path<String>,Json(body):Json<SaveScriptBody>)->Result<Json<ScriptRecord>,(StatusCode,String)>{check_protocol_version(&headers)?;if body.language!="javascript"&&body.language!="typescript"{return Err((StatusCode::BAD_REQUEST,"unsupported script language".into()))}let previous=state.store.lock().await.get_script(&id).map_err(|e|(StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))?.ok_or((StatusCode::NOT_FOUND,"script not found".into()))?;let item=ScriptRecord{id,project_id:body.project_id,name:body.name,language:body.language,source:body.source,created_at:previous.created_at,updated_at:Utc::now()};state.store.lock().await.save_script(&item).map_err(|e|(StatusCode::BAD_REQUEST,e.to_string()))?;Ok(Json(item))}
+async fn delete_script(State(state):State<AppState>,headers:HeaderMap,Path(id):Path<String>)->Result<StatusCode,(StatusCode,String)>{check_protocol_version(&headers)?;state.store.lock().await.delete_script(&id).map_err(|e|(StatusCode::BAD_REQUEST,e.to_string()))?;Ok(StatusCode::NO_CONTENT)}
 
 async fn list_history(
     State(state): State<AppState>,

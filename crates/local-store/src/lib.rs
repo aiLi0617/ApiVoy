@@ -146,6 +146,10 @@ pub struct EnvironmentRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptRecord { pub id:String, pub project_id:String, pub name:String, pub language:String, pub source:String, pub created_at:DateTime<Utc>, pub updated_at:DateTime<Utc> }
+
 pub struct LocalStore {
     conn: Connection,
     blob_dir: PathBuf,
@@ -246,6 +250,15 @@ impl LocalStore {
               name TEXT NOT NULL,
               variables_json TEXT NOT NULL,
               secret_refs_json TEXT NOT NULL DEFAULT '[]',
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS scripts (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              language TEXT NOT NULL CHECK(language IN ('javascript','typescript')),
+              source TEXT NOT NULL,
+              created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
 
@@ -1412,10 +1425,32 @@ impl LocalStore {
             .transpose()
     }
 
+    pub fn list_environments(&self, project_id: Option<&str>) -> StoreResult<Vec<EnvironmentRecord>> {
+        let mut statement = self.conn.prepare(if project_id.is_some() {
+            "SELECT id, project_id, name, variables_json, secret_refs_json, updated_at FROM environments WHERE project_id = ?1 ORDER BY name COLLATE NOCASE"
+        } else {
+            "SELECT id, project_id, name, variables_json, secret_refs_json, updated_at FROM environments ORDER BY name COLLATE NOCASE"
+        })?;
+        let read = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String,String,String,String,String,String)> { Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)) };
+        let rows = if let Some(id) = project_id { statement.query_map(params![id], read)? } else { statement.query_map([], read)? };
+        rows.map(|row| { let (id, project_id, name, variables, secrets, updated_at) = row?; Ok(EnvironmentRecord { id, project_id, name, variables: serde_json::from_str(&variables)?, secret_refs: serde_json::from_str(&secrets)?, updated_at: parse_time(&updated_at) }) }).collect()
+    }
+
+    pub fn delete_environment(&self, id: &str) -> StoreResult<()> {
+        if id == "default-env" { return Err(StoreError::InvalidId("default-env cannot be deleted".into())); }
+        self.conn.execute("DELETE FROM environments WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     pub fn default_environment(&self) -> StoreResult<EnvironmentRecord> {
         self.get_environment("default-env")?
             .ok_or_else(|| StoreError::NotFound("default-env".into()))
     }
+
+    pub fn save_script(&self, item:&ScriptRecord)->StoreResult<()> { self.conn.execute("INSERT INTO scripts(id,project_id,name,language,source,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,name=excluded.name,language=excluded.language,source=excluded.source,updated_at=excluded.updated_at",params![item.id,item.project_id,item.name,item.language,item.source,item.created_at.to_rfc3339(),item.updated_at.to_rfc3339()])?;Ok(()) }
+    pub fn list_scripts(&self,project_id:&str)->StoreResult<Vec<ScriptRecord>> { let mut statement=self.conn.prepare("SELECT id,project_id,name,language,source,created_at,updated_at FROM scripts WHERE project_id=?1 ORDER BY name COLLATE NOCASE")?;let items=statement.query_map(params![project_id],|row|Ok(ScriptRecord{id:row.get(0)?,project_id:row.get(1)?,name:row.get(2)?,language:row.get(3)?,source:row.get(4)?,created_at:parse_time(&row.get::<_,String>(5)?),updated_at:parse_time(&row.get::<_,String>(6)?)}))?.collect::<Result<Vec<_>,_>>()?;Ok(items) }
+    pub fn get_script(&self,id:&str)->StoreResult<Option<ScriptRecord>> { self.conn.query_row("SELECT id,project_id,name,language,source,created_at,updated_at FROM scripts WHERE id=?1",params![id],|row|Ok(ScriptRecord{id:row.get(0)?,project_id:row.get(1)?,name:row.get(2)?,language:row.get(3)?,source:row.get(4)?,created_at:parse_time(&row.get::<_,String>(5)?),updated_at:parse_time(&row.get::<_,String>(6)?)})).optional().map_err(StoreError::from) }
+    pub fn delete_script(&self,id:&str)->StoreResult<()> { self.conn.execute("DELETE FROM scripts WHERE id=?1",params![id])?;Ok(()) }
 }
 
 fn parse_time(value: &str) -> DateTime<Utc> {
@@ -1433,6 +1468,18 @@ fn hex_sha256(data: &[u8]) -> String {
 mod tests {
     use super::*;
     use core_domain::RequestEnvelope;
+
+    #[test]
+    fn environment_and_script_resources_support_crud() {
+        let store=LocalStore::open_in_memory().expect("open");
+        let environments=store.list_environments(Some("default-project")).expect("list envs");
+        assert!(environments.iter().any(|item| item.id=="default-env"));
+        let now=Utc::now();let script=ScriptRecord{id:"script-test".into(),project_id:"default-project".into(),name:"Auth".into(),language:"typescript".into(),source:"const token: string = 'x';".into(),created_at:now,updated_at:now};
+        store.save_script(&script).expect("save script");
+        assert_eq!(store.list_scripts("default-project").expect("list scripts").len(),1);
+        store.delete_script("script-test").expect("delete script");
+        assert!(store.get_script("script-test").expect("get script").is_none());
+    }
 
     #[test]
     fn save_and_reopen_http_request() {

@@ -11,6 +11,13 @@ export interface CollectionRecord { id: string; projectId: string; name: string;
 export interface RequestRecord { id: string; projectId: string; collectionId: string; name: string; method?: string; target: string }
 export interface WorkspaceTree { workspaces: WorkspaceRecord[]; projects: ProjectRecord[]; collections: CollectionRecord[]; requests: RequestRecord[] }
 
+const CREATE_PROTOCOL_GROUPS = [
+  { label: "API", items: [["http", "HTTP", "globe"], ["grpc", "gRPC", "network"]] },
+  { label: "实时通信", items: [["websocket", "WebSocket", "activity"], ["sse", "SSE", "activity"], ["socket", "TCP / UDP", "network"]] },
+  { label: "消息协议", items: [["mqtt", "MQTT", "network"], ["amqp", "AMQP", "network"], ["kafka", "Kafka", "network"]] },
+  { label: "数据协议", items: [["redis", "Redis", "database"], ["sql", "SQL", "database"]] },
+] as const;
+
 export interface WorkspaceExplorerProps {
   tree: WorkspaceTree | null;
   loading?: boolean;
@@ -50,10 +57,11 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const createMenuRef = useRef<HTMLDivElement>(null);
   const collapsedNodes = useAppStore((state) => state.collapsedExplorerNodes);
   const toggleExplorerNode = useAppStore((state) => state.toggleExplorerNode);
-  const toggleExplorer = useAppStore((state) => state.toggleExplorer);
   const importInput = useRef<HTMLInputElement>(null);
   const { notify, confirm, prompt } = useFeedback();
   function onTreeKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
@@ -98,6 +106,14 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       window.removeEventListener("scroll", dismiss, true);
     };
   }, [openMenuId]);
+  useEffect(() => {
+    if (!createMenuOpen) return;
+    const close = (event: MouseEvent) => { if (!createMenuRef.current?.contains(event.target as Node)) setCreateMenuOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setCreateMenuOpen(false); };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", escape); };
+  }, [createMenuOpen]);
   useLayoutEffect(() => {
     if (!openMenuId) { setMenuPos(null); return; }
     const button = menuButtonRefs.current.get(openMenuId);
@@ -294,9 +310,15 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       <span style={styles.headingActions}>
         <button style={styles.action} title="导入 OpenAPI JSON/YAML、Postman、HAR 或 ApiVoy 包" onClick={() => importInput.current?.click()}>导入</button>
         {workspace && <button style={styles.icon} title="新建项目" onClick={() => setDraft({ kind: "project", owner: workspace.id })}><Icon name="plus" /></button>}
-        <button className="ui-icon-button compact" aria-label="收起资源管理器" title="收起" onClick={toggleExplorer}><Icon name="close" /></button>
       </span>
       <input ref={importInput} hidden multiple type="file" accept=".json,.yaml,.yml,.har,.apivoy" onChange={(event) => void importFiles(event.target.files)} />
+    </div>
+    <div ref={createMenuRef} className="workspace-quick-actions" aria-label="资源快捷操作">
+      <button className="workspace-create-trigger" type="button" aria-haspopup="menu" aria-expanded={createMenuOpen} onClick={() => setCreateMenuOpen((value) => !value)}><Icon name="plus" /><span>新建接口</span><Icon name="chevron" /></button>
+      <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-script-library"))}><Icon name="code" /><span>脚本库</span></button>
+      {createMenuOpen ? <div className="workspace-protocol-menu" role="menu" aria-label="选择接口协议">
+        {CREATE_PROTOCOL_GROUPS.map((group) => <section key={group.label}><div>{group.label}</div>{group.items.map(([id, label, icon]) => <button key={id} type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-create-workbench", { detail: id })); }}><Icon name={icon} /><span>{label}</span></button>)}</section>)}
+      </div> : null}
     </div>
     <input aria-label="搜索资源" style={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" />
     {selectedIds.length > 0 && <div style={styles.batchBar}>

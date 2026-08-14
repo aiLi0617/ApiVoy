@@ -137,6 +137,9 @@ importers:
       monaco-editor:
         specifier: ^0.56.0
         version: 0.56.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
       zustand:
         specifier: ^5.0.14
         version: 5.0.14(@types/react@19.2.18)(react@19.2.8)
@@ -159,9 +162,6 @@ importers:
       tsx:
         specifier: ^4.20.3
         version: 4.23.11
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
 
 packages:
 

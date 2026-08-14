@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
+void createPortal;
 import type {
   Assertion,
   AssertionResultEvent,
@@ -16,6 +18,10 @@ import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
 import { VirtualList } from "./VirtualList";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
 import { useWorkbenchHydration } from "./useWorkbenchHydration";
+import { ScriptStepEditor } from "./ScriptStepEditor";
+import type { ScriptAsset } from "./scriptLibrary";
+import ts from "typescript";
+import { listEnvironmentResources } from "./agentResources";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 
@@ -38,8 +44,19 @@ export interface HttpWorkbenchRequest {
   proxy?: string | null;
   tlsVerify: boolean;
   tlsClientCertRef?: string | null;
+  environmentRef?: string | null;
   preScripts?: string[];
   postScripts?: string[];
+}
+
+export function requestNameFromUrl(value: string): string {
+  const target = value.trim();
+  if (!target) return "未命名接口";
+  try {
+    return new URL(target, "http://apivoy.local").pathname || "/";
+  } catch {
+    return target.split(/[?#]/, 1)[0] || "未命名接口";
+  }
 }
 
 export interface HttpRunResult {
@@ -118,6 +135,8 @@ const BODY_MODES: Array<{ id: BodyMode; label: string; contentType?: string }> =
   { id: "binary", label: "Binary", contentType: "application/octet-stream" },
   { id: "msgpack", label: "MessagePack", contentType: "application/msgpack" },
 ];
+
+function resolveAssets(ids:string[]):string[]{ let assets:ScriptAsset[]=[];try{assets=JSON.parse(localStorage.getItem("apivoy-project-scripts-v1")??"[]") as ScriptAsset[]}catch{return []}return ids.map((id)=>assets.find((item)=>item.id===id)).filter((item):item is ScriptAsset=>!!item).map((item)=>{const source=item.language==="typescript"?ts.transpileModule(item.source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None}}).outputText:item.source;return `// @apivoy-script:${item.id}\n${source}`})}
 
 function createHeaderRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
   return { id: crypto.randomUUID(), key, value, enabled: true, valueType, description };
@@ -227,6 +246,7 @@ function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPlacehold
 
 export interface HttpWorkbenchProps {
   onSend: (request: HttpWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>;
+  onTitleChange?: (title: string) => void;
   onCancel?: (executionId: string) => Promise<void>;
   onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
   onPutSecret?: (name: string, value: string) => Promise<void>;
@@ -236,6 +256,9 @@ export interface HttpWorkbenchProps {
   onListHistory?: (filter?: HistoryFilter) => Promise<HistoryItem[]>;
   onReplayHistory?: (id: string) => Promise<HttpWorkbenchRequest | RequestEnvelope | null>;
   externalRequest?: HttpWorkbenchRequest | null;
+  environments?: Array<{ id: string; name: string }>;
+  defaultEnvironmentId?: string;
+  toolbarTargetId?: string;
 }
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
@@ -276,17 +299,6 @@ function parseCurl(source: string): Partial<HttpWorkbenchRequest> {
   }
   if (!url) throw new Error("cURL 命令中没有找到 URL");
   return { method, url, headers, body };
-}
-
-function quoteShell(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function requestToCurl(request: HttpWorkbenchRequest): string {
-  const parts = ["curl", "-X", request.method, quoteShell(request.url)];
-  request.headers.forEach(([name, value]) => parts.push("-H", quoteShell(`${name}: ${value}`)));
-  if (request.body != null && request.body !== "") parts.push("--data-raw", quoteShell(request.body));
-  return parts.join(" ");
 }
 
 function prettyPreview(preview: string): string {
@@ -475,13 +487,18 @@ function buildAuth(
 
 export function HttpWorkbench({
   onSend,
+  onTitleChange,
   onCancel,
   onSave,
   onPutSecret,
   onListHistory,
   onReplayHistory,
   externalRequest,
+  environments = [{ id: "default-env", name: "默认环境" }],
+  defaultEnvironmentId = "default-env",
+  toolbarTargetId,
 }: HttpWorkbenchProps) {
+  const [name, setName] = useState("");
   const [method, setMethod] = useState<string>("GET");
   const [url, setUrl] = useState("");
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createHeaderRow()]);
@@ -497,8 +514,16 @@ export function HttpWorkbench({
   const [proxy, setProxy] = useState("");
   const [tlsVerify, setTlsVerify] = useState(true);
   const [tlsClientCertRef, setTlsClientCertRef] = useState("");
+  const [environmentRef,setEnvironmentRef]=useState<string>(defaultEnvironmentId);
+  const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
+  void toolbarTarget;
+  useEffect(() => { setToolbarTarget(toolbarTargetId ? document.getElementById(toolbarTargetId) : null); }, [toolbarTargetId]);
+  const [environmentOptions,setEnvironmentOptions]=useState(environments);
+  useEffect(()=>{listEnvironmentResources().then((items)=>setEnvironmentOptions(items.map(({id,name})=>({id,name})))).catch(()=>setEnvironmentOptions(environments))},[environments]);
   const [preScript, setPreScript] = useState("");
   const [postScript, setPostScript] = useState("");
+  const [preScriptAssetIds,setPreScriptAssetIds]=useState<string[]>([]);
+  const [postScriptAssetIds,setPostScriptAssetIds]=useState<string[]>([]);
   const [variablesText, setVariablesText] = useState("");
   const [assertionsText, setAssertionsText] = useState("");
   const [assertionsEnabled, setAssertionsEnabled] = useState(true);
@@ -528,9 +553,6 @@ export function HttpWorkbench({
   const [historyStatusFilter, setHistoryStatusFilter] = useState("");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [showCurlImport, setShowCurlImport] = useState(false);
-  const [codeRequest, setCodeRequest] = useState<HttpWorkbenchRequest | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const toolsRef = useRef<HTMLDivElement>(null);
   const [curlText, setCurlText] = useState("");
   const [responseView, setResponseView] = useState<"pretty" | "raw" | "hex" | "table" | "preview">("pretty");
   const [responseCharset, setResponseCharset] = useState("auto");
@@ -562,6 +584,10 @@ export function HttpWorkbench({
   const [binaryFileName, setBinaryFileName] = useState("");
   const [binarySize, setBinarySize] = useState(0);
   const [messagePackJson, setMessagePackJson] = useState("{}" );
+
+  useEffect(() => {
+    onTitleChange?.(`${method} ${name.trim() || "新建 HTTP 接口"}`);
+  }, [method, name, onTitleChange]);
 
   useEffect(() => {
     const confirmLegacyDelete = (event: MouseEvent) => {
@@ -648,6 +674,7 @@ export function HttpWorkbench({
 
     const encodedBody = bodyMode === "binary" ? binaryBase64 : bodyMode === "msgpack" ? bytesToBase64(encodeMessagePack(JSON.parse(messagePackJson || "null"))) : undefined;
     return {
+      name: name.trim() || requestNameFromUrl(url),
       url: url.trim(),
       method,
       headers,
@@ -675,8 +702,9 @@ export function HttpWorkbench({
       proxy: proxy.trim() || null,
       tlsVerify,
       tlsClientCertRef: tlsClientCertRef.trim() || null,
-      preScripts: preScript.trim() ? [preScript] : [],
-      postScripts: postScript.trim() ? [postScript] : [],
+      environmentRef,
+      preScripts: [...resolveAssets(preScriptAssetIds),...(preScript.trim()?[preScript]:[])],
+      postScripts: [...resolveAssets(postScriptAssetIds),...(postScript.trim()?[postScript]:[])],
     };
   }
 
@@ -706,14 +734,6 @@ export function HttpWorkbench({
     }
   }
 
-  function handleCopyCurl() {
-    try {
-      void copyText(requestToCurl(buildRequest()), "cURL 已复制");
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   function downloadResponse() {
     if (!responsePreview && !responseBytes?.length) return;
     const type = result?.responseMeta?.contentType ?? "text/plain;charset=utf-8";
@@ -740,6 +760,7 @@ export function HttpWorkbench({
   });
 
   function applyRequest(loaded: HttpWorkbenchRequest) {
+    setName(loaded.name ?? "");
     setMethod(loaded.method);
     setUrl(loaded.url);
     setQueryRows(queryRowsFromUrl(loaded.url));
@@ -770,6 +791,7 @@ export function HttpWorkbench({
     setProxy(loaded.proxy ?? "");
     setTlsVerify(loaded.tlsVerify ?? true);
     setTlsClientCertRef(loaded.tlsClientCertRef ?? "");
+    setEnvironmentRef(loaded.environmentRef ?? defaultEnvironmentId);
     setPreScript(loaded.preScripts?.join("\n") ?? "");
     setPostScript(loaded.postScripts?.join("\n") ?? "");
     setVariablesText(formatKv(loaded.variables));
@@ -846,12 +868,10 @@ export function HttpWorkbench({
 
   useAutosaveDraft("http", buildRequest);
   useEffect(() => {
-    if (!toolsOpen) return;
-    const close = (event: MouseEvent) => { if (!toolsRef.current?.contains(event.target as Node)) setToolsOpen(false); };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setToolsOpen(false); };
-    document.addEventListener("mousedown", close); document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape); };
-  }, [toolsOpen]);
+    const openCurlImport = () => setShowCurlImport(true);
+    window.addEventListener("apivoy-open-curl-import", openCurlImport);
+    return () => window.removeEventListener("apivoy-open-curl-import", openCurlImport);
+  }, []);
 
   async function startPkceAuthorization() {
     if (!oauthAuthorizationUrl.trim() || !authUsername.trim() || !oauthRedirectUri.trim()) {
@@ -944,7 +964,9 @@ export function HttpWorkbench({
       return;
     }
     try {
-      await onSave(buildRequest());
+      const request = buildRequest();
+      await onSave(request);
+      if (!name.trim()) setName(request.name ?? "");
       setStatusMsg("请求已保存到本地库");
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
@@ -1063,49 +1085,28 @@ export function HttpWorkbench({
     </div> : null}
     {result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null}
   </div>;
+  const environmentControl = <div className="http-environment-select"><select aria-label="请求环境" value={environmentRef} onChange={(event)=>setEnvironmentRef(event.target.value)} disabled={loading}>{environmentOptions.map((environment)=><option key={environment.id} value={environment.id}>{environment.name}{environment.id===defaultEnvironmentId?" · 默认":""}</option>)}</select><button type="button" className="http-environment-manage" aria-label="编辑环境变量" title="编辑环境变量" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-environment"))}><Icon name="menu"/></button></div>;
+
+  const requestCommandbar = <div className="http-request-commandbar">
+    <label className="http-request-name-field"><span>接口名称</span><input aria-label="接口名称" style={styles.input} value={name} onChange={(event) => setName(event.target.value)} placeholder="可选，留空保存时使用接口路径" disabled={loading} /></label>
+    <div className="http-request-primary-actions">
+      <select aria-label="HTTP 方法" style={styles.select} value={method} onChange={(e) => setMethod(e.target.value)} disabled={loading}>
+        {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+      <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="输入请求 URL" spellCheck={false} disabled={loading} /></label>
+      <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? "取消请求" : "发送请求"} onClick={() => loading ? void handleCancel() : void handleSend()}>
+        <Icon name={loading ? "close" : "send"}/>{loading ? "取消" : "发送"}
+      </button>
+      {onSave && <button className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}><Icon name="archive"/>保存</button>}
+    </div>
+  </div>;
 
   return (
-    <WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪 · Ctrl + Enter 发送</span>}>
+    <>{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}<WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪</span>}>
+      <div className="http-workbench-layout">
+      {requestCommandbar}
+      <div className="http-workbench-split">
       <SplitPane id="http-workbench" direction="vertical" minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
-<div className="http-request-commandbar"><div className="http-request-primary-actions">
-        <select
-          aria-label="HTTP 方法"
-          style={styles.select}
-          value={method}
-          onChange={(e) => setMethod(e.target.value)}
-          disabled={loading}
-        >
-          {METHODS.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-        <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="输入请求 URL" spellCheck={false} disabled={loading} /></label>
-        <button className="http-send-button" style={styles.button} disabled={loading || !url.trim()} onClick={() => void handleSend()}>
-          <Icon name="send"/>{loading ? "发送中…" : "发送"}
-        </button>
-        {onSave && <button className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}><Icon name="archive"/>保存</button>}
-        <div className="http-tools-menu" ref={toolsRef}>
-          <button type="button" className="http-tools-trigger" style={styles.secondaryButton} disabled={loading} aria-haspopup="menu" aria-expanded={toolsOpen} onClick={() => setToolsOpen((value) => !value)}><Icon name="command"/>更多</button>
-          {toolsOpen ? <div className="http-tools-popover" role="menu" aria-label="请求转换工具">
-            <button type="button" role="menuitem" onClick={() => { setShowCurlImport(true); setToolsOpen(false); }}>导入 cURL</button>
-            <button type="button" role="menuitem" disabled={!url.trim()} onClick={() => { handleCopyCurl(); setToolsOpen(false); }}>复制 cURL</button>
-            <button type="button" role="menuitem" disabled={!url.trim()} onClick={() => { try { setCodeRequest(buildRequest()); setToolsOpen(false); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } }}>生成代码</button>
-          </div> : null}
-        </div>
-        {onCancel && (
-          <button
-            style={styles.secondaryButton}
-            disabled={!loading || !executionId}
-            onClick={handleCancel}
-          >
-            取消
-          </button>
-        )}
-        <span style={styles.shortcut}>Ctrl ↵</span>
-      </div></div>
-
       {showCurlImport && (
         <div style={styles.importPanel}>
           <div style={styles.panelTitle}><strong>从 cURL 导入</strong><span>支持 method、header 和 request body</span></div>
@@ -1113,8 +1114,6 @@ export function HttpWorkbench({
           <div style={styles.row}><button style={styles.button} onClick={handleImportCurl}>导入请求</button><button style={styles.secondaryButton} onClick={() => setShowCurlImport(false)}>取消</button></div>
         </div>
       )}
-      {codeRequest && <CodeGenerator request={codeRequest} />}
-
       {(() => {
         const requestTabs = [
           { id: "params" as const, label: "Params", hint: queryRows.filter((row) => row.key.trim()).length || undefined },
@@ -1261,8 +1260,8 @@ export function HttpWorkbench({
               <div className="http-section-heading">请求 Cookies</div>
               <KeyValueRows rows={cookieRows} setRows={setCookieRows} kind="Cookie" nameLabel="Cookie 名称" valueLabel="Cookie 值" addPlaceholder="添加 Cookie" loading={loading}/>
             </div>}
-            {activeTab === "pre" && <label style={styles.label}>前置脚本（QuickJS）<CodeEditor value={preScript} onChange={setPreScript} language="javascript" height={240} readOnly={loading} /></label>}
-            {activeTab === "post" && <label style={styles.label}>后置脚本（QuickJS）<CodeEditor value={postScript} onChange={setPostScript} language="javascript" height={240} readOnly={loading} /></label>}
+            {activeTab === "pre" && <ScriptStepEditor phase="pre" value={preScript} onChange={setPreScript} assetIds={preScriptAssetIds} onAssetIdsChange={setPreScriptAssetIds} readOnly={loading}/>}
+            {activeTab === "post" && <ScriptStepEditor phase="post" value={postScript} onChange={setPostScript} assetIds={postScriptAssetIds} onAssetIdsChange={setPostScriptAssetIds} readOnly={loading}/>}
             {activeTab === "proxy" && <div style={styles.grid3}>
               <label style={styles.label}>代理地址（可选）<input style={styles.input} value={proxy} onChange={(e) => setProxy(e.target.value)} placeholder="http://127.0.0.1:7890" spellCheck={false} disabled={loading} /></label>
               <label style={styles.label}>Timeout (ms)<input style={styles.timeout} type="number" min={1} value={timeoutMs} onChange={(e) => setTimeoutMs(Number(e.target.value) || 30_000)} disabled={loading} /></label>
@@ -1460,7 +1459,9 @@ export function HttpWorkbench({
         </div>
       )}
       </div>}/>
-    </WorkbenchFrame>
+      </div>
+      </div>
+    </WorkbenchFrame></>
   );
 }
 
@@ -1487,10 +1488,6 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
     alignItems: "center",
     flexWrap: "wrap",
-  },
-  shortcut: {
-    color: "var(--apivoy-muted)", fontFamily: "var(--apivoy-mono)", fontSize: 11,
-    border: "1px solid var(--apivoy-border)", borderRadius: 6, padding: "4px 7px",
   },
   importPanel: {
     display: "flex", flexDirection: "column", gap: 12, padding: 16,

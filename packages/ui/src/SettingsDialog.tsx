@@ -20,17 +20,15 @@ import {
   setGatewayKey,
   setGatewayUrl,
 } from "./userPreferences";
-import { EnvironmentEditor, type EnvironmentEditorProps } from "./EnvironmentEditor";
 import { useDialogFocus } from "./useDialogFocus";
 
 export interface SettingsDialogProps {
   open: boolean;
   onClose: () => void;
   channelLabel: string;
-  environment?: EnvironmentEditorProps;
 }
 
-export function SettingsDialog({ open, onClose, channelLabel, environment }: SettingsDialogProps) {
+export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogProps) {
   const { locale, setLocale, t } = useI18n();
   const themeMode = useAppStore((state) => state.themeMode);
   const setThemeMode = useAppStore((state) => state.setThemeMode);
@@ -47,6 +45,11 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
   const [gatewayUrl, setGatewayUrlState] = useState(getGatewayUrl);
   const [gatewayKey, setGatewayKeyState] = useState(getGatewayKey);
   const [saved, setSaved] = useState(false);
+  const [category, setCategory] = useState<"general" | "connection" | "ai" | "collaboration" | "plugins" | "shortcuts" | "about">("general");
+  const categories = [
+    ["general", "通用"], ["connection", "连接"], ["ai", "AI"],
+    ["collaboration", "协作"], ["plugins", "插件"], ["shortcuts", "快捷键"], ["about", "关于"],
+  ] as const;
 
   useEffect(() => {
     if (!open) return;
@@ -90,8 +93,13 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
           </button>
         </header>
 
-        <div className="settings-dialog-body">
-          <section className="settings-section">
+        <div className="settings-dialog-body" data-category={category}>
+          <nav className="settings-categories" aria-label="设置分类">
+            <label>设置分类<select value={category} onChange={(event) => setCategory(event.target.value as typeof category)}>{categories.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+            <div>{categories.map(([id, label]) => <button key={id} type="button" className={category === id ? "is-active" : undefined} aria-current={category === id ? "page" : undefined} onClick={() => setCategory(id)}>{label}</button>)}</div>
+          </nav>
+          <div className="settings-content">
+          <section className="settings-section category-general">
             <h3>{t("settings.section.appearance")}</h3>
             <label className="settings-field">
               <span>{t("settings.theme")}</span>
@@ -107,7 +115,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
             </label>
           </section>
 
-          <section className="settings-section">
+          <section className="settings-section category-general">
             <h3>{t("settings.section.language")}</h3>
             <label className="settings-field">
               <span>{t("locale.label")}</span>
@@ -122,7 +130,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
             </label>
           </section>
 
-          <section className="settings-section">
+          <section className="settings-section category-connection">
             <h3>{t("settings.section.agent")}</h3>
             <p className="settings-hint">{t("settings.agent.channel", { channel: channelLabel })}</p>
             <label className="settings-field">
@@ -152,7 +160,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
             <p className="settings-hint">{t("settings.agent.setup")}</p>
           </section>
 
-          <section className="settings-section">
+          <section className="settings-section category-collaboration">
             <h3>{t("settings.section.collaboration")}</h3>
             <label className="settings-field">
               <span>{t("settings.collaboration.url")}</span>
@@ -170,7 +178,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
             </button>
           </section>
 
-          <section className="settings-section">
+          <section className="settings-section category-ai">
             <h3>{t("settings.section.ai")}</h3>
             <label className="settings-field">
               <span>{t("settings.ai.endpoint")}</span>
@@ -209,12 +217,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
             <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "ai" })); }}>{t("settings.openWorkbench", { name: "AI" })}</button>
           </section>
 
-          <section className="settings-section">
-            <h3>{locale === "zh-CN" ? "全局参数" : "Global parameters"}</h3>
-            {environment ? <EnvironmentEditor {...environment} /> : <p className="settings-hint">{t("environments.unavailable")}</p>}
-          </section>
-
-          <section className="settings-section">
+          <section className="settings-section category-connection">
             <h3>{t("settings.section.gateway")}</h3>
             <label className="settings-field">
               <span>{t("settings.gateway.url")}</span>
@@ -242,7 +245,7 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
             <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "gateway" })); }}>{t("settings.openWorkbench", { name: "Gateway" })}</button>
           </section>
 
-          <section className="settings-section">
+          <section className="settings-section category-plugins">
             <h3>{t("settings.section.plugins")}</h3>
             <p className="settings-hint">{t("settings.plugins.hint")}</p>
             <div className="environment-editor-actions">
@@ -250,6 +253,15 @@ export function SettingsDialog({ open, onClose, channelLabel, environment }: Set
               <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "ai" })); }}>{t("settings.openWorkbench", { name: "AI" })}</button>
             </div>
           </section>
+          <section className="settings-section category-shortcuts">
+            <h3>快捷键</h3>
+            <p className="settings-hint">快捷键集中展示在这里，后续版本将在此提供自定义配置。</p>
+            <dl className="shortcut-list"><div><dt>发送请求</dt><dd><kbd>Ctrl/⌘</kbd> + <kbd>Enter</kbd></dd></div><div><dt>命令面板</dt><dd><kbd>Ctrl/⌘</kbd> + <kbd>K</kbd></dd></div><div><dt>打开设置</dt><dd><kbd>Ctrl/⌘</kbd> + <kbd>,</kbd></dd></div><div><dt>关闭弹窗或面板</dt><dd><kbd>Esc</kbd></dd></div></dl>
+          </section>
+          <section className="settings-section category-about">
+            <h3>关于 ApiVoy</h3><p className="settings-hint">ApiVoy · Explore Every Protocol.</p><p className="settings-hint">本地优先的多协议 API 调试与协作工具。</p>
+          </section>
+          </div>
         </div>
 
         <footer className="settings-dialog-footer">

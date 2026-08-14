@@ -68,7 +68,8 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: ApiVoy ${{ github.ref_name }}
           releaseBody: ${{ steps.release-notes.outputs.body }}
-          releaseDraft: false
+          # Keep the release private until every platform build has succeeded.
+          releaseDraft: true
 
   agent-cli:
     strategy:
@@ -92,3 +93,13 @@ jobs:
           path: |
             target/release/apivoy-agent*
             target/release/apivoy-cli*
+
+  publish:
+    name: Publish release
+    needs: [desktop, agent-cli]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish draft after all builds succeed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
