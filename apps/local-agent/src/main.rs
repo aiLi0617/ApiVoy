@@ -1753,7 +1753,30 @@ async fn start_execution(
                 })
                 .await;
         }
-        match handle.await {
+        // The engine normally reports failures before closing its event channel.
+        // A task panic bypasses that path, so translate the JoinError into the
+        // same structured event contract before closing the SSE stream.
+        let task_result = handle.await;
+        if let Err(err) = &task_result {
+            let message = format!("execution task terminated unexpectedly: {err}");
+            let _ = sse_tx
+                .send(ExecutionEvent::Failed {
+                    code: "execution_task_panicked".into(),
+                    message,
+                })
+                .await;
+            let _ = sse_tx
+                .send(ExecutionEvent::StateChanged {
+                    state: ExecutionState::Failed,
+                    phase: None,
+                })
+                .await;
+        }
+        // All execution events have now been forwarded. Close the SSE stream
+        // before response/history persistence so the client is not blocked on
+        // local SQLite or blob writes after it has received completion.
+        drop(sse_tx);
+        match task_result {
             Ok(Ok(summary)) => {
                 let store = store.lock().await;
                 let response_blob_id = if response_bytes.is_empty() {

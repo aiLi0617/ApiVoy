@@ -137,6 +137,7 @@ function toInvokeRequest(request: HttpWorkbenchRequest) {
       }
     : null;
   return {
+    id: request.id ?? null,
     name: request.name ?? `${request.method} ${request.url}`,
     url: request.url,
     method: request.method,
@@ -166,6 +167,7 @@ function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpW
     throw new Error("仅支持 HTTP 请求重放");
   }
   return {
+    id: envelope.id,
     name: envelope.name,
     url: envelope.target || fallbackTarget || "",
     method: payload.method,
@@ -199,9 +201,8 @@ export function App() {
   const amqpEnvelope=(request:AmqpWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"amqp",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,username:request.username,passwordRef:request.passwordRef,exchange:request.exchange,exchangeType:request.exchangeType,routingKey:request.routingKey,queue:request.queue,declare:request.declare,durable:request.durable,autoAck:request.autoAck,receiveLimit:request.receiveLimit,payload:request.payload,encoding:request.encoding,contentType:request.contentType}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const kafkaEnvelope=(request:KafkaWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"kafka",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,topic:request.topic,key:request.key,payload:request.payload,encoding:request.encoding,partition:request.partition,groupId:request.groupId,offsetReset:request.offsetReset,autoCommit:request.autoCommit,receiveLimit:request.receiveLimit,securityProtocol:request.securityProtocol,saslMechanism:request.saslMechanism,username:request.username,passwordRef:request.passwordRef,caPemRef:request.caPemRef,certificatePemRef:request.certificatePemRef,keyPemRef:request.keyPemRef,keyPasswordRef:request.keyPasswordRef}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const sqlEnvelope=(request:SqlWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"sql",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{username:request.username,passwordRef:request.passwordRef,sql:request.sql,parameters:request.parameters,transactional:request.transactional,rowLimit:request.rowLimit}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
-  const [externalRequest, setExternalRequest] = useState<HttpWorkbenchRequest | null>(null);
   useEffect(() => {
-    const reset = () => { setSelectedRequestId(null); setExternalRequest(null); };
+    const reset = () => { setSelectedRequestId(null); };
     window.addEventListener("apivoy-new-workbench", reset);
     return () => window.removeEventListener("apivoy-new-workbench", reset);
   }, []);
@@ -240,7 +241,7 @@ export function App() {
       }}
       explorer={<WorkspaceExplorer tree={tree} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
       onSelectCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
-      onOpenRequest={async (id) => { const stored = await invoke<StoredRequest | null>("get_request", { id }); setSelectedRequestId(id); if (stored) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: stored.envelope })); setExternalRequest(stored?.envelope.payload.type === "http" ? fromEnvelope(stored.envelope, stored.target) : null); }}
+      onOpenRequest={async (id) => { const stored = await invoke<StoredRequest | null>("get_request", { id }); setSelectedRequestId(id); if (stored) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: stored.envelope })); }}
       onCreateWorkspace={async (name) => { await invoke("create_workspace", { name, rootPath: null }); await refreshTree(); }}
       onRenameWorkspace={async (id, name) => { await invoke("rename_workspace", { id, name }); await refreshTree(); }}
       onArchiveWorkspace={async (id, archived) => { await invoke("archive_workspace", { id, archived }); await refreshTree(); }}
@@ -263,7 +264,6 @@ export function App() {
     />}>
       <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
       <HttpWorkbench
-        externalRequest={externalRequest}
         onSend={async (request, hooks) => {
           const version = await invoke<{
             desktopVersion: string;

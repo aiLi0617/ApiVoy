@@ -10,14 +10,12 @@ import { ScriptLibraryWorkbench } from "./ScriptLibraryWorkbench";
 export interface WorkbenchDefinition { id: string; label: string; protocol?: string; protocols?: string[]; group?: string; icon?: IconName }
 export type WorkbenchTab = WorkbenchDefinition;
 export interface WorkbenchGroup { id: string; label: string; icon: IconName; workbenchIds: string[] }
-interface WorkbenchSession { id: string; workbenchId: string; title: string }
+interface WorkbenchSession { id: string; workbenchId: string; title: string; requestId?: string }
 export interface WorkbenchDeckProps {
   tabs: WorkbenchTab[];
   children: ReactNode;
   /** UX-012: show save target in frame status */
   saveTargetLabel?: string;
-  /** Show a project home canvas until the user opens or creates a workbench. */
-  startOnHome?: boolean;
 }
 export const WORKBENCH_LABELS: Record<string, string> = { http:"HTTP", graphql:"GraphQL", grpc:"gRPC", rpc:"SOAP / RPC", websocket:"WebSocket", sse:"SSE", socket:"TCP / UDP", mqtt:"MQTT", amqp:"AMQP", kafka:"Kafka", redis:"Redis", sql:"SQL", mock:"Mock", runner:"Runner", gateway:"Gateway", capture:"Capture", plugins:"Plugins", ai:"AI" };
 export const WORKBENCH_ICONS: Record<string, IconName> = {
@@ -49,33 +47,43 @@ function resolveOpenProtocol(detail: unknown): string | undefined {
   return undefined;
 }
 
-export function WorkbenchDeck({ tabs, children, saveTargetLabel, startOnHome = false }: WorkbenchDeckProps) {
+export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeckProps) {
   const items = Children.toArray(children); const { t } = useI18n();
   const active = useAppStore((state) => state.activeWorkbench); const setActive = useAppStore((state) => state.setActiveWorkbench);
   const favorites = useAppStore((state) => state.favoriteWorkbenches); const recent = useAppStore((state) => state.recentWorkbenches);
   const toggleFavorite = useAppStore((state) => state.toggleFavorite); const collapsed = useAppStore((state) => state.collapsedNavigation); const toggleNavigation = useAppStore((state) => state.toggleNavigation);
-  const initialWorkbench = resolveWorkbenchId(tabs, hashWorkbench() ?? active); const tabMap = new Map(tabs.map((tab) => [tab.id, tab]));
+  const tabMap = new Map(tabs.map((tab) => [tab.id, tab]));
   const initialSessionId = useRef(crypto.randomUUID());
-  const [sessions, setSessions] = useState<WorkbenchSession[]>(() => startOnHome ? [] : [{ id: initialSessionId.current, workbenchId: initialWorkbench, title: translateWorkbench(initialWorkbench, tabMap.get(initialWorkbench)?.label ?? initialWorkbench) }]);
-  const [activeSessionId, setActiveSessionId] = useState<string>(startOnHome ? "" : initialSessionId.current);
+  const [sessions, setSessions] = useState<WorkbenchSession[]>([{ id: initialSessionId.current, workbenchId: "__new", title: "新建" }]);
+  const [activeSessionId, setActiveSessionId] = useState<string>(initialSessionId.current);
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
   const selected = activeSession?.workbenchId ?? ""; const selectedIndex = tabs.findIndex((tab) => tab.id === selected);
   const [codeOpen, setCodeOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [homeMoreOpen, setHomeMoreOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
 
   function activateSession(session: WorkbenchSession, writeHash = true) { setActiveSessionId(session.id); setPickerOpen(false); setActive(session.workbenchId); if (writeHash && typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.set("workbench", session.workbenchId); history.pushState(null, "", `#${params}`); } }
   function activate(id: string, writeHash = true) { if (!tabMap.has(id)) return; const existing = [...sessions].reverse().find((session) => session.workbenchId === id); if (existing) activateSession(existing, writeHash); else createWorkbench(id, writeHash); }
-  function createWorkbench(id: string, writeHash = true) {
-    if (!tabMap.has(id)) return;
-    clearWorkbenchDraft(id);
-    window.dispatchEvent(new CustomEvent("apivoy-new-workbench", { detail: { workbenchId: id } }));
+  function createWorkbench(id: string, writeHash = true, resetDraft = true, openedRequest?: { id?: string; name?: string }): WorkbenchSession | null {
+    if (!tabMap.has(id)) return null;
+    if (resetDraft) {
+      clearWorkbenchDraft(id);
+      window.dispatchEvent(new CustomEvent("apivoy-new-workbench", { detail: { workbenchId: id } }));
+    }
     const sameTypeCount = sessions.filter((session) => session.workbenchId === id).length;
     const label = translateWorkbench(id, tabMap.get(id)?.label ?? id);
-    const session = { id: crypto.randomUUID(), workbenchId: id, title: sameTypeCount ? `${label} ${sameTypeCount + 1}` : label };
-    setSessions((current) => [...current, session]);
+    const session = { id: crypto.randomUUID(), workbenchId: id, title: openedRequest?.name?.trim() || (sameTypeCount ? `${label} ${sameTypeCount + 1}` : label), requestId: openedRequest?.id };
+    setSessions((current) => activeSession?.workbenchId === "__new" ? current.map((item) => item.id === activeSession.id ? session : item) : [...current, session]);
     activateSession(session, writeHash);
+    return session;
+  }
+  function createNewPage() {
+    const session = { id: crypto.randomUUID(), workbenchId: "__new", title: "新建" };
+    setSessions((current) => [...current, session]);
+    setActiveSessionId(session.id);
+    setPickerOpen(false);
   }
   function openScriptLibrary() {
     const existing = sessions.find((session) => session.workbenchId === "__scripts");
@@ -88,7 +96,8 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, startOnHome = f
     const index = sessions.findIndex((session) => session.id === id); if (index < 0) return;
     const remaining = sessions.filter((session) => session.id !== id);
     if (!remaining.length) {
-      setSessions([]); setActiveSessionId(""); setPickerOpen(false);
+      const replacement = { id: crypto.randomUUID(), workbenchId: "__new", title: "新建" };
+      setSessions([replacement]); setActiveSessionId(replacement.id); setPickerOpen(false);
       if (typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.delete("workbench"); history.pushState(null, "", `#${params}`); }
       return;
     }
@@ -101,9 +110,16 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, startOnHome = f
       const protocol = resolveOpenProtocol(detail);
       const match = tabs.find((tab) => tab.protocol === protocol || tab.protocols?.includes(protocol ?? "") || tab.id === protocol);
       if (!match) return;
-      const hydrate = { workbenchId: match.id, protocolId: protocol, envelope: detail };
+      const opened = detail as { id?: string; name?: string } | null;
+      const existing = opened?.id ? sessions.find((item) => item.requestId === opened.id) : undefined;
+      if (existing) {
+        activateSession(existing);
+        return;
+      }
+      const session = createWorkbench(match.id, true, false, { id: opened?.id, name: opened?.name });
+      if (!session) return;
+      const hydrate = { workbenchId: match.id, sessionId: match.id === "http" ? session.id : undefined, protocolId: protocol, envelope: detail };
       stashHydrate(hydrate);
-      activate(match.id);
       queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
     };
     const selectWorkbench = (event: Event) => activate((event as CustomEvent<string>).detail);
@@ -189,9 +205,20 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, startOnHome = f
     { id: "runner", title: "运行当前集合", description: "批量执行集合中的请求", icon: "send" as IconName },
   ].filter((action) => action.id === "curl" || tabMap.has(action.id));
   function runHomeAction(id: string) {
+    setHomeMoreOpen(false);
     if (id !== "curl") { createWorkbench(id); return; }
     createWorkbench("http");
     window.setTimeout(() => window.dispatchEvent(new CustomEvent("apivoy-open-curl-import")), 0);
+  }
+  function renderHomePage(sessionId: string) {
+    const primaryActions = homeActions.slice(0, 2);
+    const moreActions = homeActions.slice(2);
+    return <main className="workbench-home" aria-labelledby={`workbench-home-title-${sessionId}`}>
+      <div className="workbench-home-copy"><span>APIVOY WORKSPACE</span><h1 id={`workbench-home-title-${sessionId}`}>从这里开始探索接口</h1><p>{saveTargetLabel ? `当前保存位置：${saveTargetLabel}` : "选择一种工作台，或从左侧资源树打开已有请求。"}</p></div>
+      <div className="workbench-home-actions">{primaryActions.map((action) => <button key={action.id} type="button" onClick={() => runHomeAction(action.id)}><span className={`workbench-home-action-icon tone-${action.id}`}><Icon name={action.icon}/></span><strong>{action.title}</strong><small>{action.description}</small></button>)}</div>
+      {moreActions.length ? <div className="workbench-home-more"><button type="button" className="workbench-home-more-trigger" aria-haspopup="menu" aria-expanded={homeMoreOpen} onClick={() => setHomeMoreOpen((open) => !open)}>更多功能 <Icon name="chevron"/></button>{homeMoreOpen ? <div className="workbench-home-more-menu" role="menu" aria-label="更多功能">{moreActions.map((action) => <button key={action.id} type="button" role="menuitem" onClick={() => runHomeAction(action.id)}><span className={`workbench-home-action-icon tone-${action.id}`}><Icon name={action.icon}/></span><span><strong>{action.title}</strong><small>{action.description}</small></span></button>)}</div> : null}</div> : null}
+      <div className="workbench-home-hint"><Icon name="folder"/><span>也可以从左侧资源树打开已保存的请求</span></div>
+    </main>;
   }
   function updateSessionTitle(id: string, title: string) {
     setSessions((current) => {
@@ -202,12 +229,17 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, startOnHome = f
   }
 
   function renderSession(session: WorkbenchSession) {
+    if (session.workbenchId === "__new") return renderHomePage(session.id);
     if(session.workbenchId==="__scripts") return <ScriptLibraryWorkbench projectId={saveTargetLabel?.split(" / ")[0] || "default-project"}/>;
     const index = tabs.findIndex((tab) => tab.id === session.workbenchId); if (index < 0) return null;
     const tab = tabs[index]; const source = items[index];
     if (session.workbenchId === "http" && isValidElement(source)) {
-      const item = cloneElement(source as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string }>, { key: session.id, toolbarTargetId: `workbench-context-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
+      const item = cloneElement(source as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
       return item;
+    }
+    if (session.workbenchId === "websocket" && isValidElement(source)) {
+      const item = cloneElement(source as ReactElement<{ onTitleChange?: (title: string) => void }>, { key: session.id, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
+      return <WorkbenchFrame title="WebSocket" hideHeader toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH.websocket ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
     }
     const item = isValidElement(source) ? cloneElement(source, { key: session.id }) : source;
     return <WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} description={GROUP_BY_WORKBENCH.get(session.workbenchId)} badge={<span className="protocol-badge">{tab.protocol ?? tab.id.toUpperCase()}</span>} toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
@@ -231,9 +263,9 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, startOnHome = f
         {!collapsed && recent.length ? <div className="protocol-shortcuts" aria-label={t("workbench.recent")}><div className="protocol-group-title"><Icon name="activity"/><span>{t("workbench.recent")}</span></div>{recent.slice(0,3).map((id) => tabMap.get(id)).filter(Boolean).map((tab) => renderShortcut(tab!))}</div> : null}
       </aside>
       <div className="workbench-content" data-workbench-label={selectedTab ? translateWorkbench(selectedTab.id, selectedTab.label) : selected === "__scripts" ? "脚本库" : ""}>
-        {sessions.length ? <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={WORKBENCH_ICONS[session.workbenchId] ?? "bolt"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add" ref={pickerRef}><button type="button" className="ui-icon-button compact" aria-label="新增工作台" aria-haspopup="menu" aria-expanded={pickerOpen} onClick={() => setPickerOpen((value) => !value)}><Icon name="plus"/></button>{pickerOpen ? <div className="workbench-type-picker workbench-tab-picker" role="menu" aria-label="选择工作台类型">{DEFAULT_WORKBENCH_GROUPS.map((group) => { const groupTabs = group.workbenchIds.map((id) => tabMap.get(id)).filter(Boolean) as WorkbenchTab[]; return groupTabs.length ? <section key={group.id}><div className="workbench-picker-group"><Icon name={group.icon}/><span>{group.label}</span></div>{groupTabs.map((tab) => <button key={tab.id} type="button" role="menuitem" onClick={() => createWorkbench(tab.id)}><Icon name={tab.icon ?? WORKBENCH_ICONS[tab.id] ?? "bolt"}/><span>{translateWorkbench(tab.id, tab.label)}</span></button>)}</section> : null; })}</div> : null}</div></div> : <div className="workbench-home-bar"><strong>项目主页</strong><button type="button" aria-label="新建 HTTP 请求" title="新建 HTTP 请求" onClick={() => createWorkbench("http")}><Icon name="plus"/></button></div>}
+        <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button></div></div>
         {sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}
-        <div className="workbench-session-stack">{sessions.length ? sessions.map((session) => <div key={session.id} role="tabpanel" aria-label={session.title} hidden={session.id !== activeSessionId} className="workbench-panel">{renderSession(session)}</div>) : <main className="workbench-home" aria-labelledby="workbench-home-title"><div className="workbench-home-copy"><span>APIVOY WORKSPACE</span><h1 id="workbench-home-title">从这里开始探索接口</h1><p>{saveTargetLabel ? `当前保存位置：${saveTargetLabel}` : "选择一种工作台，或从左侧资源树打开已有请求。"}</p></div><div className="workbench-home-actions">{homeActions.map((action) => <button key={action.id} type="button" onClick={() => runHomeAction(action.id)}><span className={`workbench-home-action-icon tone-${action.id}`}><Icon name={action.icon}/></span><strong>{action.title}</strong><small>{action.description}</small></button>)}</div><div className="workbench-home-hint"><Icon name="folder"/><span>也可以从左侧资源树打开已保存的请求</span></div></main>}</div>
+        <div className="workbench-session-stack">{sessions.map((session) => <div key={session.id} role="tabpanel" aria-label={session.title} hidden={session.id !== activeSessionId} className="workbench-panel">{renderSession(session)}</div>)}</div>
         {items.slice(tabs.length)}
       </div>
     </div>

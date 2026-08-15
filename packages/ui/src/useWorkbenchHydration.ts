@@ -8,6 +8,7 @@ import { consumeHydrate } from "./openRequestPipeline";
 export function useWorkbenchHydration(
   workbenchId: string,
   onDetail: (detail: unknown) => void,
+  sessionId?: string,
 ): void {
   const handlerRef = useRef(onDetail);
   handlerRef.current = onDetail;
@@ -22,17 +23,15 @@ export function useWorkbenchHydration(
     if (pending) deliver(pending.envelope);
 
     const onHydrate = (event: Event) => {
-      const detail = (event as CustomEvent<{ workbenchId?: string; envelope?: unknown }>).detail;
+      const detail = (event as CustomEvent<{ workbenchId?: string; sessionId?: string; envelope?: unknown }>).detail;
       if (detail?.workbenchId !== workbenchId) return;
+      if (detail.sessionId && detail.sessionId !== sessionId) return;
       deliver(detail.envelope);
     };
-    const onOpen = (event: Event) => deliver((event as CustomEvent).detail);
 
     window.addEventListener("apivoy-hydrate-request", onHydrate);
-    window.addEventListener("apivoy-open-request", onOpen);
     return () => {
       window.removeEventListener("apivoy-hydrate-request", onHydrate);
-      window.removeEventListener("apivoy-open-request", onOpen);
     };
-  }, [workbenchId]);
+  }, [workbenchId, sessionId]);
 }

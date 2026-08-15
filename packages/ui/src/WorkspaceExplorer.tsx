@@ -58,8 +58,10 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [createMenuPos, setCreateMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const menuButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const createMenuRef = useRef<HTMLDivElement>(null);
+  const createMenuButtonRef = useRef<HTMLButtonElement>(null);
   const collapsedNodes = useAppStore((state) => state.collapsedExplorerNodes);
   const toggleExplorerNode = useAppStore((state) => state.toggleExplorerNode);
   const importInput = useRef<HTMLInputElement>(null);
@@ -108,11 +110,20 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   }, [openMenuId]);
   useEffect(() => {
     if (!createMenuOpen) return;
-    const close = (event: MouseEvent) => { if (!createMenuRef.current?.contains(event.target as Node)) setCreateMenuOpen(false); };
+    const close = (event: MouseEvent) => { const target = event.target as HTMLElement | null; if (!createMenuRef.current?.contains(target) && !target?.closest("[data-workspace-create-menu]")) setCreateMenuOpen(false); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setCreateMenuOpen(false); };
+    const dismiss = () => setCreateMenuOpen(false);
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", escape);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", escape); };
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", escape); window.removeEventListener("resize", dismiss); window.removeEventListener("scroll", dismiss, true); };
+  }, [createMenuOpen]);
+  useLayoutEffect(() => {
+    if (!createMenuOpen) { setCreateMenuPos(null); return; }
+    const rect = createMenuButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setCreateMenuPos({ top: rect.bottom + 4, left: rect.left, width: Math.min(390, window.innerWidth - rect.left - 8) });
   }, [createMenuOpen]);
   useLayoutEffect(() => {
     if (!openMenuId) { setMenuPos(null); return; }
@@ -201,6 +212,21 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   if (props.error) return <div className="workspace-load-error" role="alert"><Icon name="archive"/><strong>无法加载工作区</strong><span>{props.error}</span><div><button type="button" className="ui-button primary" onClick={props.onRetry}>重试</button><button type="button" className="ui-button secondary" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-settings"))}>检查 Local Agent 设置</button></div></div>;
   if (!tree) return <div style={styles.empty} role="status">尚未加载工作区</div>;
   const workspace = tree.workspaces.find((item) => item.id === selectedWorkspaceId) ?? tree.workspaces[0];
+  const workspaceProjects = tree.projects.filter((project) => project.workspaceId === workspace?.id);
+  const workspaceProjectIds = new Set(workspaceProjects.map((project) => project.id));
+  const workspaceRequestCount = tree.requests.filter((request) => workspaceProjectIds.has(request.projectId)).length;
+  const collectionCountCache = new Map<string, number>();
+  function collectionRequestCount(collectionId: string, ancestors = new Set<string>()): number {
+    const cached = collectionCountCache.get(collectionId);
+    if (cached != null) return cached;
+    if (ancestors.has(collectionId)) return 0;
+    const nextAncestors = new Set(ancestors).add(collectionId);
+    const direct = tree!.requests.filter((request) => request.collectionId === collectionId).length;
+    const descendants = tree!.collections.filter((collection) => collection.parentId === collectionId).reduce((count, child) => count + collectionRequestCount(child.id, nextAncestors), 0);
+    const total = direct + descendants;
+    collectionCountCache.set(collectionId, total);
+    return total;
+  }
   const selectedProjectIds = [...new Set(tree.requests.filter((item) => selectedIds.includes(item.id)).map((item) => item.projectId))];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   function collectionMatches(collection: CollectionRecord): boolean {
@@ -262,13 +288,13 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     const siblingIndex = siblings.findIndex((item) => item.id === collection.id);
     const children = tree!.collections.filter((item) => item.parentId === collection.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     const isCollapsed = collapsedNodes.includes(`collection:${collection.id}`);
-    return <div key={collection.id} role="treeitem" aria-level={depth + 1} aria-setsize={siblings.length} aria-posinset={siblingIndex + 1} aria-expanded={!isCollapsed} aria-label={`集合 ${collection.name}`}>
+    return <div key={collection.id} className="tree-collection-node" data-depth={depth} style={{ "--tree-guide-left": `${28 + Math.max(0, depth - 1) * 14}px` } as CSSProperties} role="treeitem" aria-level={depth + 1} aria-setsize={siblings.length} aria-posinset={siblingIndex + 1} aria-expanded={!isCollapsed} aria-label={`集合 ${collection.name}`}>
       <div draggable onDragStart={(event) => setDrag(event, "collection", collection.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropOnCollection(event, collection)} className={`tree-row${props.selectedCollectionId === collection.id ? " is-active" : ""}${openMenuId === collection.id ? " is-menu-open" : ""}`} style={{...styles.collection, paddingLeft: 22 + depth * 14, ...(props.selectedCollectionId === collection.id ? styles.active : {})}}>
         <button type="button" aria-label={`${isCollapsed ? "展开" : "折叠"}集合 ${collection.name}`} aria-expanded={!isCollapsed} className={`tree-chevron${isCollapsed ? "" : " is-expanded"}`} style={styles.chevronBtn} onClick={() => toggleExplorerNode(`collection:${collection.id}`)}><Icon name="chevron" /></button>
         <button type="button" className="tree-main" style={styles.collectionMain} onClick={() => props.onSelectCollection(collection.projectId, collection.id)} title={collection.name}>
           <Icon name="folder" />
           <span className="tree-label">{collection.name}</span>
-          <small>{requests.length}</small>
+          <small className="tree-count" title={`${requests.length} 个直接请求，${collectionRequestCount(collection.id)} 个请求（含子集合）`}>{collectionRequestCount(collection.id)}</small>
         </button>
         <span className="tree-actions">
           <button type="button" style={styles.action} title="运行集合" aria-label={`运行集合 ${collection.name}`} onClick={() => { props.onSelectCollection(collection.projectId, collection.id); props.onRunCollection?.(collection.projectId, collection.id); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "runner" })); }}><Icon name="send" /></button>
@@ -306,21 +332,32 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       {workspace && workspace.id !== "default-workspace" && <button style={styles.delete} title="永久删除工作区" onClick={async () => { if (await confirm({ title: "永久删除工作区", description: `永久删除工作区“${workspace.name}”及其全部内容？此操作不可恢复。`, tone: "danger", confirmLabel: "永久删除" })) void props.onDeleteWorkspace(workspace.id); }}><Icon name="trash" /></button>}
     </div>
     <div style={styles.heading}>
-      <span>资源管理器</span>
-      <span style={styles.headingActions}>
-        <button style={styles.action} title="导入 OpenAPI JSON/YAML、Postman、HAR 或 ApiVoy 包" onClick={() => importInput.current?.click()}>导入</button>
-        {workspace && <button style={styles.icon} title="新建项目" onClick={() => setDraft({ kind: "project", owner: workspace.id })}><Icon name="plus" /></button>}
-      </span>
+      <span style={styles.headingLabel}>资源管理器 <small className="workspace-resource-count" title="当前工作区请求总数">{workspaceRequestCount}</small></span>
       <input ref={importInput} hidden multiple type="file" accept=".json,.yaml,.yml,.har,.apivoy" onChange={(event) => void importFiles(event.target.files)} />
     </div>
-    <div ref={createMenuRef} className="workspace-quick-actions" aria-label="资源快捷操作">
-      <button className="workspace-create-trigger" type="button" aria-haspopup="menu" aria-expanded={createMenuOpen} onClick={() => setCreateMenuOpen((value) => !value)}><Icon name="plus" /><span>新建接口</span><Icon name="chevron" /></button>
-      <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-script-library"))}><Icon name="code" /><span>脚本库</span></button>
-      {createMenuOpen ? <div className="workspace-protocol-menu" role="menu" aria-label="选择接口协议">
-        {CREATE_PROTOCOL_GROUPS.map((group) => <section key={group.label}><div>{group.label}</div>{group.items.map(([id, label, icon]) => <button key={id} type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-create-workbench", { detail: id })); }}><Icon name={icon} /><span>{label}</span></button>)}</section>)}
-      </div> : null}
+    <div ref={createMenuRef} className="workspace-quick-actions">
+      <div className="workspace-search-row">
+        <span className="workspace-search-field"><Icon name="search"/><input aria-label="搜索资源" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" /></span>
+        <button ref={createMenuButtonRef} className="workspace-create-trigger" type="button" aria-label="新建资源" title="新建资源" aria-haspopup="menu" aria-expanded={createMenuOpen} onClick={() => setCreateMenuOpen((value) => !value)}><Icon name="plus" /></button>
+      </div>
+      {createMenuOpen && createMenuPos && typeof document !== "undefined" ? createPortal(<div className="workspace-protocol-menu" data-workspace-create-menu role="menu" aria-label="选择接口协议" style={{ top: createMenuPos.top, left: createMenuPos.left, width: createMenuPos.width }}>
+        <div className="workspace-create-menu-title">新建</div>
+        <div className="workspace-create-menu-grid">{CREATE_PROTOCOL_GROUPS.map((group) => group.items.map(([id, label, icon]) => <button key={id} type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-create-workbench", { detail: id })); }}><Icon name={icon} /><span>{label === "HTTP" ? "HTTP 接口" : label}</span></button>))}</div>
+        <div className="workspace-create-menu-divider"/>
+        <div className="workspace-create-menu-title">项目资源</div>
+        <div className="workspace-create-menu-grid">
+          <button type="button" role="menuitem" disabled={!workspace} onClick={() => { if (workspace) setDraft({ kind: "project", owner: workspace.id }); setCreateMenuOpen(false); }}><Icon name="archive"/><span>新建项目</span></button>
+          <button type="button" role="menuitem" disabled={!props.selectedCollectionId} onClick={() => { const selected = tree.collections.find((item) => item.id === props.selectedCollectionId); if (selected) setDraft({ kind: "collection", owner: selected.projectId, parentId: selected.id }); setCreateMenuOpen(false); }}><Icon name="folder"/><span>新建子集合</span></button>
+          <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-open-script-library")); }}><Icon name="code"/><span>脚本库</span></button>
+        </div>
+        <div className="workspace-create-menu-divider"/>
+        <div className="workspace-create-menu-title">其他</div>
+        <div className="workspace-create-menu-grid">
+          <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); importInput.current?.click(); }}><Icon name="download"/><span>导入文件</span></button>
+          <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-create-workbench", { detail: "http" })); window.setTimeout(() => window.dispatchEvent(new CustomEvent("apivoy-open-curl-import")), 0); }}><Icon name="code"/><span>导入 cURL</span></button>
+        </div>
+      </div>, document.body) : null}
     </div>
-    <input aria-label="搜索资源" style={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" />
     {selectedIds.length > 0 && <div style={styles.batchBar}>
       <strong>{selectedIds.length} 已选</strong>
       <select aria-label="批量移动目标集合" style={styles.batchSelect} value={batchTarget} onChange={(event) => setBatchTarget(event.target.value)} disabled={selectedProjectIds.length !== 1}><option value="">{selectedProjectIds.length === 1 ? "移动到…" : "跨项目不可批量移动"}</option>{tree.collections.filter((item) => item.projectId === selectedProjectIds[0]).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
@@ -331,6 +368,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       <div style={styles.projectRow} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const item = readDrag(event); if (item?.type === "collection") { const source = tree.collections.find((collection) => collection.id === item.id); if (source?.projectId === project.id) void props.onMoveCollection(source, project.id, null); } }}>
         <button type="button" aria-label={`${collapsedNodes.includes(`project:${project.id}`) ? "展开" : "折叠"}项目 ${project.name}`} aria-expanded={!collapsedNodes.includes(`project:${project.id}`)} className={`tree-chevron${collapsedNodes.includes(`project:${project.id}`) ? "" : " is-expanded"}`} style={styles.chevronBtn} onClick={() => toggleExplorerNode(`project:${project.id}`)}><Icon name="chevron" /></button>
         <strong style={styles.projectName} title={project.name}>{project.name}</strong>
+        <small className="tree-count project-count" title="项目请求总数">{tree.requests.filter((request) => request.projectId === project.id).length}</small>
         <span style={styles.projectActions}>
           <button type="button" style={styles.action} title="新建集合" onClick={() => setDraft({ kind: "collection", owner: project.id, parentId: null })}><Icon name="plus" /></button>
           <button type="button" style={styles.action} title="重命名项目" onClick={async () => { const value = (await prompt({ title: "重命名项目", initialValue: project.name }))?.trim(); if (value) void props.onRenameProject(project.id, value); }}><Icon name="edit" /></button>
@@ -351,6 +389,7 @@ const styles: Record<string, CSSProperties> = {
   root: { display: "flex", flexDirection: "column", gap: 6, minHeight: 0 },
   empty: { color: "var(--apivoy-muted)", fontSize: 12, padding: 10 },
   heading: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 10px 7px", color: "var(--apivoy-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 },
+  headingLabel: { display: "inline-flex", alignItems: "center", gap: 6 },
   headingActions: { display: "flex", alignItems: "center", gap: 4 },
   workspaceBar: { display: "flex", alignItems: "center", gap: 4, margin: "8px 7px 2px", padding: 6, border: "1px solid var(--apivoy-border)", borderRadius: 8, background: "var(--apivoy-bg-elevated)" },
   workspaceSelect: { flex: 1, minWidth: 0, border: 0, outline: "none", background: "transparent", color: "var(--apivoy-text)", fontSize: 12, fontWeight: 700 },

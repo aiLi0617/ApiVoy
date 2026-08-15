@@ -2,6 +2,7 @@
 
 export type HydratePayload = {
   workbenchId: string;
+  sessionId?: string;
   protocolId?: string;
   envelope: unknown;
 };

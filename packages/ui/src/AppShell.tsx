@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { useAppStore } from "./appStore";
 import { DEFAULT_WORKBENCH_GROUPS, WORKBENCH_LABELS } from "./WorkbenchDeck";
@@ -49,11 +49,48 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
   const [activeCommand, setActiveCommand] = useState(0);
   const paletteRef = useRef<HTMLDivElement>(null);
   const paletteInputRef = useRef<HTMLInputElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const resizingExplorerRef = useRef(false);
+  const [explorerWidth, setExplorerWidth] = useState(() => {
+    if (typeof window === "undefined") return 232;
+    const stored = Number(localStorage.getItem("apivoy-explorer-width"));
+    return Number.isFinite(stored) ? Math.min(window.innerWidth / 2, Math.max(190, stored)) : 232;
+  });
+  const explorerWidthRef = useRef(explorerWidth);
+  const expandedExplorerWidthRef = useRef(explorerWidth);
+  const explorerDragStartWidthRef = useRef(explorerWidth);
   const themeMode = useAppStore((state) => state.themeMode);
   const setThemeMode = useAppStore((state) => state.setThemeMode);
   const collapsedExplorer = useAppStore((state) => state.collapsedExplorer);
   const toggleExplorer = useAppStore((state) => state.toggleExplorer);
   const explorerOpen = !collapsedExplorer;
+
+  function maxExplorerWidth() {
+    return Math.max(190, (workspaceRef.current?.getBoundingClientRect().width ?? 840) / 2);
+  }
+
+  function resizeExplorer(clientX: number) {
+    const left = workspaceRef.current?.getBoundingClientRect().left ?? 0;
+    const next = Math.min(maxExplorerWidth(), Math.max(0, clientX - left));
+    explorerWidthRef.current = next;
+    setExplorerWidth(next);
+  }
+
+  function finishExplorerResize() {
+    if (!resizingExplorerRef.current) return;
+    resizingExplorerRef.current = false;
+    if (explorerWidthRef.current <= 48) {
+      const restoreWidth = explorerDragStartWidthRef.current;
+      expandedExplorerWidthRef.current = restoreWidth;
+      explorerWidthRef.current = restoreWidth;
+      setExplorerWidth(restoreWidth);
+      if (explorerOpen) toggleExplorer();
+    } else {
+      expandedExplorerWidthRef.current = explorerWidthRef.current;
+    }
+  }
+
+  useEffect(() => { localStorage.setItem("apivoy-explorer-width", String(explorerWidth)); }, [explorerWidth]);
 
   useEffect(() => {
     const preventBrowserContextMenu = (event: MouseEvent) => event.preventDefault();
@@ -166,7 +203,6 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
     <a className="skip-link" href="#apivoy-main">{t("shell.skip")}</a>
     <header className="app-header">
       <div className="header-leading">
-        {explorer ? <button className={`ui-icon-button${explorerOpen ? " is-active" : ""}`} aria-label={t("shell.explorer.toggle")} aria-expanded={explorerOpen} aria-controls="apivoy-explorer" title={t("shell.explorer")} onClick={toggleExplorer}><Icon name="folder"/></button> : null}
         <div className="brand-lockup"><span className="brand-mark"><BrandMark /></span><div><strong>{title}</strong><span>{t("app.tagline")}</span></div></div>
       </div>
       <div className="header-context">
@@ -182,9 +218,11 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
         <button className="ui-icon-button" aria-label={t("settings.open")} title={`${t("settings.open")} Ctrl/⌘ ,`} onClick={openSettings}><Icon name="sliders"/></button>
       </div>
     </header>
-    <div className={`app-workspace ${explorerOpen ? "explorer-open" : "explorer-collapsed"}`}>
+    <div ref={workspaceRef} className={`app-workspace ${explorerOpen ? "explorer-open" : "explorer-collapsed"}`} style={{ "--explorer-width": `${explorerWidth}px` } as CSSProperties}>
       {explorer && explorerOpen ? <button type="button" className="explorer-backdrop" aria-label={t("shell.explorer.close")} onClick={toggleExplorer} /> : null}
       {explorer ? <aside id="apivoy-explorer" className="resource-explorer" aria-label={t("shell.explorer")}>{explorer}</aside> : null}
+      {explorer && explorerOpen ? <div className="explorer-resize-handle" role="separator" aria-label="调整资源管理器宽度" aria-orientation="vertical" aria-valuemin={0} aria-valuemax={Math.round(maxExplorerWidth())} aria-valuenow={Math.round(explorerWidth)} tabIndex={0} onPointerDown={(event) => { if (window.matchMedia("(max-width: 768px)").matches) return; explorerDragStartWidthRef.current = explorerWidthRef.current; resizingExplorerRef.current = true; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (resizingExplorerRef.current) resizeExplorer(event.clientX); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); finishExplorerResize(); }} onPointerCancel={finishExplorerResize} onDoubleClick={() => { explorerWidthRef.current = 232; expandedExplorerWidthRef.current = 232; setExplorerWidth(232); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); const next = Math.min(maxExplorerWidth(), Math.max(190, explorerWidth + (event.key === "ArrowRight" ? 10 : -10))); explorerWidthRef.current = next; expandedExplorerWidthRef.current = next; setExplorerWidth(next); }}/>: null}
+      {explorer && !explorerOpen ? <button type="button" className="explorer-edge-toggle" aria-label={t("shell.explorer")} aria-expanded={false} aria-controls="apivoy-explorer" title={t("shell.explorer")} onClick={toggleExplorer}><Icon name="chevron"/></button> : null}
       <main id="apivoy-main" tabIndex={-1} className="app-main">{children}</main>
     </div>
     {paletteOpen ? <div className="command-overlay" role="presentation" onMouseDown={() => setPaletteOpen(false)}><div ref={paletteRef} className="command-palette" role="dialog" aria-modal="true" aria-label={t("command.title")} onMouseDown={(event) => event.stopPropagation()}><div className="command-input-wrap"><Icon name="search"/><input ref={paletteInputRef} role="combobox" aria-expanded="true" aria-controls="apivoy-command-results" aria-activedescendant={commandResults[activeCommand] ? `command-${commandResults[activeCommand].id}` : undefined} autoComplete="off" value={search} onKeyDown={onCommandKeyDown} onChange={(event) => setSearch(event.target.value)} placeholder={t("command.placeholder")} aria-label={t("command.open")}/></div>

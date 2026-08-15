@@ -13,7 +13,7 @@ core-domain = { workspace = true }
 event-stream = { workspace = true }
 execution-engine = { workspace = true }
 futures = { workspace = true }
-lapin = { version = "4.10", default-features = false, features = ["tokio", "rustls", "rustls--ring", "rustls-platform-verifier"] }
+lapin = { version = "4.10", default-features = false, features = ["tokio", "rustls--ring", "rustls-platform-verifier"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tokio-util = { workspace = true }

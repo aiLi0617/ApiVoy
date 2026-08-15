@@ -157,6 +157,8 @@ impl From<AuthDto> for AuthRef {
 #[serde(rename_all = "camelCase")]
 struct HttpExecuteRequest {
     #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
     name: Option<String>,
     url: String,
     method: String,
@@ -615,6 +617,7 @@ async fn http_get(
 ) -> Result<ExecuteResponse, String> {
     execute_request(
         HttpExecuteRequest {
+            id: None,
             name: None,
             url,
             method: "GET".into(),
@@ -1255,6 +1258,9 @@ fn build_envelope(request: &HttpExecuteRequest) -> RequestEnvelope {
             .unwrap_or_else(|| format!("{} {}", request.method, request.url)),
         request.url.clone(),
     );
+    if let Some(id) = request.id.as_ref().and_then(|id| Uuid::parse_str(id).ok()) {
+        envelope.id = core_domain::RequestId(id);
+    }
     envelope.timeout_ms = request.timeout_ms.max(1);
     envelope.payload = ProtocolPayload::Http(HttpPayload {
         method: request.method.clone(),

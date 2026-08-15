@@ -125,7 +125,7 @@ export async function checkAgentHandshake(): Promise<AgentHealth> {
 }
 
 export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
-  return createHttpRequest({
+  const envelope = createHttpRequest({
     name: request.name,
     url: request.url,
     method: request.method,
@@ -146,6 +146,8 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
     preScripts: request.preScripts,
     postScripts: request.postScripts,
   });
+  if (request.id) envelope.id = request.id;
+  return envelope;
 }
 
 export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpWorkbenchRequest {
@@ -154,6 +156,7 @@ export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string)
     throw new Error("仅支持 HTTP 请求重放");
   }
   return {
+    id: envelope.id,
     name: envelope.name,
     url: envelope.target || fallbackTarget || "",
     method: payload.method,

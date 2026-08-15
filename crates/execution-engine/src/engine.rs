@@ -31,6 +31,11 @@ pub struct ExecutionEngine {
 
 impl ExecutionEngine {
     pub fn new() -> Self {
+        // rustls cannot infer a process-wide provider when transitive protocol
+        // dependencies enable more than one backend. Install Ring explicitly so
+        // every engine consumer (Agent, Desktop, Gateway, and CLI) has a stable
+        // TLS provider before any driver creates a client configuration.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         Self {
             drivers: HashMap::new(),
             lifecycle: Arc::new(NoopLifecycleHook),

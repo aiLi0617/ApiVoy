@@ -13,6 +13,7 @@ core-domain = { workspace = true }
 event-stream = { workspace = true }
 regex = "1"
 reqwest = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rquickjs = "0.12"
 serde = { workspace = true }
 serde_json = { workspace = true }

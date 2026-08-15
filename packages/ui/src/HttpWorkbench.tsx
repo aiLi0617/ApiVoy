@@ -26,6 +26,7 @@ import { listEnvironmentResources } from "./agentResources";
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 
 export interface HttpWorkbenchRequest {
+  id?: string;
   name?: string;
   url: string;
   method: string;
@@ -94,30 +95,57 @@ export interface HistoryFilter {
   requestId?: string;
 }
 
-type RowValueType = "string" | "integer" | "number" | "decimal" | "boolean" | "array" | "object" | "json" | "date" | "datetime" | "uuid" | "null";
+export type RowValueType = "string" | "integer" | "number" | "boolean" | "array" | "object" | "null";
 
 const ROW_VALUE_TYPES: Array<{ value: RowValueType; label: string }> = [
   { value: "string", label: "String" },
   { value: "integer", label: "Integer" },
   { value: "number", label: "Number" },
-  { value: "decimal", label: "Decimal" },
   { value: "boolean", label: "Boolean" },
   { value: "array", label: "Array" },
   { value: "object", label: "Object" },
-  { value: "json", label: "JSON" },
-  { value: "date", label: "Date" },
-  { value: "datetime", label: "DateTime" },
-  { value: "uuid", label: "UUID" },
   { value: "null", label: "Null" },
 ];
 
-interface HeaderRow {
+export interface HeaderRow {
   id: string;
   key: string;
   value: string;
   enabled: boolean;
   valueType: RowValueType;
+  typeSelected: boolean;
   description: string;
+  required: boolean;
+}
+
+function httpRequestFromEnvelope(value: unknown): HttpWorkbenchRequest | null {
+  const envelope = value as RequestEnvelope | null;
+  if (!envelope || envelope.payload?.type !== "http") return null;
+  const payload = envelope.payload;
+  return {
+    id: envelope.id,
+    name: envelope.name,
+    url: envelope.target,
+    method: payload.method,
+    headers: payload.headers,
+    body: payload.body ?? undefined,
+    bodyEncoding: payload.bodyEncoding ?? "text",
+    bodySource: payload.bodySource ?? undefined,
+    multipart: payload.multipart ?? [],
+    timeoutMs: envelope.timeoutMs,
+    variables: envelope.variables ?? {},
+    assertions: envelope.assertions ?? [],
+    auth: envelope.authRef ?? null,
+    followRedirects: payload.followRedirects,
+    retryMax: envelope.retryPolicy.max_retries,
+    retryBackoffMs: envelope.retryPolicy.backoff_ms,
+    proxy: envelope.proxy ?? null,
+    tlsVerify: envelope.tls.verify,
+    tlsClientCertRef: envelope.tls.client_cert_ref ?? null,
+    environmentRef: envelope.environmentRef,
+    preScripts: envelope.preScripts ?? [],
+    postScripts: envelope.postScripts ?? [],
+  };
 }
 
 interface MultipartEditorPart extends MultipartPart {
@@ -125,6 +153,9 @@ interface MultipartEditorPart extends MultipartPart {
   enabled: boolean;
   description: string;
   kind: "text" | "file";
+  valueType: RowValueType;
+  typeSelected: boolean;
+  required: boolean;
 }
 
 type BodyMode = "none" | "multipart" | "urlencoded" | "json" | "xml" | "text" | "graphql" | "jsonrpc" | "soap" | "binary" | "msgpack";
@@ -147,7 +178,7 @@ function resolveAssets(ids:string[]):string[]{ let assets:ScriptAsset[]=[];try{a
 function assetIdsFromScripts(scripts:string[]|undefined):string[]{return Array.from(new Set((scripts??[]).map((script)=>script.match(/^\/\/ @apivoy-script:([^\s]+)/m)?.[1]).filter((id):id is string=>Boolean(id))))}
 
 function createHeaderRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
-  return { id: crypto.randomUUID(), key, value, enabled: Boolean(key.trim() || value.trim()), valueType, description };
+  return { id: crypto.randomUUID(), key, value, enabled: Boolean(key.trim() || value.trim()), valueType, typeSelected: valueType !== "string", description, required: false };
 }
 
 function headerRowsFromPairs(headers: Array<[string, string]>): HeaderRow[] {
@@ -166,20 +197,39 @@ function cookieRowsFromHeaders(headers: Array<[string, string]>): HeaderRow[] {
   return [...parsed, createQueryRow()];
 }
 
-function createQueryRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
+export function createQueryRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
   return { ...createHeaderRow(key, value, valueType, description), enabled: Boolean(key.trim() || value.trim()) };
 }
 
-function createMultipartEditorPart(part: Partial<MultipartPart> = {}): MultipartEditorPart {
-  return { id: crypto.randomUUID(), enabled: Boolean(part.name?.trim()), description: "", kind: part.fileName ? "file" : "text", name: part.name ?? "", value: part.value ?? "", fileName: part.fileName, contentType: part.contentType, base64: part.base64 ?? false };
+function keyValueRowHasContent(row: HeaderRow): boolean {
+  return Boolean(row.key.trim() || row.value.trim() || row.description.trim() || row.typeSelected || row.required);
 }
 
-function queryRowsFromUrl(url: string): HeaderRow[] {
+function editKeyValueRow(row: HeaderRow, patch: Partial<Pick<HeaderRow, "key" | "value" | "valueType" | "typeSelected" | "description" | "required">>): HeaderRow {
+  const wasEmpty = !keyValueRowHasContent(row);
+  const next = { ...row, ...patch };
+  const hasContent = keyValueRowHasContent(next);
+  return { ...next, enabled: hasContent ? row.enabled || wasEmpty : false };
+}
+
+function appendEmptyKeyValueRow(rows: HeaderRow[], editedIndex: number): HeaderRow[] {
+  return editedIndex === rows.length - 1 && keyValueRowHasContent(rows[editedIndex]) ? [...rows, createQueryRow()] : rows;
+}
+
+function createMultipartEditorPart(part: Partial<MultipartPart> = {}): MultipartEditorPart {
+  return { id: crypto.randomUUID(), enabled: Boolean(part.name?.trim()), description: "", kind: part.fileName ? "file" : "text", valueType: "string", typeSelected: Boolean(part.fileName), required: false, name: part.name ?? "", value: part.value ?? "", fileName: part.fileName, contentType: part.contentType, base64: part.base64 ?? false };
+}
+
+function multipartPartHasContent(part: MultipartEditorPart): boolean {
+  return Boolean(part.name.trim() || part.value || part.fileName || part.description.trim() || part.typeSelected || part.required);
+}
+
+export function queryRowsFromUrl(url: string): HeaderRow[] {
   const query = url.split("#", 1)[0].split("?", 2)[1] ?? "";
   return [...Array.from(new URLSearchParams(query).entries()).map(([key, value]) => createQueryRow(key, value)), createQueryRow()];
 }
 
-function urlWithQueryRows(url: string, rows: HeaderRow[]): string {
+export function urlWithQueryRows(url: string, rows: HeaderRow[]): string {
   const hashIndex = url.indexOf("#"); const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
   const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
   const base = withoutHash.split("?", 1)[0];
@@ -227,26 +277,41 @@ interface KeyValueRowsProps {
   valueLabel: string;
   addPlaceholder: string;
   loading?: boolean;
-  fixedStringType?: boolean;
   onRowsChange?: (rows: HeaderRow[]) => void;
 }
 
-function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPlaceholder, loading = false, fixedStringType = false, onRowsChange }: KeyValueRowsProps) {
-  const update = (producer: (current: HeaderRow[]) => HeaderRow[]) => setRows((current) => { const next = producer(current); onRowsChange?.(next); return next; });
+export function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPlaceholder, loading = false, onRowsChange }: KeyValueRowsProps) {
+  const update = (producer: (current: HeaderRow[]) => HeaderRow[]) => { if (loading) return; setRows((current) => { const next = producer(current); onRowsChange?.(next); return next; }); };
+  const activateTypeSelection = (row: HeaderRow, index: number) => {
+    if (row.typeSelected) return;
+    update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { typeSelected: true }) : item), index));
+  };
+  const activateEmptyRow = (row: HeaderRow, index: number) => {
+    if (row.enabled || keyValueRowHasContent(row)) return;
+    update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, enabled: true } : item); return index === current.length - 1 ? [...next, createQueryRow()] : next; });
+  };
   const remove = (row: HeaderRow) => {
-    update((current) => { const next = current.filter((item) => item.id !== row.id); return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createQueryRow()]; });
+    update((current) => { const next = current.filter((item) => item.id !== row.id); return next.length && !keyValueRowHasContent(next[next.length - 1]) ? next : [...next, createQueryRow()]; });
   };
   return <div className="http-kv-editor" aria-label={kind}>
-    <div className="http-param-header" aria-hidden="true"><span/><span>{nameLabel}</span><span>{valueLabel}</span><span>类型</span><span>说明</span><span/></div>
+    <div className="http-param-header"><span/><span>{nameLabel}</span><span>{valueLabel}</span><span className="http-type-header"><span>类型</span><button type="button" title="是否全部必需" aria-label="切换全部参数是否必填" disabled={loading} onClick={() => update((current) => { const required = !current.filter(keyValueRowHasContent).every((item) => item.required); return current.map((item) => keyValueRowHasContent(item) ? { ...item, required } : item); })}>*</button></span><span/><span>说明</span><span/></div>
     {rows.map((row, index) => {
-      const removable = index < rows.length - 1 || Boolean(row.key || row.value);
-      const hasContent = Boolean(row.key.trim() || row.value.trim());
-      return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${row.enabled ? " is-enabled" : ""}${index === rows.length - 1 ? " is-new" : ""}`} key={row.id}>
-        <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} ${kind} ${index + 1}`} checked={row.enabled} onChange={(event) => update((current) => current.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item))} disabled={loading}/>
-        <input aria-label={`${kind} ${index + 1} 名称`} style={styles.input} value={row.key} onChange={(event) => update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item); return index === current.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next; })} placeholder={index === rows.length - 1 ? addPlaceholder : nameLabel} spellCheck={false} disabled={loading}/>
-        <input aria-label={`${kind} ${index + 1} 值`} style={styles.input} value={row.value} onChange={(event) => update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item); return index === current.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next; })} placeholder={valueLabel} spellCheck={false} disabled={loading}/>
-        <select className="http-param-type" aria-label={`${kind} ${index + 1} 类型`} style={styles.input} value={fixedStringType ? "string" : row.valueType} onChange={(event) => update((current) => current.map((item) => item.id === row.id ? { ...item, valueType: event.target.value as HeaderRow["valueType"] } : item))} disabled={loading || fixedStringType}>{(fixedStringType ? ROW_VALUE_TYPES.slice(0, 1) : ROW_VALUE_TYPES).map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select>
-        <input aria-label={`${kind} ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => update((current) => current.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
+      const removable = index < rows.length - 1 || keyValueRowHasContent(row);
+      const hasContent = keyValueRowHasContent(row);
+      const isEntry = index < rows.length - 1 || hasContent;
+      const missingName = !row.key.trim() && (row.enabled || hasContent || index < rows.length - 1);
+      const invalidName = row.enabled && missingName;
+      const mutedInvalidName = !row.enabled && missingName;
+      const missingValue = row.required && !row.value.trim();
+      const invalidValue = row.enabled && missingValue;
+      const mutedInvalidValue = !row.enabled && missingValue;
+      return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${isEntry ? " is-entry" : ""}${row.enabled ? " is-enabled" : ""}${index === rows.length - 1 ? " is-new" : ""}`} key={row.id}>
+        <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} ${kind} ${index + 1}`} checked={row.enabled} onChange={(event) => { const enabled = event.target.checked; update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, enabled } : item); return enabled && index === current.length - 1 ? [...next, createQueryRow()] : next; }); }} disabled={loading}/>
+        <div className={`http-param-name-cell${mutedInvalidName ? " has-muted-error" : ""}`}><input aria-label={`${kind} ${index + 1} 名称`} aria-invalid={invalidName} aria-describedby={missingName ? `${row.id}-name-error` : undefined} title={missingName ? (row.enabled ? "参数名不能为空" : "参数名为空（已停用，不影响发送）") : undefined} style={styles.input} value={row.key} onFocus={() => activateEmptyRow(row, index)} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { key: event.target.value }) : item), index))} placeholder={missingName ? "" : row.enabled ? nameLabel : index === rows.length - 1 ? addPlaceholder : ""} spellCheck={false} disabled={loading}/>{missingName && <span id={`${row.id}-name-error`}>参数名不能为空</span>}</div>
+        <div className={`http-param-value-cell${mutedInvalidValue ? " has-muted-error" : ""}`}><input aria-label={`${kind} ${index + 1} 值`} aria-invalid={invalidValue} aria-describedby={missingValue ? `${row.id}-value-error` : undefined} title={missingValue ? (row.enabled ? "参数值不能为空" : "参数值为空（已停用，不影响发送）") : undefined} style={styles.input} value={row.value} onFocus={() => activateEmptyRow(row, index)} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { value: event.target.value }) : item), index))} placeholder="" spellCheck={false} disabled={loading}/>{missingValue && <span id={`${row.id}-value-error`}>参数值不能为空</span>}</div>
+        <div className="http-param-type-cell"><select className="http-param-type" aria-label={`${kind} ${index + 1} 类型`} style={styles.input} value={row.valueType} onPointerDown={() => activateTypeSelection(row, index)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") activateTypeSelection(row, index); }} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { valueType: event.target.value as HeaderRow["valueType"], typeSelected: true }) : item), index))} disabled={loading}>{ROW_VALUE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></div>
+        <span className="http-required-row"><button type="button" className={row.required ? "is-required" : ""} aria-pressed={row.required} aria-label={`${kind} ${index + 1} ${row.required ? "取消必填" : "设为必填"}`} title={row.required ? "取消必填" : "设为必填"} disabled={loading} onClick={() => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { required: !item.required }) : item), index))}>*</button></span>
+        <input aria-label={`${kind} ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { description: event.target.value }) : item), index))} placeholder="" disabled={loading}/>
         {removable ? <button type="button" className="http-kv-delete" aria-label={`删除 ${kind} ${index + 1}`} title={`删除此 ${kind}`} onClick={() => remove(row)} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
       </div>;
     })}
@@ -268,8 +333,10 @@ export interface HttpWorkbenchProps {
   environments?: Array<{ id: string; name: string }>;
   defaultEnvironmentId?: string;
   toolbarTargetId?: string;
+  workbenchSessionId?: string;
 }
 
+const DEFAULT_ENVIRONMENTS = [{ id: "default-env", name: "默认环境" }];
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
 function shellTokens(source: string): string[] {
@@ -503,11 +570,13 @@ export function HttpWorkbench({
   onListHistory,
   onReplayHistory,
   externalRequest,
-  environments = [{ id: "default-env", name: "默认环境" }],
+  environments = DEFAULT_ENVIRONMENTS,
   defaultEnvironmentId = "default-env",
   toolbarTargetId,
+  workbenchSessionId,
 }: HttpWorkbenchProps) {
   const [name, setName] = useState("");
+  const [requestId, setRequestId] = useState<string | undefined>();
   const [method, setMethod] = useState<string>("GET");
   const [url, setUrl] = useState("");
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createHeaderRow()]);
@@ -662,6 +731,36 @@ export function HttpWorkbench({
   const responseCookies = useMemo(() => (result?.responseMeta?.headers ?? [])
     .filter(([name]) => name.toLowerCase() === "set-cookie")
     .map(([, value]) => value), [result?.responseMeta?.headers]);
+  const scriptConsoleEvents = useMemo(() => timeline.filter(({ event }) =>
+    event.type === "log"
+    || event.type === "variables_extracted"
+    || (event.type === "failed" && event.code === "script_error")
+  ), [timeline]);
+
+  function validateParameterNames(): boolean {
+    const groups = [
+      { tab: "params" as const, label: "Query 参数", rows: queryRows.map((row) => ({ enabled: row.enabled, hasContent: keyValueRowHasContent(row), name: row.key, value: row.value, required: row.required })) },
+      { tab: "headers" as const, label: "Header", rows: headerRows.map((row) => ({ enabled: row.enabled, hasContent: keyValueRowHasContent(row), name: row.key, value: row.value, required: row.required })) },
+      { tab: "cookies" as const, label: "Cookie", rows: cookieRows.map((row) => ({ enabled: row.enabled, hasContent: keyValueRowHasContent(row), name: row.key, value: row.value, required: row.required })) },
+      ...(bodyMode === "urlencoded" ? [{ tab: "body" as const, label: "表单字段", rows: formRows.map((row) => ({ enabled: row.enabled, hasContent: keyValueRowHasContent(row), name: row.key, value: row.value, required: row.required })) }] : []),
+      ...(bodyMode === "multipart" ? [{ tab: "body" as const, label: "form-data 字段", rows: multipart.map((part) => ({ enabled: part.enabled, hasContent: multipartPartHasContent(part), name: part.name, value: part.kind === "file" ? part.fileName ?? "" : part.value, required: part.required })) }] : []),
+    ];
+    for (const group of groups) {
+      const invalidIndex = group.rows.findIndex((row) => row.enabled && row.hasContent && !row.name.trim());
+      if (invalidIndex < 0) continue;
+      setRequestTab(group.tab);
+      setStatusMsg(`${group.label}第 ${invalidIndex + 1} 行的参数名不能为空`);
+      return false;
+    }
+    for (const group of groups) {
+      const invalidIndex = group.rows.findIndex((row) => row.enabled && row.required && !row.value.trim());
+      if (invalidIndex < 0) continue;
+      setRequestTab(group.tab);
+      setStatusMsg(`${group.label}第 ${invalidIndex + 1} 行是必填参数，参数值不能为空`);
+      return false;
+    }
+    return true;
+  }
 
   function buildRequest(): HttpWorkbenchRequest {
     const headers = headerRows
@@ -681,6 +780,7 @@ export function HttpWorkbench({
 
     const encodedBody = bodyMode === "binary" ? binaryBase64 : bodyMode === "msgpack" ? bytesToBase64(encodeMessagePack(JSON.parse(messagePackJson || "null"))) : undefined;
     return {
+      id: requestId,
       name: name.trim() || requestNameFromUrl(url),
       url: url.trim(),
       method,
@@ -698,7 +798,7 @@ export function HttpWorkbench({
             : body,
       bodyEncoding: bodyMode === "binary" || bodyMode === "msgpack" ? "base64" : "text",
       bodySource: bodyMode === "msgpack" ? messagePackJson : undefined,
-      multipart: bodyMode === "multipart" ? multipart.filter((part) => part.enabled && part.name.trim()).map(({ id: _id, enabled: _enabled, description: _description, kind: _kind, ...part }) => part) : [],
+      multipart: bodyMode === "multipart" ? multipart.filter((part) => part.enabled && part.name.trim()).map(({ id: _id, enabled: _enabled, description: _description, kind: _kind, valueType: _valueType, typeSelected: _typeSelected, required: _required, ...part }) => part) : [],
       timeoutMs,
       variables: parseKv(variablesText),
       assertions: assertionsEnabled ? parseAssertions(assertionsText) : [],
@@ -767,6 +867,7 @@ export function HttpWorkbench({
   });
 
   function applyRequest(loaded: HttpWorkbenchRequest) {
+    setRequestId(loaded.id);
     setName(loaded.name ?? "");
     setMethod(loaded.method);
     setUrl(loaded.url);
@@ -850,6 +951,13 @@ export function HttpWorkbench({
   }, [externalRequest]);
 
   useWorkbenchHydration("http", (raw) => {
+    const savedRequest = httpRequestFromEnvelope(raw);
+    if (savedRequest) {
+      applyRequest(savedRequest);
+      setResult(null);
+      setStatusMsg("已打开资源树中的请求");
+      return;
+    }
     const envelope = raw as { target?: string; payload?: { type?: string; query?: string; variables?: unknown; operationName?: string | null; headers?: Array<[string, string]> } };
     if (envelope?.payload?.type === "graphql") {
       setMethod("POST"); setUrl(envelope.target ?? "https://"); setBodyMode("graphql");
@@ -871,7 +979,7 @@ export function HttpWorkbench({
     if (detail.aiAssertions) setAssertionsText(detail.aiAssertions);
     setResult(null);
     setStatusMsg("已载入请求，请检查后再发送");
-  });
+  }, workbenchSessionId);
 
   useAutosaveDraft("http", buildRequest);
   useEffect(() => {
@@ -904,6 +1012,7 @@ export function HttpWorkbench({
   }
 
   async function handleSend() {
+    if (!validateParameterNames()) return;
     const wallStartedAt = performance.now();
     setLoading(true);
     setResult(null);
@@ -970,6 +1079,7 @@ export function HttpWorkbench({
     if (!onSave) {
       return;
     }
+    if (!validateParameterNames()) return;
     try {
       const request = buildRequest();
       await onSave(request);
@@ -1049,7 +1159,16 @@ export function HttpWorkbench({
   }
 
   function updateMultipart(index: number, patch: Partial<MultipartEditorPart>) {
-    setMultipart((parts) => parts.map((part, partIndex) => partIndex === index ? { ...part, ...patch } : part));
+    setMultipart((parts) => {
+      const next = parts.map((part, partIndex) => {
+        if (partIndex !== index) return part;
+        const wasEmpty = !multipartPartHasContent(part);
+        const edited = { ...part, ...patch };
+        const hasContent = multipartPartHasContent(edited);
+        return { ...edited, enabled: patch.enabled ?? (hasContent ? part.enabled || wasEmpty : false) };
+      });
+      return index === parts.length - 1 && (multipartPartHasContent(next[index]) || next[index].enabled) ? [...next, createMultipartEditorPart()] : next;
+    });
   }
 
   async function attachMultipartFile(index: number, file: File | null) {
@@ -1095,12 +1214,12 @@ export function HttpWorkbench({
   const environmentControl = <div className="http-environment-select"><select aria-label="请求环境" value={environmentRef} onChange={(event)=>setEnvironmentRef(event.target.value)} disabled={loading}>{environmentOptions.map((environment)=><option key={environment.id} value={environment.id}>{environment.name}{environment.id===defaultEnvironmentId?" · 默认":""}</option>)}</select><button type="button" className="http-environment-manage" aria-label="编辑环境变量" title="编辑环境变量" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-environment"))}><Icon name="menu"/></button></div>;
 
   const requestCommandbar = <div className="http-request-commandbar">
-    <label className="http-request-name-field"><span>接口名称</span><input aria-label="接口名称" style={styles.input} value={name} onChange={(event) => setName(event.target.value)} placeholder="可选，留空保存时使用接口路径" disabled={loading} /></label>
+    <label className="http-request-name-field"><input aria-label="接口名称" style={styles.input} value={name} onChange={(event) => setName(event.target.value)} placeholder="接口名称" disabled={loading} /></label>
     <div className="http-request-primary-actions">
       <select aria-label="HTTP 方法" style={styles.select} value={method} onChange={(e) => setMethod(e.target.value)} disabled={loading}>
         {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
-      <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="输入请求 URL" spellCheck={false} disabled={loading} /></label>
+      <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="接口路径" spellCheck={false} disabled={loading} /></label>
       <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? "取消请求" : "发送请求"} onClick={() => loading ? void handleCancel() : void handleSend()}>
         <Icon name={loading ? "close" : "send"}/>{loading ? "取消" : "发送"}
       </button>
@@ -1109,7 +1228,7 @@ export function HttpWorkbench({
   </div>;
 
   return (
-    <>{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}<WorkbenchFrame title="HTTP" description="构建、发送并检查 HTTP 请求" badge={<span className="protocol-badge">REQUEST</span>} busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪</span>}>
+    <>{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪</span>}>
       <div className="http-workbench-layout">
       {requestCommandbar}
       <div className="http-workbench-split">
@@ -1148,36 +1267,11 @@ export function HttpWorkbench({
           <div className="http-request-tab-panel" role="tabpanel" id={`http-request-panel-${activeTab}`} aria-labelledby={`http-request-tab-${activeTab}`}>
             {activeTab === "params" && <div className="http-kv-editor" aria-label="URL Query Params">
               <div className="http-section-heading">Query 参数</div>
-              <div className="http-param-header" aria-hidden="true"><span/><span>参数名</span><span>参数值</span><span>类型</span><span>说明</span><span/></div>
-              {queryRows.map((row, index) => { const hasContent = Boolean(row.key.trim() || row.value.trim()); return <div className={`http-param-row http-apifox-row http-query-row${hasContent ? " has-content" : ""}${row.enabled ? " is-enabled" : ""}`} key={row.id}>
-                <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} Param ${index + 1}`} checked={row.enabled} onChange={(event) => setQueryRows((rows) => { const next = rows.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item); setUrl((current) => urlWithQueryRows(current, next)); return next; })} disabled={loading}/>
-                <input aria-label={`Param ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setQueryRows((rows) => { const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item); const normalized = index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next; setUrl((current) => urlWithQueryRows(current, normalized)); return normalized; })} placeholder="添加参数" spellCheck={false} disabled={loading}/>
-                <input aria-label={`Param ${index + 1} Value`} style={styles.input} value={row.value} onChange={(event) => setQueryRows((rows) => { const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item); const normalized = index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next; setUrl((current) => urlWithQueryRows(current, normalized)); return normalized; })} placeholder="参数值" spellCheck={false} disabled={loading}/>
-                <select className="http-param-type" aria-label={`Param ${index + 1} 类型`} style={styles.input} value={row.valueType} onChange={(event) => setQueryRows((rows) => rows.map((item) => item.id === row.id ? { ...item, valueType: event.target.value as HeaderRow["valueType"] } : item))} disabled={loading}>{ROW_VALUE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select>
-                <input aria-label={`Param ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => setQueryRows((rows) => rows.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
-                {index < queryRows.length - 1 || row.key || row.value ? <button type="button" className="http-kv-delete" aria-label={`删除 Param ${index + 1}`} title="删除此 Param" onClick={() => setQueryRows((rows) => { const next = rows.filter((item) => item.id !== row.id); const normalized = next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createQueryRow()]; setUrl((current) => urlWithQueryRows(current, normalized)); return normalized; })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
-              </div>})}
+              <KeyValueRows rows={queryRows} setRows={setQueryRows} kind="Param" nameLabel="参数名" valueLabel="参数值" addPlaceholder="添加参数" loading={loading} onRowsChange={(rows) => setUrl((current) => urlWithQueryRows(current, rows))}/>
             </div>}
             {activeTab === "headers" && <div className="http-kv-editor" aria-label="请求 Headers">
               <div className="http-section-heading">请求 Headers</div>
-              <div className="http-param-header" aria-hidden="true"><span/><span>Header 名称</span><span>Header 值</span><span>类型</span><span>说明</span><span/></div>
-              {headerRows.map((row, index) => { const hasContent = Boolean(row.key.trim() || row.value.trim()); return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${row.enabled ? " is-enabled" : ""}`} key={row.id}>
-                <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} Header ${index + 1}`} checked={row.enabled} onChange={(event) => setHeaderRows((rows) => rows.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item))} disabled={loading}/>
-                <input aria-label={`Header ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setHeaderRows((rows) => {
-                  const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item);
-                  return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
-                })} placeholder="例如 Content-Type" spellCheck={false} disabled={loading} />
-                <input aria-label={`Header ${index + 1} Value`} style={styles.input} value={row.value} onChange={(event) => setHeaderRows((rows) => {
-                  const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item);
-                  return index === rows.length - 1 && event.target.value.trim() ? [...next, createHeaderRow()] : next;
-                })} placeholder="例如 application/json" spellCheck={false} disabled={loading} />
-                <select className="http-param-type" aria-label={`Header ${index + 1} 类型`} style={styles.input} value="string" disabled><option value="string">String</option></select>
-                <input aria-label={`Header ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => setHeaderRows((rows) => rows.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
-                {index < headerRows.length - 1 || row.key || row.value ? <button type="button" className="http-kv-delete" aria-label={`删除 Header ${index + 1}`} title="删除此 Header" onClick={() => setHeaderRows((rows) => {
-                  const next = rows.filter((item) => item.id !== row.id);
-                  return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createHeaderRow()];
-                })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
-              </div>})}
+              <KeyValueRows rows={headerRows} setRows={setHeaderRows} kind="Header" nameLabel="Header 名称" valueLabel="Header 值" addPlaceholder="例如 Content-Type" loading={loading}/>
             </div>}
             {activeTab === "body" && <div style={styles.label}>
               <div className="http-body-mode-tabs" role="tablist" aria-label="请求体类型">
@@ -1197,40 +1291,23 @@ export function HttpWorkbench({
               {bodyMode === "binary" && <div className="http-binary-editor"><label className="http-binary-picker"><Icon name="archive"/><strong>{binaryFileName || "选择二进制文件"}</strong><span>{binaryFileName ? `${binarySize.toLocaleString()} bytes` : "文件将以 Base64 保存，发送时还原为原始字节"}</span><input type="file" disabled={loading} onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { const value = String(reader.result ?? ""); setBinaryBase64(value.slice(value.indexOf(",") + 1)); setBinaryFileName(file.name); setBinarySize(file.size); setHeaderRows((rows) => headerRowsFromPairs([["Content-Type", file.type || "application/octet-stream"], ...rows.filter((row) => row.key && row.key.toLowerCase() !== "content-type").map((row) => [row.key, row.value] as [string, string])])); }; reader.readAsDataURL(file); }}/></label>{binaryFileName ? <button type="button" style={styles.secondaryButton} disabled={loading} onClick={() => { setBinaryBase64(""); setBinaryFileName(""); setBinarySize(0); }}>移除文件</button> : null}</div>}
               {bodyMode === "msgpack" && <div className="http-specialized-editor"><div className="http-body-editor-label">JSON 数据（发送时编码为 MessagePack）</div><CodeEditor value={messagePackJson} onChange={setMessagePackJson} language="json" height={280} readOnly={loading}/></div>}
               {bodyMode === "urlencoded" && <div className="http-kv-editor http-form-editor" aria-label="URL 编码表单">
-                <div className="http-param-header" aria-hidden="true"><span/><span>字段名</span><span>字段值</span><span>类型</span><span>说明</span><span/></div>
-                {formRows.map((row, index) => { const hasContent = Boolean(row.key.trim() || row.value.trim()); return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${row.enabled ? " is-enabled" : ""}`} key={row.id}>
-                  <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} 表单字段 ${index + 1}`} checked={row.enabled} onChange={(event) => setFormRows((rows) => rows.map((item) => item.id === row.id ? { ...item, enabled: event.target.checked } : item))} disabled={loading}/>
-                  <input aria-label={`表单字段 ${index + 1} Key`} style={styles.input} value={row.key} onChange={(event) => setFormRows((rows) => {
-                    const next = rows.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item);
-                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next;
-                  })} placeholder="添加字段" disabled={loading}/>
-                  <input aria-label={`表单字段 ${index + 1} Value`} style={styles.input} value={row.value} onChange={(event) => setFormRows((rows) => {
-                    const next = rows.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item);
-                    return index === rows.length - 1 && event.target.value.trim() ? [...next, createQueryRow()] : next;
-                  })} placeholder="字段值" disabled={loading}/>
-                  <select className="http-param-type" aria-label={`表单字段 ${index + 1} 类型`} style={styles.input} value={row.valueType} onChange={(event) => setFormRows((rows) => rows.map((item) => item.id === row.id ? { ...item, valueType: event.target.value as HeaderRow["valueType"] } : item))} disabled={loading}>{ROW_VALUE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select>
-                  <input aria-label={`表单字段 ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => setFormRows((rows) => rows.map((item) => item.id === row.id ? { ...item, description: event.target.value } : item))} placeholder="可选说明" disabled={loading}/>
-                  {index < formRows.length - 1 || row.key || row.value ? <button type="button" className="http-kv-delete" aria-label={`删除表单字段 ${index + 1}`} onClick={() => setFormRows((rows) => {
-                    const next = rows.filter((item) => item.id !== row.id);
-                    return next.length && !next[next.length - 1].key && !next[next.length - 1].value ? next : [...next, createQueryRow()];
-                  })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
-                </div>})}
+                <KeyValueRows rows={formRows} setRows={setFormRows} kind="表单字段" nameLabel="字段名" valueLabel="字段值" addPlaceholder="添加字段" loading={loading}/>
               </div>}
               {bodyMode === "multipart" && (
                 <div className="http-kv-editor http-multipart-editor" aria-label="form-data">
-                  <div className="http-param-header" aria-hidden="true"><span/><span>字段名</span><span>字段值</span><span>类型</span><span>说明</span><span/></div>
-                  {multipart.map((part, index) => { const hasContent = Boolean(part.name.trim() || part.value || part.fileName); return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${part.enabled ? " is-enabled" : ""}`} key={part.id}>
+                  <div className="http-param-header" aria-hidden="true"><span/><span>字段名</span><span>字段值</span><span>类型</span><span/><span>说明</span><span/></div>
+                  {multipart.map((part, index) => { const hasContent = multipartPartHasContent(part); const isEntry = index < multipart.length - 1 || hasContent; const missingName = !part.name.trim() && (part.enabled || hasContent || index < multipart.length - 1); const invalidName = part.enabled && missingName; const mutedInvalidName = !part.enabled && missingName; const missingValue = part.required && !(part.kind === "file" ? part.fileName : part.value.trim()); const invalidValue = part.enabled && missingValue; const mutedInvalidValue = !part.enabled && missingValue; return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${isEntry ? " is-entry" : ""}${part.enabled ? " is-enabled" : ""}${index === multipart.length - 1 ? " is-new" : ""}`} key={part.id}>
                     <input className="http-row-enabled" type="checkbox" aria-label={`${part.enabled ? "停用" : "启用"} form-data 字段 ${index + 1}`} checked={part.enabled} onChange={(event) => updateMultipart(index, { enabled: event.target.checked })} disabled={loading}/>
-                    <input aria-label={`Multipart 字段 ${index + 1} 名称`} style={styles.input} value={part.name} onChange={(event) => { updateMultipart(index, { name: event.target.value }); if (index === multipart.length - 1 && event.target.value.trim()) setMultipart((parts) => [...parts, createMultipartEditorPart()]); }} placeholder="添加字段" disabled={loading}/>
+                    <div className={`http-param-name-cell${mutedInvalidName ? " has-muted-error" : ""}`}><input aria-label={`Multipart 字段 ${index + 1} 名称`} aria-invalid={invalidName} aria-describedby={missingName ? `${part.id}-name-error` : undefined} title={missingName ? (part.enabled ? "字段名不能为空" : "字段名为空（已停用，不影响发送）") : undefined} style={styles.input} value={part.name} onFocus={() => { if (!part.enabled && !hasContent) updateMultipart(index, { enabled: true }); }} onChange={(event) => updateMultipart(index, { name: event.target.value })} placeholder={missingName ? "" : index === multipart.length - 1 ? "添加字段" : ""} disabled={loading}/>{missingName && <span id={`${part.id}-name-error`}>字段名不能为空</span>}</div>
                     {part.kind === "file"
-                      ? <label className="http-multipart-file"><span>{part.fileName || "选择文件"}</span><input type="file" onChange={(event) => void attachMultipartFile(index, event.target.files?.[0] ?? null)} disabled={loading}/></label>
-                      : <input aria-label={`Multipart 字段 ${index + 1} 文本值`} style={styles.input} value={part.value} onChange={(event) => { updateMultipart(index, { value: event.target.value, base64: false }); if (index === multipart.length - 1 && event.target.value.trim()) setMultipart((parts) => [...parts, createMultipartEditorPart()]); }} placeholder="字段值" disabled={loading}/>
+                      ? <label className={`http-multipart-file${invalidValue ? " is-invalid" : mutedInvalidValue ? " has-muted-error" : ""}`}><span>{part.fileName || (missingValue ? "请选择文件" : "选择文件")}</span><input type="file" onChange={(event) => void attachMultipartFile(index, event.target.files?.[0] ?? null)} disabled={loading}/></label>
+                      : <div className={`http-param-value-cell${mutedInvalidValue ? " has-muted-error" : ""}`}><input aria-label={`Multipart 字段 ${index + 1} 文本值`} aria-invalid={invalidValue} aria-describedby={missingValue ? `${part.id}-value-error` : undefined} title={missingValue ? (part.enabled ? "字段值不能为空" : "字段值为空（已停用，不影响发送）") : undefined} style={styles.input} value={part.value} onFocus={() => { if (!part.enabled && !hasContent) updateMultipart(index, { enabled: true }); }} onChange={(event) => updateMultipart(index, { value: event.target.value, base64: false })} placeholder="" disabled={loading}/>{missingValue && <span id={`${part.id}-value-error`}>字段值不能为空</span>}</div>
                     }
-                    <select className="http-param-type" aria-label={`Multipart 字段 ${index + 1} 类型`} style={styles.input} value={part.kind} onChange={(event) => updateMultipart(index, { kind: event.target.value as "text" | "file", ...(event.target.value === "text" ? { fileName: null, contentType: null, base64: false, value: "" } : {}) })} disabled={loading}><option value="text">Text</option><option value="file">File</option></select>
-                    <input aria-label={`Multipart 字段 ${index + 1} 说明`} style={styles.input} value={part.description} onChange={(event) => updateMultipart(index, { description: event.target.value })} placeholder="可选说明" disabled={loading}/>
-                    {hasContent ? <button type="button" className="http-kv-delete" aria-label={`删除 form-data 字段 ${index + 1}`} onClick={() => setMultipart((parts) => { const next = parts.filter((_, partIndex) => partIndex !== index); const last = next[next.length - 1]; return last && !last.name.trim() && !last.value && !last.fileName ? next : [...next, createMultipartEditorPart()]; })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
+                    <div className="http-param-type-cell"><select className="http-param-type" aria-label={`Multipart 字段 ${index + 1} 类型`} style={styles.input} value={part.kind === "file" ? "file" : part.valueType} onPointerDown={() => { if (!part.typeSelected) updateMultipart(index, { typeSelected: true }); }} onKeyDown={(event) => { if (!part.typeSelected && (event.key === "Enter" || event.key === " ")) updateMultipart(index, { typeSelected: true }); }} onChange={(event) => { const type = event.target.value as RowValueType | "file"; updateMultipart(index, type === "file" ? { kind: "file", typeSelected: true, value: "", fileName: null, contentType: null, base64: false } : { kind: "text", valueType: type, typeSelected: true, fileName: null, contentType: null, base64: false, value: part.kind === "file" ? "" : part.value }); }} disabled={loading}>{ROW_VALUE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}<option value="file">File</option></select></div>
+                    <span className="http-required-row"><button type="button" className={part.required ? "is-required" : ""} aria-pressed={part.required} aria-label={`form-data 字段 ${index + 1} ${part.required ? "取消必填" : "设为必填"}`} title={part.required ? "取消必填" : "设为必填"} disabled={loading} onClick={() => updateMultipart(index, { required: !part.required })}>*</button></span>
+                    <input aria-label={`Multipart 字段 ${index + 1} 说明`} style={styles.input} value={part.description} onChange={(event) => updateMultipart(index, { description: event.target.value })} placeholder="" disabled={loading}/>
+                    {isEntry ? <button type="button" className="http-kv-delete" aria-label={`删除 form-data 字段 ${index + 1}`} onClick={() => setMultipart((parts) => { const next = parts.filter((_, partIndex) => partIndex !== index); const last = next[next.length - 1]; return last && !multipartPartHasContent(last) && !last.enabled ? next : [...next, createMultipartEditorPart()]; })} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
                   </div>; })}
-                  <small className="http-multipart-hint">文件内容以 Base64 保存在请求中；发送时自动生成 multipart boundary。</small>
                 </div>
               )}
             </div>}
@@ -1415,9 +1492,9 @@ export function HttpWorkbench({
                   <button role="tab" tabIndex={responseView === "hex" ? 0 : -1} aria-selected={responseView === "hex"} style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
                   <button role="tab" tabIndex={responseView === "table" ? 0 : -1} aria-selected={responseView === "table"} style={responseView === "table" ? styles.tabActive : styles.tab} disabled={!responseTable} onClick={() => setResponseView("table")}>表格</button>
                   <button role="tab" tabIndex={responseView === "preview" ? 0 : -1} aria-selected={responseView === "preview"} style={responseView === "preview" ? styles.tabActive : styles.tab} disabled={!responsePreviewKind} onClick={() => setResponseView("preview")}>预览</button>
-                  <select className="http-response-tool-select" aria-label="响应内容类型" value={responseFormat} onChange={(event) => setResponseFormat(event.target.value as typeof responseFormat)}><option value="auto">自动类型</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="text">Text</option></select>
-                  <select className="http-response-tool-select" aria-label="响应字符集" value={responseCharset} onChange={(event) => setResponseCharset(event.target.value)}><option value="auto">自动字符集</option><option value="utf-8">UTF-8</option><option value="gb18030">GBK / GB18030</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option><option value="windows-1252">Windows-1252</option><option value="iso-8859-1">ISO-8859-1</option></select>
-                  <button type="button" className={responseWrap ? "http-response-icon-button is-active" : "http-response-icon-button"} aria-label="自动换行" title="自动换行" aria-pressed={responseWrap} onClick={() => setResponseWrap((wrap) => !wrap)}><Icon name="wrap"/></button>
+                  {responseView === "pretty" && <select className="http-response-tool-select" aria-label="响应内容类型" value={responseFormat} onChange={(event) => setResponseFormat(event.target.value as typeof responseFormat)}><option value="auto">自动类型</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="text">Text</option></select>}
+                  {(responseView === "pretty" || responseView === "raw") && <select className="http-response-tool-select" aria-label="响应字符集" value={responseCharset} onChange={(event) => setResponseCharset(event.target.value)}><option value="auto">自动字符集</option><option value="utf-8">UTF-8</option><option value="gb18030">GBK / GB18030</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option><option value="windows-1252">Windows-1252</option><option value="iso-8859-1">ISO-8859-1</option></select>}
+                  {(responseView === "pretty" || responseView === "raw") && <button type="button" className={responseWrap ? "http-response-icon-button is-active" : "http-response-icon-button"} aria-label="自动换行" title="自动换行" aria-pressed={responseWrap} onClick={() => setResponseWrap((wrap) => !wrap)}><Icon name="wrap"/></button>}
                   <div className="http-response-toolbar-actions">
                     {result.preview && <button type="button" className="http-response-icon-button" aria-label="下载响应内容" title="下载响应内容" onClick={downloadResponse}><Icon name="download"/></button>}
                     {result.preview && <button type="button" className="http-response-icon-button" aria-label="复制响应内容" title="复制响应内容" onClick={() => void copyText(responsePreview, "响应内容已复制")}><Icon name="copy"/></button>}
@@ -1432,7 +1509,7 @@ export function HttpWorkbench({
                   </div>
               </div>}
               <div className={`http-response-scroll is-${responseTab}`}>
-              {responseTab === "console" && <div className="http-response-console"><label className="http-console-assertions"><span>校验响应</span><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><textarea style={styles.textarea} value={assertionsText} onChange={(event) => setAssertionsText(event.target.value)} rows={4} spellCheck={false} disabled={!assertionsEnabled}/></label>{result.assertions && result.assertions.length > 0 && (
+              {responseTab === "console" && <div className="http-response-console">{result.assertions && result.assertions.length > 0 && (
                 <ul style={styles.assertList}>
                   {result.assertions.map((a, i) => (
                     <li key={`${a.name}-${i}`} style={a.passed ? styles.assertPass : styles.assertFail}>
@@ -1441,7 +1518,7 @@ export function HttpWorkbench({
                     </li>
                   ))}
                 </ul>
-              )}<VirtualList items={timeline} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="HTTP execution timeline" className="http-timeline" renderItem={({ at, event }, index) => <div style={styles.timelineRow}><time>+{index === 0 ? "0.0" : (at - timeline[0].at).toFixed(1)}ms</time><b>{event.type}</b><span>{event.type === "state_changed" ? `${event.state}${event.phase ? ` · ${event.phase}` : ""}` : event.type === "response_chunk" ? `${event.size} bytes${event.done ? " · done" : ""}` : event.type === "response_meta" ? `${event.status ?? ""} ${event.statusText ?? ""}` : event.type === "warning" || event.type === "failed" ? event.message : event.type === "metric" ? `${event.name}: ${event.value} ${event.unit}` : ""}</span></div>} empty={<div style={styles.muted}>暂无执行事件。</div>} /></div>}
+              )}<VirtualList items={scriptConsoleEvents} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="脚本控制台" className="http-timeline" renderItem={({ at, event }) => <div style={styles.timelineRow} className={`http-timeline-event event-${event.type}`}><time>+{timeline.length ? (at - timeline[0].at).toFixed(1) : "0.0"}ms</time><b>{event.type === "log" ? "script_log" : event.type}</b><span>{event.type === "log" ? event.message : event.type === "variables_extracted" ? Object.entries(event.variables).map(([key, value]) => `${key}=${value}`).join(", ") : event.type === "failed" ? event.message : ""}</span></div>} empty={<div className="http-console-empty"><Icon name="code"/><strong>没有脚本输出</strong><span>前置或后置脚本中的 console.log、变量提取和脚本错误会显示在这里。</span></div>} /></div>}
               {responseTab === "headers" && !result.responseMeta?.headers.length && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "headers" && Boolean(result.responseMeta?.headers.length) && <div style={styles.headerTable}>
                 <div style={styles.headerSummary}><span>{result.responseMeta?.contentType ?? "未知 Content-Type"}</span><span>预估 {result.responseMeta?.sizeHint ?? result.summary.bytesReceived} bytes</span></div>
@@ -1451,8 +1528,8 @@ export function HttpWorkbench({
               {responseTab === "cookies" && responseCookies.length > 0 && <div style={styles.headerTable}>{responseCookies.map((cookie, index) => <div key={index} style={styles.headerRow}><strong>{cookie.split("=", 1)[0]}</strong><span>{cookie}</span></div>)}</div>}
               {responseTab === "request" && (lastRequest ? <div className="http-live-request">
                 <section><h4>请求信息</h4><div className="http-request-summary"><strong>{lastRequest.method}</strong><code>{lastRequest.url}</code></div></section>
-                <section><h4>请求 Header <span>{lastRequest.headers.length}</span></h4><div className="http-request-data">{lastRequest.headers.length ? lastRequest.headers.map(([name, value], index) => <div key={`${name}-${index}`}><strong>{name}</strong><span>{value}</span></div>) : <p>没有发送请求 Header。</p>}</div></section>
-                <section><h4>请求 Body <span>{formatBytes(requestBodySize(lastRequest))}</span></h4><pre className="http-request-body">{lastRequest.body || "没有发送请求 Body。"}</pre></section>
+                <section className="http-live-data-section"><h4>Header <span>{lastRequest.headers.length}</span></h4><div className="http-request-data">{lastRequest.headers.length ? lastRequest.headers.map(([name, value], index) => <div key={`${name}-${index}`}><strong>{name}</strong><span>{value}</span></div>) : <p>（空）</p>}</div></section>
+                <section className="http-live-data-section"><h4>Body <span>{lastRequest.headers.find(([header]) => header.toLowerCase() === "content-type")?.[1] ?? formatBytes(requestBodySize(lastRequest))}</span></h4><pre className={`http-request-body${lastRequest.body ? "" : " is-empty"}`}>{lastRequest.body || "（空）"}</pre></section>
                 <section><CodeGenerator request={lastRequest}/></section>
               </div> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
               {responseTab === "body" && !responseHasBody && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
@@ -1652,7 +1729,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
     flexWrap: "wrap", paddingBottom: 12, marginBottom: 12, borderBottom: "1px solid var(--apivoy-border)",
   },
-  responseTabs: { display: "flex", gap: 4, marginBottom: 12 },
+  responseTabs: { display: "flex", alignItems: "stretch", gap: 4, marginBottom: 12, borderBottom: "1px solid var(--apivoy-border)" },
   requestTabs: { display: "flex", flexWrap: "wrap", gap: 2, marginBottom: 12, borderBottom: "1px solid var(--apivoy-border)" },
   jsonTableWrap: { maxHeight: 420, overflow: "auto", border: "1px solid var(--apivoy-border)", borderRadius: 8 },
   jsonTable: { width: "100%", borderCollapse: "collapse", fontSize: 11, textAlign: "left" },
@@ -1669,11 +1746,11 @@ const styles: Record<string, CSSProperties> = {
   },
   tab: {
     border: 0, background: "transparent", color: "var(--apivoy-muted)",
-    padding: "8px 10px", cursor: "pointer", borderRadius: 0, borderBottom: "2px solid transparent",
+    height: 40, display: "flex", alignItems: "center", padding: "0 10px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid transparent",
   },
   tabActive: {
     border: 0, background: "transparent", color: "var(--apivoy-accent)",
-    padding: "8px 10px", cursor: "pointer", borderRadius: 0, borderBottom: "2px solid var(--apivoy-accent)",
+    height: 40, display: "flex", alignItems: "center", padding: "0 10px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid var(--apivoy-accent)",
   },
   pre: {
     margin: 0,

@@ -1,4 +1,4 @@
-import { AiWorkbench, AmqpWorkbench, AppShell, buildWorkbenchTabs, CaptureWorkbench, CollectionRunner, CommentsWorkbench, exportTeamSnapshot, GatewayWorkbench, GrpcWorkbench, HttpWorkbench, KafkaWorkbench, MockWorkbench, MqttWorkbench, PluginCenter, RedisWorkbench, restoreTeamSnapshot, SocketWorkbench, SqlWorkbench, SseWorkbench, SsoWorkbench, TeamWorkbench, WebSocketWorkbench, WorkbenchDeck, WorkspaceExplorer, type AmqpWorkbenchRequest, type HttpWorkbenchRequest, type KafkaWorkbenchRequest, type MqttWorkbenchRequest, type RedisWorkbenchRequest, type SqlWorkbenchRequest, type WorkspaceTree } from "@apivoy/ui";
+import { AiWorkbench, AmqpWorkbench, AppShell, buildWorkbenchTabs, CaptureWorkbench, CollectionRunner, CommentsWorkbench, exportTeamSnapshot, GatewayWorkbench, GrpcWorkbench, HttpWorkbench, KafkaWorkbench, MockWorkbench, MqttWorkbench, PluginCenter, RedisWorkbench, restoreTeamSnapshot, SocketWorkbench, SqlWorkbench, SseWorkbench, SsoWorkbench, TeamWorkbench, WebSocketWorkbench, WorkbenchDeck, WorkspaceExplorer, type AmqpWorkbenchRequest, type KafkaWorkbenchRequest, type MqttWorkbenchRequest, type RedisWorkbenchRequest, type SqlWorkbenchRequest, type WorkspaceTree } from "@apivoy/ui";
 import {
   cancelViaAgent,
   createCollectionViaAgent,
@@ -67,9 +67,8 @@ export function App() {
   const amqpEnvelope=(request:AmqpWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"amqp",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,username:request.username,passwordRef:request.passwordRef,exchange:request.exchange,exchangeType:request.exchangeType,routingKey:request.routingKey,queue:request.queue,declare:request.declare,durable:request.durable,autoAck:request.autoAck,receiveLimit:request.receiveLimit,payload:request.payload,encoding:request.encoding,contentType:request.contentType}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const kafkaEnvelope=(request:KafkaWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"kafka",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{mode:request.mode,topic:request.topic,key:request.key,payload:request.payload,encoding:request.encoding,partition:request.partition,groupId:request.groupId,offsetReset:request.offsetReset,autoCommit:request.autoCommit,receiveLimit:request.receiveLimit,securityProtocol:request.securityProtocol,saslMechanism:request.saslMechanism,username:request.username,passwordRef:request.passwordRef,caPemRef:request.caPemRef,certificatePemRef:request.certificatePemRef,keyPemRef:request.keyPemRef,keyPasswordRef:request.keyPasswordRef}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
   const sqlEnvelope=(request:SqlWorkbenchRequest):RequestEnvelope=>({id:crypto.randomUUID(),protocolId:"sql",name:request.name,target:request.target,environmentRef:"default-env",authRef:null,timeoutMs:request.timeoutMs,retryPolicy:{max_retries:0,backoff_ms:0},proxy:null,tls:{verify:true,client_cert_ref:null},metadata:{},payload:{type:"raw",value:{username:request.username,passwordRef:request.passwordRef,sql:request.sql,parameters:request.parameters,transactional:request.transactional,rowLimit:request.rowLimit}},preScripts:[],postScripts:[],assertions:[],variables:{},createdAt:new Date().toISOString()});
-  const [externalRequest, setExternalRequest] = useState<HttpWorkbenchRequest | null>(null);
   useEffect(() => {
-    const reset = () => { setSelectedRequestId(null); setExternalRequest(null); };
+    const reset = () => { setSelectedRequestId(null); };
     window.addEventListener("apivoy-new-workbench", reset);
     return () => window.removeEventListener("apivoy-new-workbench", reset);
   }, []);
@@ -114,7 +113,7 @@ export function App() {
       }}
       explorer={<WorkspaceExplorer tree={tree} loading={treeLoading} error={treeError} onRetry={() => void refreshTree()} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
       onSelectCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
-      onOpenRequest={async (id) => { setSelectedRequestId(id); const envelope = await loadEnvelopeViaAgent(id); if (envelope) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: envelope })); setExternalRequest(envelope?.payload.type === "http" ? await loadRequestViaAgent(id) : null); }}
+      onOpenRequest={async (id) => { setSelectedRequestId(id); const envelope = await loadEnvelopeViaAgent(id); if (envelope) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: envelope })); }}
       onCreateWorkspace={async (name) => { await createWorkspaceViaAgent(name); await refreshTree(); }}
       onRenameWorkspace={async (id, name) => { await renameWorkspaceViaAgent(id, name); await refreshTree(); }}
       onArchiveWorkspace={async (id, archived) => { await archiveWorkspaceViaAgent(id, archived); await refreshTree(); }}
@@ -135,9 +134,8 @@ export function App() {
       onDeleteRequest={async (id) => { await deleteRequestViaAgent(id); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }}
       onRunCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
     />}>
-      <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`} startOnHome={!selectedRequestId}>
+      <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
       <HttpWorkbench
-        externalRequest={externalRequest}
         onSend={executeViaAgent}
         onCancel={cancelViaAgent}
         onPutSecret={putSecretViaAgent}
