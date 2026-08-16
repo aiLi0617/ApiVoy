@@ -5,6 +5,7 @@ import JsonWorker from "monaco-editor/language/json/json.worker?worker";
 import TypeScriptWorker from "monaco-editor/language/typescript/ts.worker?worker";
 import HtmlWorker from "monaco-editor/language/html/html.worker?worker";
 import CssWorker from "monaco-editor/language/css/css.worker?worker";
+import "monaco-editor/features/codicon/register.js";
 // The editor.api build omits optional contributions; register Monaco's FindController explicitly.
 // @ts-ignore Monaco ships this runtime bundle without a declaration entry.
 import "monaco-editor/esm/vs/editor/contrib/find/browser/findController";

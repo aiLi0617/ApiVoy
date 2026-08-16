@@ -8,7 +8,7 @@ import { useAppStore } from "./appStore";
 export interface WorkspaceRecord { id: string; name: string; rootPath?: string | null; archived?: boolean; updatedAt?: string }
 export interface ProjectRecord { id: string; workspaceId: string; name: string }
 export interface CollectionRecord { id: string; projectId: string; name: string; parentId?: string | null; sortOrder: number; tags?: string[] }
-export interface RequestRecord { id: string; projectId: string; collectionId: string; name: string; method?: string; target: string }
+export interface RequestRecord { id: string; projectId: string; collectionId: string; name: string; protocolId?: string; method?: string; target: string }
 export interface WorkspaceTree { workspaces: WorkspaceRecord[]; projects: ProjectRecord[]; collections: CollectionRecord[]; requests: RequestRecord[] }
 
 const CREATE_PROTOCOL_GROUPS = [
@@ -315,7 +315,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       {!isCollapsed && !!collection.tags?.length && <div style={{ ...styles.tags, paddingLeft: 39 + depth * 14 }}>{collection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
       {!isCollapsed && requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request, requestIndex, visibleRequests) => <div draggable onDragStart={(event) => setDrag(event, "request", request.id)} className={`tree-row${selectedIds.length ? " is-batch" : ""}${props.selectedRequestId === request.id ? " is-active" : ""}`} role="treeitem" aria-level={depth + 2} aria-setsize={visibleRequests.length} aria-posinset={requestIndex + 1} key={request.id} style={{...styles.requestRow, paddingLeft: 39 + depth * 14, ...(props.selectedRequestId === request.id ? styles.active : {})}}>
         <span className="tree-actions tree-actions-leading"><input type="checkbox" checked={selectedIds.includes(request.id)} onChange={() => toggleSelected(request.id)} title="批量选择" /></span>
-        <button type="button" className="tree-main" style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}><b>{request.method ?? "HTTP"}</b><span className="tree-label">{request.name}</span></button>
+        <button type="button" className="tree-main" style={styles.request} onClick={() => props.onOpenRequest(request.id)} title={request.target}>{request.protocolId === "websocket" ? <span className="tree-protocol-icon tree-protocol-websocket" title="WebSocket"><Icon name="websocket" /></span> : <b>{request.method ?? request.protocolId?.toUpperCase() ?? "HTTP"}</b>}<span className="tree-label">{request.name}</span></button>
         <span className="tree-actions"><button type="button" style={styles.delete} title="删除请求" onClick={async () => { if (await confirm({ title: "删除请求", description: `确定删除请求“${request.name}”吗？`, tone: "danger", confirmLabel: "删除" })) await deleteRequest(request.id, request.name); }}><Icon name="trash" /></button></span>
       </div>)}
       {!isCollapsed && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}

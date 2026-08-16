@@ -1,14 +1,15 @@
 .standardized-workbench { min-height: 100%; padding: 10px; overflow: auto; }
-.standardized-workbench, .standardized-workbench button, .standardized-workbench input, .standardized-workbench select, .standardized-workbench textarea { font-family: var(--apivoy-font); }
+.standardized-workbench, .standardized-workbench button:not(.monaco-editor *), .standardized-workbench input:not(.monaco-editor *), .standardized-workbench select:not(.monaco-editor *), .standardized-workbench textarea:not(.monaco-editor *) { font-family: var(--apivoy-font); }
+.standardized-workbench .monaco-editor .codicon[class*="codicon-"] { font-family: codicon !important; }
 .standardized-workbench label { color: var(--apivoy-muted); font-size: 11px; }
 .standardized-workbench label > input, .standardized-workbench label > select, .standardized-workbench label > textarea { margin-top: 5px; }
 .standardized-workbench [role="alert"], .standardized-workbench [aria-live="assertive"] { color: var(--apivoy-danger); border-left: 3px solid var(--apivoy-danger); background: color-mix(in srgb, var(--apivoy-danger) 10%, transparent); padding: 8px 10px; }
 .standardized-workbench [aria-busy="true"] { cursor: progress; }
-.standardized-workbench button, .standardized-workbench input, .standardized-workbench select, .standardized-workbench textarea { transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, opacity 180ms ease; }
-.standardized-workbench button:focus-visible, .standardized-workbench input:focus-visible, .standardized-workbench select:focus-visible, .standardized-workbench textarea:focus-visible { outline: 2px solid var(--apivoy-accent); outline-offset: 2px; }
+.standardized-workbench button:not(.monaco-editor *), .standardized-workbench input:not(.monaco-editor *), .standardized-workbench select:not(.monaco-editor *), .standardized-workbench textarea:not(.monaco-editor *) { transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, opacity 180ms ease; }
+.standardized-workbench button:not(.monaco-editor *):focus-visible, .standardized-workbench input:not(.monaco-editor *):focus-visible, .standardized-workbench select:not(.monaco-editor *):focus-visible, .standardized-workbench textarea:not(.monaco-editor *):focus-visible { outline: 2px solid var(--apivoy-accent); outline-offset: 2px; }
 .standardized-workbench > section { min-height: 100%; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; }
 .standardized-workbench > section > header:first-child { display: none !important; }
-.standardized-workbench input:not([type="checkbox"]):not([type="radio"]), .standardized-workbench textarea, .standardized-workbench select { color: var(--apivoy-text) !important; background: var(--apivoy-bg-elevated) !important; border-color: var(--apivoy-border) !important; }
+.standardized-workbench input:not(.monaco-editor *):not([type="checkbox"]):not([type="radio"]), .standardized-workbench textarea:not(.monaco-editor *), .standardized-workbench select:not(.monaco-editor *) { color: var(--apivoy-text) !important; background: var(--apivoy-bg-elevated) !important; border-color: var(--apivoy-border) !important; }
 .standardized-workbench pre, .standardized-workbench code { font-family: var(--apivoy-mono); }
 .standardized-workbench pre { background: var(--apivoy-bg) !important; color: var(--apivoy-text) !important; }
 .standardized-workbench h2:first-child { margin-top: 0 !important; font-size: 15px !important; }
@@ -18,7 +19,7 @@
 .standardized-workbench pre { border: 1px solid var(--apivoy-border); }
 .standardized-workbench table { width: 100%; border-collapse: collapse; }
 .standardized-workbench th, .standardized-workbench td { padding: 7px 9px; border-bottom: 1px solid var(--apivoy-border); text-align: left; }
-.standardized-workbench button:not(:disabled):hover { border-color: var(--apivoy-border-strong) !important; filter: brightness(1.08); }
+.standardized-workbench button:not(.monaco-editor *):not(:disabled):hover { border-color: var(--apivoy-border-strong) !important; filter: brightness(1.08); }
 .layout-request > section > div:last-of-type,
 .layout-stream > section > div:last-of-type,
 .layout-editor > section > div:last-of-type { min-width: 0; }

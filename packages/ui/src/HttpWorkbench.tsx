@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 void createPortal;
 import type {
@@ -650,6 +650,9 @@ export function HttpWorkbench({
   const [graphqlQuery, setGraphqlQuery] = useState("query Example {\n  __typename\n}");
   const [graphqlVariables, setGraphqlVariables] = useState("{}");
   const [graphqlOperationName, setGraphqlOperationName] = useState("");
+  const [graphqlSplitRatio, setGraphqlSplitRatio] = useState(() => Number(localStorage.getItem("apivoy-graphql-editor-ratio-v2")) || .5);
+  const [graphqlSchemaState, setGraphqlSchemaState] = useState<{ status: "idle" | "loading" | "ready" | "error"; typeCount?: number; message?: string }>({ status: "idle" });
+  const graphqlSplitRef = useRef<HTMLDivElement>(null);
   const [rpcMethod, setRpcMethod] = useState("users.list");
   const [rpcParams, setRpcParams] = useState("{}");
   const [rpcId, setRpcId] = useState("1");
@@ -660,6 +663,22 @@ export function HttpWorkbench({
   const [binaryFileName, setBinaryFileName] = useState("");
   const [binarySize, setBinarySize] = useState(0);
   const [messagePackJson, setMessagePackJson] = useState("{}" );
+
+  function resizeGraphqlEditors(event: ReactPointerEvent<HTMLDivElement>) {
+    const root = graphqlSplitRef.current;
+    if (!root) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const bounds = root.getBoundingClientRect();
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const stacked = window.matchMedia("(max-width: 760px)").matches;
+      const next = stacked ? (moveEvent.clientY - bounds.top) / bounds.height : (moveEvent.clientX - bounds.left) / bounds.width;
+      setGraphqlSplitRatio(Math.min(.78, Math.max(.22, next)));
+    };
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  }
+  useEffect(() => { localStorage.setItem("apivoy-graphql-editor-ratio-v2", String(graphqlSplitRatio)); }, [graphqlSplitRatio]);
 
   useEffect(() => {
     onTitleChange?.(`${method} ${name.trim() || "新建 HTTP 接口"}`);
@@ -797,7 +816,7 @@ export function HttpWorkbench({
               : bodyMode === "binary" || bodyMode === "msgpack" ? encodedBody
             : body,
       bodyEncoding: bodyMode === "binary" || bodyMode === "msgpack" ? "base64" : "text",
-      bodySource: bodyMode === "msgpack" ? messagePackJson : undefined,
+      bodySource: bodyMode === "msgpack" ? messagePackJson : bodyMode === "graphql" ? JSON.stringify({ type: "graphql", query: graphqlQuery, variables: JSON.parse(graphqlVariables || "{}"), operationName: graphqlOperationName.trim() || null }) : bodyMode === "jsonrpc" ? JSON.stringify({ type: "jsonrpc", method: rpcMethod, params: JSON.parse(rpcParams || "{}"), id: rpcId }) : undefined,
       multipart: bodyMode === "multipart" ? multipart.filter((part) => part.enabled && part.name.trim()).map(({ id: _id, enabled: _enabled, description: _description, kind: _kind, valueType: _valueType, typeSelected: _typeSelected, required: _required, ...part }) => part) : [],
       timeoutMs,
       variables: parseKv(variablesText),
@@ -875,9 +894,13 @@ export function HttpWorkbench({
     setHeaderRows(headerRowsFromPairs(loaded.headers.filter(([key]) => key.toLowerCase() !== "cookie")));
     setCookieRows(cookieRowsFromHeaders(loaded.headers));
     const contentType = loaded.headers.find(([key]) => key.toLowerCase() === "content-type")?.[1].toLowerCase() ?? "";
+    const structuredSource = (() => { try { return JSON.parse(loaded.bodySource || loaded.body || "null") as { type?: string; query?: unknown; variables?: unknown; operationName?: unknown; jsonrpc?: unknown; method?: unknown; params?: unknown; id?: unknown }; } catch { return null; } })();
+    const graphqlSource = structuredSource && (structuredSource.type === "graphql" || (typeof structuredSource.query === "string" && structuredSource.variables !== undefined)) ? structuredSource : null;
+    const jsonRpcSource = structuredSource && (structuredSource.type === "jsonrpc" || (structuredSource.jsonrpc === "2.0" && typeof structuredSource.method === "string")) ? structuredSource : null;
     const nextBodyMode: BodyMode = loaded.multipart?.length ? "multipart"
       : contentType.includes("x-www-form-urlencoded") ? "urlencoded"
-      : contentType.includes("graphql") ? "graphql"
+      : contentType.includes("graphql") || graphqlSource ? "graphql"
+      : jsonRpcSource ? "jsonrpc"
       : loaded.bodyEncoding === "base64" && contentType.includes("msgpack") ? "msgpack"
       : loaded.bodyEncoding === "base64" ? "binary"
       : contentType.includes("json") ? "json"
@@ -886,7 +909,8 @@ export function HttpWorkbench({
     setBody(loaded.body ?? "");
     if (nextBodyMode === "binary") { setBinaryBase64(loaded.body ?? ""); setBinaryFileName("saved-binary"); setBinarySize(Math.floor((loaded.body?.length ?? 0) * .75)); }
     if (nextBodyMode === "msgpack") setMessagePackJson(loaded.bodySource ?? "{}");
-    if (nextBodyMode === "graphql") setGraphqlQuery(loaded.body ?? "");
+    if (nextBodyMode === "graphql") { setGraphqlQuery(typeof graphqlSource?.query === "string" ? graphqlSource.query : loaded.body ?? ""); setGraphqlVariables(JSON.stringify(graphqlSource?.variables ?? {}, null, 2)); setGraphqlOperationName(typeof graphqlSource?.operationName === "string" ? graphqlSource.operationName : ""); }
+    if (nextBodyMode === "jsonrpc") { setRpcMethod(typeof jsonRpcSource?.method === "string" ? jsonRpcSource.method : ""); setRpcParams(JSON.stringify(jsonRpcSource?.params ?? {}, null, 2)); setRpcId(jsonRpcSource?.id === null ? "null" : String(jsonRpcSource?.id ?? "1")); }
     setMultipart([...(loaded.multipart ?? []).map((part) => createMultipartEditorPart(part)), createMultipartEditorPart()]);
     setBodyMode(nextBodyMode);
     setFormRows(nextBodyMode === "urlencoded"
@@ -1009,6 +1033,42 @@ export function HttpWorkbench({
     if (oauthAudience.trim()) authorization.searchParams.set("audience", oauthAudience.trim());
     window.open(authorization.toString(), "_blank", "noopener,noreferrer");
     setStatusMsg("授权页面已打开；完成授权后粘贴回调中的 code");
+  }
+
+  async function fetchGraphqlSchema() {
+    if (!url.trim()) { setGraphqlSchemaState({ status: "error", message: "请先填写 GraphQL 地址" }); return; }
+    setGraphqlSchemaState({ status: "loading" });
+    try {
+      const request = buildRequest();
+      const introspectionQuery = "query ApiVoySchemaIntrospection { __schema { queryType { name } mutationType { name } subscriptionType { name } types { name kind } } }";
+      const schemaHeaders = request.headers.some(([key]) => key.toLowerCase() === "content-type") ? request.headers : [["Content-Type", "application/json"], ...request.headers] as Array<[string, string]>;
+      const schemaRequest: HttpWorkbenchRequest = { ...request, name: "GraphQL Schema Introspection", method: "POST", headers: schemaHeaders, body: JSON.stringify({ query: introspectionQuery, operationName: "ApiVoySchemaIntrospection", variables: {} }) };
+      const response = await onSend(schemaRequest);
+      if (response.error) throw new Error(response.error);
+      const parsed = JSON.parse(response.preview ?? "{}") as { data?: { __schema?: { types?: unknown[] } }; errors?: Array<{ message?: string }> };
+      if (parsed.errors?.length) throw new Error(parsed.errors.map((item) => item.message).filter(Boolean).join("；") || "Schema introspection 失败");
+      const typeCount = parsed.data?.__schema?.types?.length;
+      if (typeof typeCount !== "number") throw new Error("响应中没有 GraphQL Schema");
+      setGraphqlSchemaState({ status: "ready", typeCount });
+    } catch (error) {
+      setGraphqlSchemaState({ status: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  function formatGraphqlQuery() {
+    let depth = 0; let quoted = false; let escaped = false;
+    setGraphqlQuery(graphqlQuery.split("\n").map((raw) => {
+      const line = raw.trim();
+      if (!line) return "";
+      if (line.startsWith("}")) depth = Math.max(0, depth - 1);
+      const output = `${"  ".repeat(depth)}${line}`;
+      for (const character of line) { if (escaped) { escaped = false; continue; } if (character === "\\" && quoted) { escaped = true; continue; } if (character === '"') quoted = !quoted; else if (!quoted && character === "{") depth += 1; else if (!quoted && character === "}" && !line.startsWith("}")) depth = Math.max(0, depth - 1); }
+      return output;
+    }).join("\n").trim());
+  }
+  function formatGraphqlVariables() {
+    try { setGraphqlVariables(JSON.stringify(JSON.parse(graphqlVariables || "{}"), null, 2)); setStatusMsg(null); }
+    catch { setStatusMsg("Variables 必须是合法 JSON，无法格式化"); }
   }
 
   async function handleSend() {
@@ -1283,8 +1343,11 @@ export function HttpWorkbench({
                 <CodeEditor value={body} onChange={setBody} language={bodyMode === "json" ? "json" : bodyMode === "xml" ? "xml" : "plaintext"} height={260} readOnly={loading} />
               </>}
               {bodyMode === "graphql" && <div className="http-graphql-editor">
-                <div className="http-body-editor-label">Query</div><CodeEditor value={graphqlQuery} onChange={setGraphqlQuery} language="graphql" height={220} readOnly={loading}/>
-                <div className="http-graphql-fields"><label>Operation Name<input style={styles.input} value={graphqlOperationName} onChange={(event) => setGraphqlOperationName(event.target.value)} disabled={loading}/></label><label>Variables (JSON)<CodeEditor value={graphqlVariables} onChange={setGraphqlVariables} language="json" height={130} readOnly={loading}/></label></div>
+                <div ref={graphqlSplitRef} className="http-graphql-split" style={{ "--graphql-split-ratio": `${graphqlSplitRatio * 100}%` } as CSSProperties}>
+                  <section className="http-graphql-pane"><header><strong>Query</strong><input className="http-graphql-operation" aria-label="Operation Name" value={graphqlOperationName} onChange={(event) => setGraphqlOperationName(event.target.value)} disabled={loading} placeholder="Operation Name（可选）"/><button type="button" className={`http-graphql-schema is-${graphqlSchemaState.status}`} disabled={graphqlSchemaState.status === "loading"} title={graphqlSchemaState.message ?? "读取服务端 GraphQL Schema"} onClick={() => void fetchGraphqlSchema()}>{graphqlSchemaState.status === "loading" ? "获取中…" : graphqlSchemaState.status === "ready" ? `已获取 Schema · ${graphqlSchemaState.typeCount}` : graphqlSchemaState.status === "error" ? "Schema 获取失败" : "获取 Schema"}</button><span className="http-graphql-pane-actions"><button type="button" className="http-graphql-format" title="格式化 Query" aria-label="格式化 Query" onClick={formatGraphqlQuery}><Icon name="code"/></button><button type="button" className="http-graphql-clear" title="清空 Query" aria-label="清空 Query" disabled={!graphqlQuery} onClick={() => setGraphqlQuery("")}><Icon name="broom"/></button></span></header><CodeEditor value={graphqlQuery} onChange={setGraphqlQuery} language="graphql" height="100%" readOnly={loading} bare/></section>
+                  <div className="http-graphql-resizer" role="separator" aria-label="调整 Query 和 Variables 区域大小" onPointerDown={resizeGraphqlEditors}/>
+                  <section className="http-graphql-pane"><header><strong>Variables</strong><span className="http-graphql-pane-actions"><button type="button" className="http-graphql-format" title="格式化 Variables" aria-label="格式化 Variables" onClick={formatGraphqlVariables}><Icon name="code"/></button><button type="button" className="http-graphql-clear" title="清空 Variables" aria-label="清空 Variables" disabled={!graphqlVariables} onClick={() => setGraphqlVariables("")}><Icon name="broom"/></button></span></header><CodeEditor value={graphqlVariables} onChange={setGraphqlVariables} language="json" height="100%" readOnly={loading} bare/></section>
+                </div>
               </div>}
               {bodyMode === "jsonrpc" && <div className="http-specialized-editor"><div className="http-specialized-row"><label>Method<input style={styles.input} value={rpcMethod} onChange={(event) => setRpcMethod(event.target.value)} disabled={loading}/></label><label>Request ID<input style={styles.input} value={rpcId} onChange={(event) => setRpcId(event.target.value)} disabled={loading}/></label></div><div className="http-body-editor-label">Params (JSON)</div><CodeEditor value={rpcParams} onChange={setRpcParams} language="json" height={220} readOnly={loading}/></div>}
               {bodyMode === "soap" && <div className="http-specialized-editor"><div className="http-specialized-row"><label>SOAP Version<select style={styles.input} value={soapVersion} onChange={(event) => { const version = event.target.value as "1.1" | "1.2"; setSoapVersion(version); setHeaderRows((rows) => headerRowsFromPairs([["Content-Type", version === "1.1" ? "text/xml" : "application/soap+xml"], ...rows.filter((row) => row.key && row.key.toLowerCase() !== "content-type").map((row) => [row.key, row.value] as [string, string])])); }} disabled={loading}><option>1.1</option><option>1.2</option></select></label><label>SOAP Action<input style={styles.input} value={soapAction} onChange={(event) => setSoapAction(event.target.value)} disabled={loading}/></label></div><div className="http-body-editor-label">XML Envelope</div><CodeEditor value={soapEnvelope} onChange={setSoapEnvelope} language="xml" height={260} readOnly={loading}/></div>}
