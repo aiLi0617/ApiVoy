@@ -30,6 +30,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Ensure Tauri frontendDist exists for workspace Cargo
+        run: mkdir -p apps/desktop/dist && test -f apps/desktop/dist/index.html || printf '%s\n' '<!doctype html><title>ApiVoy</title>' > apps/desktop/dist/index.html
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
