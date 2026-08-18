@@ -20,6 +20,7 @@
 | [ISS-007](#iss-007-local-agent-失败态暴露原始错误和内部-id) | Local Agent 失败态暴露原始错误和内部 ID | P2 | open | 2026-08-15 |
 | [ISS-008](#iss-008-首页形成嵌套-main-landmark) | 首页形成嵌套 main landmark | P2 | open | 2026-08-15 |
 | [ISS-009](#iss-009-wss-执行因-rustls-cryptoprovider-未初始化而崩溃) | WSS 执行因 Rustls CryptoProvider 未初始化而崩溃 | P0 | done | 2026-08-15 |
+| [ISS-010](#iss-010-glib-安全修复被-tauri-gtk3-栈挡住无法自动升级) | glib 安全修复被 Tauri GTK3 栈挡住，无法自动升级 | P2 | open | 2026-08-18 |
 | [UX 走查](./UX_WALKTHROUGH.md) | 功能放置与交互（23 项，多数 open） | P0–P2 | open | 2026-08-12 |
 
 ---
@@ -299,3 +300,47 @@ Local Agent 未启动时，左侧错误卡直接显示英文底层错误 `Failed
 - `cargo check -p apivoy-local-agent -p driver-websocket -p driver-amqp` 通过。
 - WebSocket 与 AMQP 驱动单测共 4 项通过。
 - 隔离构建的新 Agent 已对 `wss://ws.postman-echo.com/raw` 完成端到端测试：握手状态 101，成功回显 `hello from ApiVoy`，执行状态 completed。
+
+---
+
+## ISS-010 glib 安全修复被 Tauri GTK3 栈挡住，无法自动升级
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P2 |
+| **状态** | open |
+| **模块** | 桌面端 / Tauri / 依赖安全 |
+| **记录日期** | 2026-08-18 |
+| **关联** | `RUSTSEC-2024-0429`、`.cargo/audit.toml`、`.github/dependabot.yml`、[DEPENDENCY_SECURITY.md](./DEPENDENCY_SECURITY.md) |
+
+### 问题
+
+Dependabot 对 `glib` 报 `security_update_not_possible`：当前解析到 `0.18.5`，无漏洞最低版本是 `0.20.0`。
+
+依赖链为 `apivoy-desktop → Tauri 2 → Wry → gtk 0.18 → glib 0.18.5`。`gtk 0.18` 不能搭配 `glib 0.20`（gtk-rs 大版本不兼容）。单独升级 `glib` 会打断 Linux WebKitGTK 桌面构建。
+
+告警影响的是 `glib::VariantStrIter`。评估结论：ApiVoy 与当前 Tauri/Wry 源码未使用该 API，因此暂列为可接受例外，而不是「无风险、可永久忽略」。
+
+### 当前处理
+
+| 项 | 说明 |
+|----|------|
+| **cargo audit** | `.cargo/audit.toml` 忽略 `RUSTSEC-2024-0429` |
+| **Dependabot** | `.github/dependabot.yml` 忽略 gtk-rs 0.18 一族，避免反复开失败的安全升级 PR |
+| **GitHub 告警** | 现有 `glib` Dependabot alert 需在 UI 中标为 tolerable risk / unused code |
+
+### 不要做的
+
+- 不要在当前 Tauri 2 / GTK3 栈上强行把 `glib` 升到 `0.20`。
+
+### 验收标准（真正关闭本单时）
+
+- Tauri / Wry 提供已维护的 Linux GTK 后端（预期 GTK4），且依赖树能解析到 `glib ≥ 0.20`。
+- 升级 Tauri 后 Linux 桌面构建与冒烟通过。
+- 从 `.cargo/audit.toml`、`.github/dependabot.yml` 和 `DEPENDENCY_SECURITY.md` 移除 glib/GTK3 相关例外。
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P2。记录 Dependabot 无法自动升级的原因与后续升级时机。 |
