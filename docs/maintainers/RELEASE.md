@@ -41,6 +41,8 @@ apivoy-cli run examples/collections/httpbin-smoke.json
 
 Install the `.msi` from the release page, launch ApiVoy, send `https://httpbin.org/get` from the HTTP workbench.
 
+WiX/MSI only accepts numeric versions (`major.minor.patch.build`). The public app version remains `0.1.0-alpha.1`; Windows MSI ProductVersion is overridden to `0.1.0.1` in `apps/desktop/src-tauri/tauri.conf.json`.
+
 ## Local build note
 
 Windows developer machines need OpenSSL build tooling (or vendored OpenSSL) for full workspace release builds. CI runners on GitHub Actions perform the official release builds.

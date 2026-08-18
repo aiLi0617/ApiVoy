@@ -30,6 +30,11 @@
       "icons/icon.ico",
       "icons/icon.icns",
       "icons/icon.png"
-    ]
+    ],
+    "windows": {
+      "wix": {
+        "version": "0.1.0.1"
+      }
+    }
   }
 }

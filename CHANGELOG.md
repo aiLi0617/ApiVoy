@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fine-grained internationalization is incomplete.
 - Desktop Content Security Policy is baseline; HTML response sandboxing is still planned.
 - Automatic updates are not yet available.
+- Windows MSI ProductVersion is `0.1.0.1` because WiX requires numeric-only versions; the public release remains `0.1.0-alpha.1`.
 
 [Unreleased]: https://github.com/aiLi0617/ApiVoy/compare/v0.1.0-alpha.1...HEAD
 [0.1.0-alpha.1]: https://github.com/aiLi0617/ApiVoy/releases/tag/v0.1.0-alpha.1

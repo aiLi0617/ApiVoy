@@ -24,6 +24,7 @@ Verify downloads with `SHA256SUMS.txt` attached to this release.
 - Fine-grained internationalization is incomplete.
 - Desktop Content Security Policy is baseline; HTML response sandboxing is still planned.
 - Automatic updates are not yet available.
+- Windows MSI ProductVersion is numeric `0.1.0.1` (WiX limitation); the public release remains `0.1.0-alpha.1`.
 
 ## Security
 
