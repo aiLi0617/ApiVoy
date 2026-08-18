@@ -43,12 +43,13 @@ import {
   type MockRule,
   type CollectionRunCase,
 } from "@apivoy/ui";
-import type {
-  AssertionResultEvent,
-  ExecutionSummary,
-  ExecutionEvent,
-  RequestEnvelope,
-  ResponseMeta,
+import {
+  CLIENT_VERSION,
+  type AssertionResultEvent,
+  type ExecutionSummary,
+  type ExecutionEvent,
+  type RequestEnvelope,
+  type ResponseMeta,
 } from "@apivoy/request-model";
 import { useEffect, useState } from "react";
 
@@ -76,7 +77,7 @@ if (bootstrapToken) {
 }
 
 function agentHeaders(): Headers {
-  const headers = new Headers({ "Content-Type": "application/json", "X-ApiVoy-Protocol-Api-Version": "1", "X-ApiVoy-Client": "desktop", "X-ApiVoy-Client-Version": "0.1.0" });
+  const headers = new Headers({ "Content-Type": "application/json", "X-ApiVoy-Protocol-Api-Version": "1", "X-ApiVoy-Client": "desktop", "X-ApiVoy-Client-Version": CLIENT_VERSION });
   if (activeAgentToken) headers.set("Authorization", `Bearer ${activeAgentToken}`);
   return headers;
 }

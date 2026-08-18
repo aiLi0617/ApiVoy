@@ -23,7 +23,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "X-ApiVoy-Protocol-Api-Version: 1" \
   -H "X-ApiVoy-Client: cli-smoke" \
-  -H "X-ApiVoy-Client-Version: 0.1.0" \
+  -H "X-ApiVoy-Client-Version: 0.1.0-alpha.1" \
   -d "{\"id\":\"00000000-0000-4000-8000-000000000001\",\"protocolId\":\"http\",\"name\":\"smoke\",\"target\":\"https://example.com\",\"environmentRef\":null,\"authRef\":null,\"timeoutMs\":30000,\"retryPolicy\":{\"max_retries\":0,\"backoff_ms\":0},\"proxy\":null,\"tls\":{\"verify\":true,\"client_cert_ref\":null},\"metadata\":{},\"payload\":{\"type\":\"http\",\"method\":\"GET\",\"headers\":[],\"body\":null,\"followRedirects\":true},\"preScripts\":[],\"postScripts\":[],\"assertions\":[],\"createdAt\":\"2026-08-05T00:00:00Z\"}" \
   http://127.0.0.1:39217/v1/executions
 ```

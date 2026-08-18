@@ -378,8 +378,8 @@ before_request
 
 | 文档 | 路径 |
 |------|------|
-| 产品需求 PRD V1.1 | 仓库根目录 `*PRD_V1.1.docx`（提取文本：`docs/_extract/prd.txt`） |
-| 技术架构 V1.0 | 仓库根目录 `*技术架构*.docx`（提取文本：`docs/_extract/arch.txt`） |
+| 产品需求 PRD V1.1 | 内部文档（未公开）；公开规划见 [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) 与本计划 |
+| 技术架构 V1.0 | 内部文档（未公开）；公开架构见 [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) 与 [`docs/adr/`](./adr/) |
 | 品牌 | [`docs/BRANDING.md`](./BRANDING.md) |
 | ADR | [`docs/adr/`](./adr/) |
 | 本计划 | [`docs/PHASE_PLAN.md`](./PHASE_PLAN.md) |

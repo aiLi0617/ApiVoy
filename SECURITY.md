@@ -11,7 +11,7 @@
 
 Please do not report security vulnerabilities through public GitHub Issues.
 
-Use GitHub Private Vulnerability Reporting:
+Use GitHub Private Vulnerability Reporting (enable under **Settings → Security** before publishing this link):
 
 https://github.com/aiLi0617/ApiVoy/security/advisories/new
 

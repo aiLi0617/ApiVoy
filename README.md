@@ -62,13 +62,16 @@ GraphQL is available via the HTTP workbench GraphQL body mode and a dedicated dr
 
 ### Install the desktop application
 
-Download the latest package from [GitHub Releases](https://github.com/aiLi0617/ApiVoy/releases):
+The first public alpha release is currently being prepared.
+Source builds are available using the development instructions below.
+
+When [v0.1.0-alpha.1](https://github.com/aiLi0617/ApiVoy/releases/tag/v0.1.0-alpha.1) is published, downloads will include:
 
 - **Windows**: `.msi`
 - **macOS**: `.dmg`
 - **Linux**: `.deb`
-
-Also available: **ApiVoy CLI** and **ApiVoy Local Agent** (same release page).
+- **ApiVoy CLI** and **ApiVoy Local Agent** archives
+- `SHA256SUMS.txt` for checksum verification
 
 ### Send your first request
 
@@ -108,7 +111,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for validation commands and pull request 
 | Local Agent | `apivoy-agent` | Headless protocol runtime for Web |
 | CLI | `apivoy-cli` | CI and terminal automation |
 
-Release assets include platform installers and SHA-256 checksums.
+Alpha release assets will include platform installers, CLI/Agent archives, and SHA-256 checksums once `v0.1.0-alpha.1` is published.
 
 ## Security and privacy
 
@@ -132,7 +135,7 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/THREAT_MODEL.md](
 | Capability | ApiVoy |
 |------------|--------|
 | Local-first | ✅ |
-| Open-source core | ✅ |
+| Open-source source code | ✅ |
 | Desktop + Web + CLI | ✅ |
 | HTTP / GraphQL / gRPC | ✅ |
 | TCP/UDP / MQ / Redis / SQL | ✅ |
@@ -152,7 +155,7 @@ Track work on [GitHub Milestones](https://github.com/aiLi0617/ApiVoy/milestones)
 
 ## Contributing
 
-We welcome issues and pull requests. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+We welcome issues and pull requests. Please read [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 Community discussion: [GitHub Discussions](https://github.com/aiLi0617/ApiVoy/discussions).
 

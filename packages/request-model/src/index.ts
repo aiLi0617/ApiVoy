@@ -239,4 +239,4 @@ export function createHttpGetRequest(name: string, url: string): RequestEnvelope
 /** Protocol API version expected by Web/Desktop clients (must match Agent). */
 export const PROTOCOL_API_VERSION = "1";
 
-export const CLIENT_VERSION = "0.1.0";
+export const CLIENT_VERSION = "0.1.0-alpha.1";

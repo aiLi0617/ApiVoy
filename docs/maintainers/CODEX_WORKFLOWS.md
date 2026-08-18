@@ -31,4 +31,4 @@ Credits will **not** be used for:
 
 Automated Codex workflows are **planned**, not yet deployed in CI. This document describes intended scope only.
 
-See also [AGENTS.md](../AGENTS.md) and the Open-source scope section in [README.md](../README.md).
+See also [AGENTS.md](../../AGENTS.md) and the Open-source scope section in [README.md](../../README.md).

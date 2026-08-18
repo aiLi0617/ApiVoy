@@ -59,8 +59,11 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-conduct@apivoy.dev.
+reported to the community leaders responsible for enforcement by opening a
+private report through [GitHub's contact flow](https://github.com/contact/report-abuse?report=aiLi0617%2FApiVoy)
+or a confidential issue with the `[CoC]` prefix if private contact is unavailable.
+
+When `conduct@apivoy.dev` is operational, it will become the primary contact.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

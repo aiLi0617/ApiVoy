@@ -16,8 +16,8 @@ const workspaceTree = {
 
 const health = {
   service: "apivoy-agent",
-  version: "0.1.0",
-  agentVersion: "0.1.0",
+  version: "0.1.0-alpha.1",
+  agentVersion: "0.1.0-alpha.1",
   protocolApiVersion: "1",
   minProtocolApiVersion: "1",
   maxProtocolApiVersion: "1",
@@ -121,14 +121,16 @@ async function main() {
   await openWorkbench(page, "http");
   await expandProtocolNav(page);
   await page.screenshot({ path: path.join(outDir, "overview.png") });
-  await page.screenshot({ path: path.join(outDir, "http-workbench.png") });
-
-  await page.locator("#http-target-url").fill("https://httpbin.org/get");
 
   await page.keyboard.press("Control+K");
-  await page.locator(".command-palette").waitFor({ state: "visible", timeout: 5000 });
+  await page.locator(".command-palette").waitFor({ state: "visible", timeout: 10000 });
   await page.screenshot({ path: path.join(outDir, "protocol-list.png") });
   await page.keyboard.press("Escape");
+
+  await page.locator("#http-target-url").fill("https://httpbin.org/get");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: path.join(outDir, "http-workbench.png") });
 
   await openWorkbench(page, "grpc");
   await page.screenshot({ path: path.join(outDir, "grpc-workbench.png") });

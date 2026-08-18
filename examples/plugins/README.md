@@ -8,7 +8,7 @@ This folder documents how to build a minimal **transformer** plugin. ApiVoy does
 {
   "id": "example-uppercase",
   "name": "Example Uppercase",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "kind": "transformer",
   "permissions": []
 }

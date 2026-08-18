@@ -2,14 +2,39 @@ name: Release
 
 on:
   push:
-    tags: ["v*", "V*"]
-  workflow_dispatch:
+    tags: ["v*"]
 
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
 jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux desktop libraries
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.27.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
   desktop:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -37,22 +62,15 @@ jobs:
       - name: Resolve release notes
         id: release-notes
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           NOTES_FILE=".github/release-notes/alpha.md"
+          CHANGELOG_SECTION="$(awk '/^## \[0\.1\.0-alpha\.1\]/,/^## \[/{if ($0 ~ /^## \[/ && $0 !~ /0\.1\.0-alpha\.1/) exit; print}' CHANGELOG.md || true)"
           if [ -f "$NOTES_FILE" ]; then
             BODY="$(cat "$NOTES_FILE")"
+          elif [ -n "$CHANGELOG_SECTION" ]; then
+            BODY="$CHANGELOG_SECTION"
           else
-            BODY="$(gh api \
-              --method POST \
-              -H "Accept: application/vnd.github+json" \
-              "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-              -f tag_name="${TAG}" \
-              --jq '.body')"
-          fi
-          if [ -z "$BODY" ]; then
             BODY="ApiVoy ${TAG}"
           fi
           DELIM="RELEASE_NOTES_$(date +%s%N)"
@@ -69,12 +87,13 @@ jobs:
         with:
           projectPath: apps/desktop
           args: --config src-tauri/tauri.sidecar.conf.json
-          tagName: ${{ github.ref_name }}
-          releaseName: ApiVoy ${{ github.ref_name }}
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ApiVoy ${{ env.RELEASE_TAG }} — First Public Alpha
           releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: true
 
   agent-cli:
+    needs: validate
     strategy:
       matrix:
         include:
@@ -97,8 +116,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          VERSION="${VERSION#V}"
+          VERSION="${RELEASE_TAG#v}"
           STAGING="dist/apivoy-tools-${VERSION}-${{ matrix.platform }}"
           mkdir -p "$STAGING"
           if [ "${{ runner.os }}" = "Windows" ]; then
@@ -121,7 +139,7 @@ jobs:
           path: dist/apivoy-tools-*
 
   publish:
-    name: Publish release
+    name: Attach release assets
     needs: [desktop, agent-cli]
     runs-on: ubuntu-24.04
     steps:
@@ -141,13 +159,13 @@ jobs:
             echo "No tool archives found" >&2
             exit 1
           fi
-          gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" "${files[@]}"
+          gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" "${files[@]}"
       - name: Generate SHA256SUMS.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p checksums
-          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --dir checksums
+          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --dir checksums
           (
             cd checksums
             shopt -s nullglob
@@ -158,8 +176,10 @@ jobs:
             done
           ) > checksums/SHA256SUMS.txt
           cat checksums/SHA256SUMS.txt
-          gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" checksums/SHA256SUMS.txt --clobber
-      - name: Publish draft release
+          gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" checksums/SHA256SUMS.txt --clobber
+      - name: Keep release as draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
+        run: |
+          gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=true
+          echo "Release ${RELEASE_TAG} remains a Draft pre-release. Download, verify SHA256SUMS.txt, then publish manually from GitHub."

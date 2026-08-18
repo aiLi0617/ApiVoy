@@ -22,6 +22,7 @@ Verify downloads with `SHA256SUMS.txt` attached to this release.
 - This is an early alpha release.
 - Some protocol workbenches are still experimental.
 - Fine-grained internationalization is incomplete.
+- Desktop Content Security Policy is baseline; HTML response sandboxing is still planned.
 - Automatic updates are not yet available.
 
 ## Security

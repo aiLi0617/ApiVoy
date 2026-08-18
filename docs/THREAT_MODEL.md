@@ -134,6 +134,18 @@ See [DEPENDENCY_SECURITY.md](./DEPENDENCY_SECURITY.md).
 
 ---
 
+### 11. Desktop webview Content Security Policy
+
+| | |
+|---|---|
+| **Asset** | Desktop UI, Tauri IPC bridge, user credentials in memory |
+| **Threat** | Malicious HTML in API responses executes in the webview, accesses Tauri APIs, or loads remote scripts |
+| **Existing mitigation** | Baseline CSP in `apps/desktop/src-tauri/tauri.conf.json` (`default-src 'self'`, restricted `script-src`, no `frame-src`) |
+| **Remaining risk** | `'unsafe-inline'` styles remain for the UI framework; HTML response preview is not yet fully sandboxed in an iframe |
+| **Planned improvement** | Sandbox HTML previews; tighten CSP for production builds; block response HTML from reaching privileged Tauri contexts |
+
+---
+
 ## Reporting
 
-Report vulnerabilities via [GitHub Private Vulnerability Reporting](https://github.com/aiLi0617/ApiVoy/security/advisories/new), not public issues.
+Report vulnerabilities via [GitHub Private Vulnerability Reporting](https://github.com/aiLi0617/ApiVoy/security/advisories/new) once enabled in repository settings, not public issues.
