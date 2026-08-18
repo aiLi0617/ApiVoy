@@ -6,7 +6,7 @@ license.workspace = true
 description = "Local secret references; OS keychain integration comes later"
 
 [dependencies]
-keyring = "3"
+keyring = "4"
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
