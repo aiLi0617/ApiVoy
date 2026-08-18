@@ -5,6 +5,7 @@ COPY crates ./crates
 COPY apps/local-agent ./apps/local-agent
 COPY apps/desktop/src-tauri ./apps/desktop/src-tauri
 COPY apps/cli ./apps/cli
+COPY apps/protocol-gateway ./apps/protocol-gateway
 RUN cargo build --locked --release -p apivoy-local-agent
 
 FROM debian:bookworm-slim
