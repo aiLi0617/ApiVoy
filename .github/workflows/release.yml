@@ -145,10 +145,13 @@ jobs:
           else
             tar -C dist -czf "dist/apivoy-tools-${VERSION}-${{ matrix.platform }}.tar.gz" "apivoy-tools-${VERSION}-${{ matrix.platform }}"
           fi
+          rm -rf "$STAGING"
       - uses: actions/upload-artifact@v7
         with:
           name: apivoy-tools-${{ matrix.platform }}
-          path: dist/apivoy-tools-*
+          path: |
+            dist/apivoy-tools-*.zip
+            dist/apivoy-tools-*.tar.gz
 
   publish:
     name: Attach release assets
@@ -166,9 +169,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
-          files=(artifacts/apivoy-tools-*)
+          files=()
+          for path in artifacts/apivoy-tools-*.zip artifacts/apivoy-tools-*.tar.gz; do
+            if [ -f "$path" ]; then
+              files+=("$path")
+            fi
+          done
           if [ ${#files[@]} -eq 0 ]; then
             echo "No tool archives found" >&2
+            ls -la artifacts || true
             exit 1
           fi
           gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" "${files[@]}"
