@@ -46,7 +46,7 @@ export { CodeGenerator, generateHttpCode, listHttpCodeTemplates, registerHttpCod
 export { ProtocolCodeGenerator, generateProtocolCode, listCodeTemplates, registerCodeTemplate, type CodeTemplate, type CodegenProtocol, type ProtocolCodegenInput } from "./ProtocolCodeGenerator";
 export { clearWorkbenchDraft, readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
 export { getLocale, setLocale, translate, translateWorkbench, useI18n, type Locale } from "./i18n";
-export { WorkbenchDeck, DEFAULT_WORKBENCH_GROUPS, WORKBENCH_LABELS, type WorkbenchDeckProps, type WorkbenchTab, type WorkbenchDefinition, type WorkbenchGroup } from "./WorkbenchDeck";
+export { WorkbenchDeck, DEFAULT_WORKBENCH_GROUPS, WORKBENCH_LABELS, resolveWorkbenchId, resolveHashWorkbenchId, type WorkbenchDeckProps, type WorkbenchTab, type WorkbenchDefinition, type WorkbenchGroup } from "./WorkbenchDeck";
 export { CollectionRunner, type CollectionRunnerProps, type CollectionRunCase } from "./CollectionRunner";
 export { TeamWorkbench } from "./TeamWorkbench";
 export { CommentsWorkbench } from "./CommentsWorkbench";

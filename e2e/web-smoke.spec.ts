@@ -1,6 +1,13 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const workbenchIds = ["http", "grpc", "websocket", "sse", "socket", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "runner", "gateway", "capture", "plugins", "ai"];
+
+async function expectActiveWorkbench(page: Page, id: string) {
+  await expect(page.getByTestId(`workbench-${id}`).first()).toHaveAttribute("aria-current", "page");
+  const frame = page.locator(".workbench-panel:not([hidden]) .workbench-frame");
+  await expect(frame).toBeVisible();
+  await expect(frame.locator("h1")).toHaveCount(1);
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route("http://127.0.0.1:39217/**", (route) => route.abort());
@@ -10,10 +17,10 @@ test.beforeEach(async ({ page }) => {
 test("opens the grouped protocol workspace without horizontal overflow", async ({ page }) => {
   await expect(page).toHaveTitle("ApiVoy");
   await expect(page.locator(".workbench-tabs")).toBeVisible();
-  await expect(page.getByTestId("workbench-http").first()).toHaveAttribute("aria-current", "page");
+  await expectActiveWorkbench(page, "http");
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
-  const separator = page.getByRole("separator");
+  const separator = page.getByRole("separator", { name: /请求配置和响应检查器/ });
   await expect(separator).toBeVisible();
   const initialRatio = Number(await separator.getAttribute("aria-valuenow"));
   await separator.focus();
@@ -23,7 +30,7 @@ test("opens the grouped protocol workspace without horizontal overflow", async (
 
 test("switches workbenches and preserves URL and stored state", async ({ page }) => {
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "redis" })));
-  await expect(page.getByTestId("workbench-redis").first()).toHaveAttribute("aria-current", "page");
+  await expectActiveWorkbench(page, "redis");
   await expect(page).toHaveURL(/#workbench=redis/);
   await expect.poll(() => page.evaluate(() => {
     const persisted = localStorage.getItem("apivoy:ui-state");
@@ -31,7 +38,7 @@ test("switches workbenches and preserves URL and stored state", async ({ page })
     try { return (JSON.parse(persisted) as { state?: { activeWorkbench?: string } }).state?.activeWorkbench ?? null; } catch { return null; }
   })).toBe("redis");
   await page.reload();
-  await expect(page.getByTestId("workbench-redis").first()).toHaveAttribute("aria-current", "page");
+  await expectActiveWorkbench(page, "redis");
 });
 
 test("switches theme and keeps visible keyboard focus", async ({ page }) => {
@@ -53,8 +60,7 @@ test("HTTP target URL has an accessible label and neutral empty state", async ({
 test("all protocol workbenches keep semantic frame and viewport bounds", async ({ page }) => {
   for (const id of workbenchIds) {
     await page.goto(`/#workbench=${id}`);
-    await expect(page.locator(".workbench-frame").first()).toBeVisible();
-    await expect(page.locator(".workbench-frame h1").first()).toBeVisible();
+    await expectActiveWorkbench(page, id);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `${id} horizontal overflow`).toBeLessThanOrEqual(1);
   }
@@ -65,13 +71,14 @@ test("all protocol workbenches keep light theme bounds", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   for (const id of workbenchIds) {
     await page.goto(`/#workbench=${id}`);
+    await expectActiveWorkbench(page, id);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `${id} light horizontal overflow`).toBeLessThanOrEqual(1);
   }
 });
 
 test("HTTP workbench exposes busy state semantics", async ({ page }) => {
-  const frame = page.locator(".workbench-frame").first();
+  const frame = page.locator(".workbench-panel:not([hidden]) .workbench-frame");
   await expect(frame).not.toHaveAttribute("aria-busy", "true");
   await expect(frame).toHaveAttribute("aria-labelledby", /workbench-title-http/);
 });

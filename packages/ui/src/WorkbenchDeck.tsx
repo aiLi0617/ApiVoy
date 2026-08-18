@@ -33,7 +33,26 @@ export const DEFAULT_WORKBENCH_GROUPS: WorkbenchGroup[] = [
 const GROUP_BY_WORKBENCH = new Map(DEFAULT_WORKBENCH_GROUPS.flatMap((group) => group.workbenchIds.map((id) => [id, group.label])));
 const LAYOUT_BY_WORKBENCH: Record<string, "request" | "stream" | "editor" | "management"> = { graphql:"request", grpc:"request", rpc:"request", websocket:"stream", sse:"stream", socket:"stream", mqtt:"stream", amqp:"stream", kafka:"stream", redis:"editor", sql:"editor", mock:"management", runner:"management", gateway:"management", capture:"management", plugins:"management", ai:"management" };
 export function resolveWorkbenchId(tabs: WorkbenchTab[], stored: string | null) { return tabs.some((tab) => tab.id === stored) ? stored! : tabs[0]?.id ?? ""; }
+export function resolveHashWorkbenchId(tabs: WorkbenchTab[], hash: string): string | null {
+  const id = new URLSearchParams(hash.replace(/^#/, "")).get("workbench");
+  if (!id) return null;
+  return tabs.some((tab) => tab.id === id) ? id : null;
+}
 function hashWorkbench() { if (typeof window === "undefined") return null; return new URLSearchParams(window.location.hash.replace(/^#/, "")).get("workbench"); }
+function clearInvalidWorkbenchHash() {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  if (!params.has("workbench")) return;
+  params.delete("workbench");
+  const next = params.toString();
+  history.replaceState(null, "", next ? `#${next}` : `${window.location.pathname}${window.location.search}`);
+}
+function initialWorkbenchSessions(tabs: WorkbenchTab[], sessionId: string): WorkbenchSession[] {
+  const routeId = typeof window === "undefined" ? null : resolveHashWorkbenchId(tabs, window.location.hash);
+  if (!routeId) return [{ id: sessionId, workbenchId: "__new", title: "新建" }];
+  const tab = tabs.find((item) => item.id === routeId);
+  return [{ id: sessionId, workbenchId: routeId, title: translateWorkbench(routeId, tab?.label ?? routeId) }];
+}
 
 function resolveOpenProtocol(detail: unknown): string | undefined {
   if (!detail || typeof detail !== "object") return undefined;
@@ -53,8 +72,10 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
   const favorites = useAppStore((state) => state.favoriteWorkbenches); const recent = useAppStore((state) => state.recentWorkbenches);
   const toggleFavorite = useAppStore((state) => state.toggleFavorite); const collapsed = useAppStore((state) => state.collapsedNavigation); const toggleNavigation = useAppStore((state) => state.toggleNavigation);
   const tabMap = new Map(tabs.map((tab) => [tab.id, tab]));
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
   const initialSessionId = useRef(crypto.randomUUID());
-  const [sessions, setSessions] = useState<WorkbenchSession[]>([{ id: initialSessionId.current, workbenchId: "__new", title: "新建" }]);
+  const [sessions, setSessions] = useState<WorkbenchSession[]>(() => initialWorkbenchSessions(tabs, initialSessionId.current));
   const [activeSessionId, setActiveSessionId] = useState<string>(initialSessionId.current);
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
   const selected = activeSession?.workbenchId ?? ""; const selectedIndex = tabs.findIndex((tab) => tab.id === selected);
@@ -64,8 +85,19 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
   const pickerRef = useRef<HTMLDivElement>(null);
   const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
 
-  function activateSession(session: WorkbenchSession, writeHash = true) { setActiveSessionId(session.id); setPickerOpen(false); setActive(session.workbenchId); if (writeHash && typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.set("workbench", session.workbenchId); history.pushState(null, "", `#${params}`); } }
-  function activate(id: string, writeHash = true) { if (!tabMap.has(id)) return; const existing = [...sessions].reverse().find((session) => session.workbenchId === id); if (existing) activateSession(existing, writeHash); else createWorkbench(id, writeHash); }
+  function activateSession(session: WorkbenchSession, writeHash = true) {
+    setActiveSessionId(session.id);
+    setPickerOpen(false);
+    if (!session.workbenchId.startsWith("__")) setActive(session.workbenchId);
+    if (writeHash && typeof window !== "undefined" && !session.workbenchId.startsWith("__")) {
+      const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      params.set("workbench", session.workbenchId);
+      history.pushState(null, "", `#${params}`);
+    }
+  }
+  function activate(id: string, writeHash = true, resetDraft = true) { if (!tabMap.has(id)) return; const existing = [...sessions].reverse().find((session) => session.workbenchId === id); if (existing) activateSession(existing, writeHash); else createWorkbench(id, writeHash, resetDraft); }
+  const activateRef = useRef(activate);
+  activateRef.current = activate;
   function createWorkbench(id: string, writeHash = true, resetDraft = true, openedRequest?: { id?: string; name?: string }): WorkbenchSession | null {
     if (!tabMap.has(id)) return null;
     if (resetDraft) {
@@ -124,21 +156,38 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     };
     const selectWorkbench = (event: Event) => activate((event as CustomEvent<string>).detail);
     const createWorkbenchEvent = (event: Event) => createWorkbench((event as CustomEvent<string>).detail);
-    const syncHash = () => { const id = hashWorkbench(); if (id && tabMap.has(id)) setActive(id); };
     window.addEventListener("apivoy-open-request", openRequest);
     window.addEventListener("apivoy-select-workbench", selectWorkbench);
     window.addEventListener("apivoy-create-workbench", createWorkbenchEvent);
     window.addEventListener("apivoy-open-script-library", openScriptLibrary);
-    window.addEventListener("hashchange", syncHash);
     return () => {
       window.removeEventListener("apivoy-open-request", openRequest);
       window.removeEventListener("apivoy-select-workbench", selectWorkbench);
       window.removeEventListener("apivoy-create-workbench", createWorkbenchEvent);
       window.removeEventListener("apivoy-open-script-library", openScriptLibrary);
-      window.removeEventListener("hashchange", syncHash);
     };
   }, [tabs, setActive, sessions]);
-  useEffect(() => { if (selected && selected !== active) setActive(selected); }, [active, selected, setActive]);
+  useEffect(() => {
+    const applyHash = () => {
+      const id = resolveHashWorkbenchId(tabsRef.current, window.location.hash);
+      if (id) { activateRef.current(id, false, false); return; }
+      if (hashWorkbench()) clearInvalidWorkbenchHash();
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, []);
+  useEffect(() => {
+    const restoreStored = () => {
+      const currentTabs = tabsRef.current;
+      if (resolveHashWorkbenchId(currentTabs, window.location.hash)) return;
+      const stored = useAppStore.getState().activeWorkbench;
+      if (stored && currentTabs.some((tab) => tab.id === stored)) activateRef.current(stored, true, false);
+    };
+    if (useAppStore.persist.hasHydrated()) restoreStored();
+    return useAppStore.persist.onFinishHydration(restoreStored);
+  }, []);
+  useEffect(() => { if (!selected || selected.startsWith("__") || selected === active) return; setActive(selected); }, [active, selected, setActive]);
   useEffect(() => { setCodeOpen(false); }, [selected]);
   useEffect(() => {
     if (!pickerOpen) return;

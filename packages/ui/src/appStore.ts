@@ -25,9 +25,14 @@ interface AppStore {
 
 export const useAppStore = create<AppStore>()(persist(
   (set) => ({
-    activeWorkbench: "http", themeMode: "dark", collapsedNavigation: false, collapsedExplorer: false, collapsedExplorerNodes: [],
+    activeWorkbench: "", themeMode: "dark", collapsedNavigation: false, collapsedExplorer: false, collapsedExplorerNodes: [],
     favoriteWorkbenches: [], recentWorkbenches: ["http"], splitPreferences: {},
-    setActiveWorkbench: (activeWorkbench) => set((state) => ({ activeWorkbench, recentWorkbenches: [activeWorkbench, ...state.recentWorkbenches.filter((id) => id !== activeWorkbench)].slice(0, 6) })),
+    setActiveWorkbench: (activeWorkbench) => set((state) => ({
+      activeWorkbench,
+      recentWorkbenches: !activeWorkbench || activeWorkbench.startsWith("__")
+        ? state.recentWorkbenches
+        : [activeWorkbench, ...state.recentWorkbenches.filter((id) => id !== activeWorkbench)].slice(0, 6),
+    })),
     setThemeMode: (themeMode) => set({ themeMode }),
     toggleNavigation: () => set((state) => ({ collapsedNavigation: !state.collapsedNavigation })),
     toggleExplorer: () => set((state) => ({ collapsedExplorer: !state.collapsedExplorer })),
