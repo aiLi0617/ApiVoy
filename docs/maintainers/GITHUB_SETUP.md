@@ -123,7 +123,9 @@ The [Release workflow](../../.github/workflows/release.yml) will:
 2. Build Desktop installers for Windows, macOS, and Linux
 3. Build and upload CLI/Agent archives
 4. Generate and upload `SHA256SUMS.txt`
-5. Create a **Draft release** with notes from [CHANGELOG.md](../../CHANGELOG.md) or [.github/release-notes/alpha.md](../../.github/release-notes/alpha.md)
+5. Create a **Draft release** (GitHub API calls run on Ubuntu with retries; desktop jobs only build and upload artifacts)
+6. Attach installers, CLI/Agent archives, and `SHA256SUMS.txt`
+7. Leave the release as Draft until you verify and publish manually
 
 Download and verify all platform assets, then **manually publish** the release from GitHub when ready. Do not auto-publish draft releases from CI.
 

@@ -35,6 +35,48 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  prepare-release:
+    name: Create draft release
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve release notes
+        id: release-notes
+        shell: bash
+        run: |
+          TAG="${RELEASE_TAG}"
+          NOTES_FILE=".github/release-notes/alpha.md"
+          VERSION="${TAG#v}"
+          CHANGELOG_SECTION="$(awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { in_section = 1 }
+            in_section && $0 ~ "^## \\[" && $0 !~ "^## \\[" v "\\]" { exit }
+            in_section { print }
+          ' CHANGELOG.md || true)"
+          if [ -f "$NOTES_FILE" ]; then
+            BODY="$(cat "$NOTES_FILE")"
+          elif [ -n "$CHANGELOG_SECTION" ]; then
+            BODY="$CHANGELOG_SECTION"
+          else
+            BODY="ApiVoy ${TAG}"
+          fi
+          printf '%s\n' "$BODY" > /tmp/release-notes.md
+      - name: Create or reuse draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 8
+          retry_wait_seconds: 15
+          command: |
+            set -euo pipefail
+            if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=false --title "ApiVoy ${RELEASE_TAG}" --notes-file /tmp/release-notes.md
+            else
+              gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft --title "ApiVoy ${RELEASE_TAG}" --notes-file /tmp/release-notes.md
+            fi
+
   desktop:
     needs: validate
     strategy:
@@ -64,45 +106,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm prepare:sidecar
-      - name: Resolve release notes
-        id: release-notes
-        shell: bash
-        run: |
-          TAG="${RELEASE_TAG}"
-          NOTES_FILE=".github/release-notes/alpha.md"
-          VERSION="${TAG#v}"
-          CHANGELOG_SECTION="$(awk -v v="$VERSION" '
-            $0 ~ "^## \\[" v "\\]" { in_section = 1 }
-            in_section && $0 ~ "^## \\[" && $0 !~ "^## \\[" v "\\]" { exit }
-            in_section { print }
-          ' CHANGELOG.md || true)"
-          if [ -f "$NOTES_FILE" ]; then
-            BODY="$(cat "$NOTES_FILE")"
-          elif [ -n "$CHANGELOG_SECTION" ]; then
-            BODY="$CHANGELOG_SECTION"
-          else
-            BODY="ApiVoy ${TAG}"
-          fi
-          DELIM="RELEASE_NOTES_$(date +%s%N)"
-          {
-            echo "body<<$DELIM"
-            printf '%s\n' "$BODY"
-            echo "$DELIM"
-          } >> "$GITHUB_OUTPUT"
-      - uses: tauri-apps/tauri-action@v1
+      - name: Build desktop installer
+        working-directory: apps/desktop
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          NODE_OPTIONS: --max-old-space-size=8192
-          ESBUILD_WORKER_THREADS: "1"
+        run: pnpm tauri build --config src-tauri/tauri.sidecar.conf.json
+      - uses: actions/upload-artifact@v7
         with:
-          projectPath: apps/desktop
-          args: --config src-tauri/tauri.sidecar.conf.json
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ApiVoy ${{ env.RELEASE_TAG }}
-          releaseBody: ${{ steps.release-notes.outputs.body }}
-          releaseDraft: true
+          name: desktop-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/appimage/*.AppImage
 
   agent-cli:
     needs: validate
@@ -155,52 +175,68 @@ jobs:
 
   publish:
     name: Attach release assets
-    needs: [desktop, agent-cli]
+    needs: [prepare-release, desktop, agent-cli]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
-          pattern: apivoy-tools-*
-          merge-multiple: true
-      - name: Upload CLI and Agent archives
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          shopt -s nullglob
-          files=()
-          for path in artifacts/apivoy-tools-*.zip artifacts/apivoy-tools-*.tar.gz; do
-            if [ -f "$path" ]; then
-              files+=("$path")
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 8
+          retry_wait_seconds: 15
+          command: |
+            set -euo pipefail
+            shopt -s nullglob globstar
+            files=()
+            for path in artifacts/**/*; do
+              if [ -f "$path" ]; then
+                files+=("$path")
+              fi
+            done
+            if [ ${#files[@]} -eq 0 ]; then
+              echo "No release assets found" >&2
+              find artifacts -print || true
+              exit 1
             fi
-          done
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No tool archives found" >&2
-            ls -la artifacts || true
-            exit 1
-          fi
-          gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" "${files[@]}"
+            gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --clobber "${files[@]}"
       - name: Generate SHA256SUMS.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p checksums
-          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --dir checksums
-          (
-            cd checksums
-            shopt -s nullglob
-            for file in *; do
-              if [ -f "$file" ] && [ "$file" != "SHA256SUMS.txt" ]; then
-                sha256sum "$file"
-              fi
-            done
-          ) > checksums/SHA256SUMS.txt
-          cat checksums/SHA256SUMS.txt
-          gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" checksums/SHA256SUMS.txt --clobber
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 8
+          retry_wait_seconds: 15
+          command: |
+            set -euo pipefail
+            mkdir -p checksums
+            gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --dir checksums --clobber
+            (
+              cd checksums
+              shopt -s nullglob
+              for file in *; do
+                if [ -f "$file" ] && [ "$file" != "SHA256SUMS.txt" ]; then
+                  sha256sum "$file"
+                fi
+              done
+            ) > checksums/SHA256SUMS.txt
+            cat checksums/SHA256SUMS.txt
+            gh release upload "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" checksums/SHA256SUMS.txt --clobber
       - name: Keep release as draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=false
-          echo "Release ${RELEASE_TAG} remains a Draft release. Download, verify SHA256SUMS.txt, then publish manually from GitHub."
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 8
+          retry_wait_seconds: 15
+          command: |
+            set -euo pipefail
+            gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=false
+            echo "Release ${RELEASE_TAG} remains a Draft release. Download, verify SHA256SUMS.txt, then publish manually from GitHub."
