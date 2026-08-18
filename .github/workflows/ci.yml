@@ -1,9 +1,46 @@
 name: CI
 
+# Jobs run only when matching paths change. Docs, skills, and other
+# non-build files do not start this workflow. Use workflow_dispatch to force
+# a full run.
 on:
   push:
     branches: [main]
+    paths:
+      - "apps/**"
+      - "crates/**"
+      - "packages/**"
+      - "services/collaboration-server/**"
+      - "e2e/**"
+      - "scripts/prepare-sidecar.mjs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "playwright.config.ts"
+      - ".npmrc"
+      - ".github/workflows/ci.yml"
   pull_request:
+    paths:
+      - "apps/**"
+      - "crates/**"
+      - "packages/**"
+      - "services/collaboration-server/**"
+      - "e2e/**"
+      - "scripts/prepare-sidecar.mjs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "playwright.config.ts"
+      - ".npmrc"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 concurrency:
@@ -14,12 +51,78 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      ts: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.ts }}
+      rust: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.rust }}
+      e2e: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.e2e }}
+      desktop: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.desktop }}
+      java: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.java }}
+      security: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.security }}
+      workflow: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name != 'workflow_dispatch'
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            ts:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.npmrc'
+              - 'packages/**'
+              - 'apps/web/**'
+              - 'apps/desktop/**'
+              - '!apps/desktop/src-tauri/**'
+            rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - 'crates/**'
+              - 'apps/cli/**'
+              - 'apps/local-agent/**'
+              - 'apps/protocol-gateway/**'
+              - 'apps/desktop/src-tauri/**'
+            e2e:
+              - 'e2e/**'
+              - 'playwright.config.ts'
+              - 'apps/web/**'
+              - 'packages/ui/**'
+              - 'packages/request-model/**'
+            desktop:
+              - 'apps/desktop/**'
+              - 'apps/local-agent/**'
+              - 'scripts/prepare-sidecar.mjs'
+              - 'packages/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+            java:
+              - 'services/collaboration-server/**'
+            security:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - 'crates/**'
+            workflow:
+              - '.github/workflows/ci.yml'
+
+  test-js:
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Install Linux desktop libraries
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
@@ -27,24 +130,47 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+
+  test-e2e:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.27.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Install Chromium for browser smoke tests
         run: pnpm exec playwright install --with-deps chromium
       - name: Run browser smoke tests
         run: pnpm test:e2e
-      - name: Build Tauri frontend assets
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
-          ESBUILD_WORKER_THREADS: 1
-        run: pnpm --filter @apivoy/desktop build
+
+  test-rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux desktop libraries
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Ensure Tauri frontendDist exists for workspace Cargo
+        run: mkdir -p apps/desktop/dist && test -f apps/desktop/dist/index.html || printf '%s\n' '<!doctype html><title>ApiVoy</title>' > apps/desktop/dist/index.html
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   desktop-check:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true' || needs.changes.outputs.workflow == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +203,8 @@ jobs:
       - run: cargo check -p apivoy-desktop --locked
 
   security:
+    needs: changes
+    if: needs.changes.outputs.security == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -96,6 +224,8 @@ jobs:
           upload-artifact: true
 
   collaboration-server:
+    needs: changes
+    if: needs.changes.outputs.java == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -109,3 +239,30 @@ jobs:
           cache: gradle
       - uses: gradle/actions/wrapper-validation@v6
       - run: ./gradlew clean test bootJar --no-daemon
+
+  ci:
+    name: CI
+    needs:
+      - changes
+      - test-js
+      - test-e2e
+      - test-rust
+      - desktop-check
+      - security
+      - collaboration-server
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check selected jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          failed = [name for name, info in needs.items() if info.get("result") in ("failure", "cancelled")]
+          if failed:
+              print("failed or cancelled:", ", ".join(failed))
+              sys.exit(1)
+          print("ok")
+          PY
