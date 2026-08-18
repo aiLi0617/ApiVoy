@@ -1,15 +1,31 @@
 version: 2
 updates:
+  # Security updates stay on. Version updates are grouped weekly and ignore majors
+  # so Dependabot does not open one CI-running PR per package.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      cargo-non-major:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
     ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
       # Tauri 2 / Wry still resolve gtk-rs 0.18 on Linux. glib 0.20 is the
       # first patched release for RUSTSEC-2024-0429, but it is a breaking
       # gtk-rs major and cannot be selected without a Tauri GTK backend upgrade.
-      # See docs/DEPENDENCY_SECURITY.md.
+      # See docs/DEPENDENCY_SECURITY.md and ISS-010.
       - dependency-name: glib
       - dependency-name: glib-sys
       - dependency-name: glib-macros
@@ -27,9 +43,30 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      npm-non-major:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns:
+          - "*"

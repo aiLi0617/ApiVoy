@@ -19,8 +19,12 @@ or `urlpattern` changes, and at least once per release cycle.
 
 ## Dependabot
 
-GitHub security updates for `glib` fail with `security_update_not_possible`
+GitHub security updates stay enabled. Version updates are grouped weekly
+(Monday) into at most two PRs per ecosystem (security group + non-major group).
+Major bumps are ignored and must be reviewed by hand.
+
+`glib` security PRs fail with `security_update_not_possible`
 (`latest-resolvable-version: 0.18.5`, `lowest-non-vulnerable-version: 0.20.0`).
 `.github/dependabot.yml` ignores the gtk-rs 0.18 family so Dependabot does not
 retry an unsatisfiable upgrade. Dismiss any remaining `glib` alert as
-tolerable risk / unused code until Tauri ships a GTK4 backend.
+tolerable risk / unused code until Tauri ships a GTK4 backend. See ISS-010.
