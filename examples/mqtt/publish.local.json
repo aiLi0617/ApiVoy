@@ -1,0 +1,13 @@
+{
+  "name": "MQTT publish (local broker required)",
+  "protocolId": "mqtt",
+  "target": "mqtt://127.0.0.1:1883",
+  "payload": {
+    "type": "mqtt",
+    "mode": "publish",
+    "topic": "apivoy/demo",
+    "qos": 0,
+    "payload": "hello",
+    "retain": false
+  }
+}

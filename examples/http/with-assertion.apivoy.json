@@ -1,0 +1,14 @@
+{
+  "name": "httpbin GET assert 200",
+  "protocolId": "http",
+  "target": "https://httpbin.org/get",
+  "assertions": ["status == 200"],
+  "payload": {
+    "type": "http",
+    "method": "GET",
+    "headers": {},
+    "body": null,
+    "bodyEncoding": "text",
+    "followRedirects": true
+  }
+}

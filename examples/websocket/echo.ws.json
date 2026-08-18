@@ -1,0 +1,11 @@
+{
+  "name": "WebSocket echo public",
+  "protocolId": "websocket",
+  "target": "wss://echo.websocket.events",
+  "payload": {
+    "type": "websocket",
+    "subprotocols": [],
+    "headers": [],
+    "messages": [{ "type": "text", "data": "hello from ApiVoy" }]
+  }
+}

@@ -2,84 +2,168 @@
 
 **Explore Every Protocol.**
 
-A lightweight, local-first, multi-protocol API debugging client.
+[![CI](https://github.com/aiLi0617/ApiVoy/actions/workflows/ci.yml/badge.svg)](https://github.com/aiLi0617/ApiVoy/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/aiLi0617/ApiVoy?include_prereleases)](https://github.com/aiLi0617/ApiVoy/releases)
+[![License](https://img.shields.io/github/license/aiLi0617/ApiVoy)](LICENSE)
+[![Issues](https://img.shields.io/github/issues/aiLi0617/ApiVoy)](https://github.com/aiLi0617/ApiVoy/issues)
 
-ApiVoy 多协议接口调试工具 — 轻量、本地优先、可扩展的多协议接口调试平台。
+ApiVoy is a lightweight, local-first and extensible multi-protocol API debugging client for Windows, macOS, Linux and the Web.
 
-| | |
-|---|---|
-| Product | ApiVoy Multi-Protocol API Client |
-| License | Apache-2.0 (core OSS) + commercial cloud closed-source |
-| Slogan | Explore Every Protocol. / 探索每一种协议。 |
-| Config dir | `.apivoy` |
-| Workspace files | `*.apivoy.json` |
-| Env prefix | `APIVOY_` |
+ApiVoy provides a unified workspace for debugging HTTP, GraphQL, gRPC, WebSocket, SSE, TCP/UDP, MQTT, AMQP, Kafka, Redis and SQL protocols.
 
-## Binaries
+ApiVoy 是一款轻量、本地优先、可扩展的多协议接口调试工具。
 
-| Artifact | Binary |
-|----------|--------|
-| Desktop | `apivoy` |
-| Local Agent | `apivoy-agent` |
-| CLI | `apivoy-cli` |
-| Plugin SDK | `apivoy-plugin-sdk` |
+## Preview
 
-Desktop and Agent share the same Rust protocol-core crates and release version, but ship as **two independent binaries**. Desktop may bundle Agent as a sidecar; Web users can install Agent alone.
+![ApiVoy overview](docs/images/overview.png)
 
-## Repository layout
+## Why ApiVoy?
 
-```text
-apps/
-  desktop/              # Tauri UI → binary: apivoy
-  web/                  # Web workbench
-  local-agent/          # binary: apivoy-agent
-  cli/                  # binary: apivoy-cli
-packages/
-  ui/
-  request-model/
-  protocol-ui-sdk/
-crates/                 # shared protocol core
-plugins/
-  sdk/                  # apivoy-plugin-sdk (WASM, P1)
-services/
-  collaboration-server/ # Java 21 + Spring Boot + Gradle (P2, commercial)
-docs/
-```
+A local-first, extensible workbench for API and infrastructure protocols.
+
+- **Unified workspace** — one client for HTTP APIs and infrastructure protocols
+- **Local-first** — SQLite storage, OS keychain secrets, no account required
+- **Shared core** — Desktop, Web, CLI and Local Agent reuse the same Rust drivers
+- **Extensible** — QuickJS scripts and WASM plugins (experimental)
+- **Open source** — all code in this repository is Apache-2.0
+
+## Features
+
+- Multi-protocol request editor with streaming responses and execution timeline
+- Environments, variables, assertions, and request history
+- Import from cURL, OpenAPI, HAR, and Postman
+- Code generation for HTTP and several protocol workbenches
+- Collection runner in Desktop and CLI with CI-friendly exit codes
+- OS keychain-backed secret storage
+- Optional traffic capture proxy (loopback defaults, sensitive header masking)
+- Optional self-hosted collaboration and private deployment (preview)
+
+## Supported protocols
+
+| Protocol | Execute | Streaming | History | Code generation |
+|----------|:-------:|:---------:|:-------:|:---------------:|
+| HTTP/HTTPS | ✅ | ✅ | ✅ | ✅ |
+| GraphQL | ✅ | ✅ | ✅ | ✅ |
+| gRPC | Experimental | Experimental | ✅ | Experimental |
+| WebSocket | ✅ | ✅ | ✅ | ✅ |
+| SSE | ✅ | ✅ | ✅ | ✅ |
+| TCP/UDP | ✅ | ✅ | ✅ | ✅ |
+| MQTT | ✅ | ✅ | ✅ | Planned |
+| AMQP | Experimental | Experimental | ✅ | Planned |
+| Kafka | Experimental | Experimental | ✅ | Planned |
+| Redis | ✅ | — | ✅ | Planned |
+| SQL | ✅ | — | ✅ | Planned |
+
+Legend: ✅ = Beta (verified by tests); **Experimental** = implemented but limited verification; **Planned** = not yet available; **—** = not applicable.
+
+GraphQL is available via the HTTP workbench GraphQL body mode and a dedicated driver. See [examples/](examples/) and [docs/protocols/](docs/protocols/) for reproducible samples.
 
 ## Quick start
 
+### Install the desktop application
+
+Download the latest package from [GitHub Releases](https://github.com/aiLi0617/ApiVoy/releases):
+
+- **Windows**: `.msi`
+- **macOS**: `.dmg`
+- **Linux**: `.deb`
+
+Also available: **ApiVoy CLI** and **ApiVoy Local Agent** (same release page).
+
+### Send your first request
+
+1. Create a workspace.
+2. Select **HTTP**.
+3. Enter `https://httpbin.org/get`.
+4. Click **Send**.
+5. Inspect the response, timeline, and assertions.
+
+For the Web workbench, start the Local Agent (`apivoy-agent`) and pair it from the Web UI.
+
+## Development
+
+### Requirements
+
+- Node.js 22+
+- pnpm 10.27+
+- Rust stable
+- Platform-specific [Tauri dependencies](https://v2.tauri.app/start/prerequisites/)
+- Java 21 (only for `services/collaboration-server/`)
+
 ```bash
+git clone https://github.com/aiLi0617/ApiVoy.git
+cd ApiVoy
 pnpm install
 cargo check --workspace
-
-# CLI
-cargo run -p apivoy-cli -- http-get https://example.com
-
-# Local Agent + Web
-cargo run -p apivoy-local-agent
-pnpm dev:web
-
-# Desktop
 pnpm dev:desktop
 ```
 
-Formal Agent execution path (Phase 0): `POST /v1/executions` → `GET /v1/executions/{id}/events` (SSE) → optional `POST .../cancel`.  
-Smoke checklist: [`docs/SMOKE_CHECKLIST.md`](docs/SMOKE_CHECKLIST.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for validation commands and pull request expectations.
 
-## Phase focus
+## Downloads
 
-- **P0 / MVP**: local-first Desktop + Web + Agent; seven protocols; no cloud sync
-- **P1**: WASM plugins, QuickJS scripts, SOAP, JSON-RPC, Redis, MQTT, AMQP, Kafka and PostgreSQL/MySQL/SQLite, Mock, CLI automation
-- **P2**: OIDC/team collaboration and a complete private Docker deployment under [`deploy/`](./deploy/README.md)
+| Artifact | Binary | Description |
+|----------|--------|-------------|
+| Desktop | `apivoy` | Tauri desktop app |
+| Local Agent | `apivoy-agent` | Headless protocol runtime for Web |
+| CLI | `apivoy-cli` | CI and terminal automation |
 
-The Web and Desktop apps also include a local-first AI workbench. It supports OpenAI-compatible providers and local models, stores API keys only through the existing secret store, and never executes generated requests without an explicit preview/apply step.
+Release assets include platform installers and SHA-256 checksums.
 
-An opt-in [traffic capture proxy](./docs/TRAFFIC_CAPTURE.md) records inspectable HTTP exchanges and HTTPS CONNECT metadata with loopback-only defaults and sensitive-header masking.
-- **P2**: team sync, Java collaboration services, enterprise features (closed-source)
+## Security and privacy
 
-See [`docs/PHASE_PLAN.md`](docs/PHASE_PLAN.md) and [`docs/BRANDING.md`](docs/BRANDING.md).
+- Secrets are stored in the OS keychain (Desktop) or Agent secret store; projects keep `secret_ref` only.
+- Local Agent binds to loopback by default with Bearer token authentication.
+- Do **not** report security vulnerabilities via public issues — see [SECURITY.md](SECURITY.md).
+
+## Architecture
+
+```text
+Desktop / Web UI  →  Local Agent or Tauri commands  →  ExecutionEngine  →  Protocol drivers
+CLI               →  ExecutionEngine (in-process)   →  Protocol drivers
+```
+
+Data defaults to **SQLite + local blob files + OS keychain**. Optional collaboration server and protocol gateway support self-hosted deployment.
+
+Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
+
+## Comparison
+
+| Capability | ApiVoy |
+|------------|--------|
+| Local-first | ✅ |
+| Open-source core | ✅ |
+| Desktop + Web + CLI | ✅ |
+| HTTP / GraphQL / gRPC | ✅ |
+| TCP/UDP / MQ / Redis / SQL | ✅ |
+| WASM plugins | Experimental |
+| Git-friendly workspace | ✅ |
+
+## Roadmap
+
+| Milestone | Focus |
+|-----------|--------|
+| **v0.1 Public Alpha** | First public release, core protocols, installers |
+| **v0.2 Protocol Stability** | gRPC/MQ broker tests, compatibility matrix |
+| **v0.3 Plugin Ecosystem** | Example WASM plugins, publisher docs |
+| **v1.0 Stable** | i18n completion, auto-update, hardened defaults |
+
+Track work on [GitHub Milestones](https://github.com/aiLi0617/ApiVoy/milestones).
+
+## Contributing
+
+We welcome issues and pull requests. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+Community discussion: [GitHub Discussions](https://github.com/aiLi0617/ApiVoy/discussions).
+
+## Open-source scope
+
+All source code contained in this repository is licensed under the Apache License 2.0, except for the ApiVoy trademarks and brand assets described in [NOTICE](NOTICE).
+
+ApiVoy may offer separately developed hosted services in the future. Those services are not part of this repository.
+
+Resources received through the Codex for Open Source program will be used exclusively for maintaining this public repository and its open-source workflows.
 
 ## License
 
-Core open source is licensed under the [Apache License 2.0](LICENSE).  
-Brand assets (name, logo, slogan) are **not** covered by Apache-2.0 — see [NOTICE](NOTICE).
+Licensed under the [Apache License 2.0](LICENSE). ApiVoy name, logo, and slogan are not licensed under Apache-2.0 — see [NOTICE](NOTICE).

@@ -1,0 +1,13 @@
+{
+  "name": "httpbin GET with env",
+  "protocolId": "http",
+  "target": "{{baseUrl}}/get",
+  "payload": {
+    "type": "http",
+    "method": "GET",
+    "headers": {},
+    "body": null,
+    "bodyEncoding": "text",
+    "followRedirects": true
+  }
+}

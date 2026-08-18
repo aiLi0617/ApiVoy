@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible defect in ApiVoy
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove API keys, tokens, cookies, certificates, and private endpoints
+        before submitting logs or screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: ApiVoy version
+      placeholder: e.g. v0.1.0-alpha.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Web browser
+    validations:
+      required: true
+  - type: dropdown
+    id: entry
+    attributes:
+      label: Entry point
+      options:
+        - Desktop
+        - Web
+        - CLI
+        - Local Agent
+    validations:
+      required: true
+  - type: input
+    id: protocol
+    attributes:
+      label: Protocol
+      placeholder: e.g. HTTP, gRPC, MQTT
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open HTTP workbench
+        2. Enter URL ...
+        3. Click Send
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      render: shell
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag and drop images here or paste links.
+  - type: dropdown
+    id: sensitive
+    attributes:
+      label: Does this report include sensitive information?
+      options:
+        - "No — I removed secrets before submitting"
+        - "Yes — I need to share privately"

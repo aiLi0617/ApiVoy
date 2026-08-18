@@ -48,6 +48,7 @@ docs/_extract/
 *.iml
 .cache/
 .target-review/
+docs/images/_video/
 *.docx
 *.tmp
 *.bak

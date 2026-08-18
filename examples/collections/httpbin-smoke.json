@@ -1,0 +1,12 @@
+[
+  {
+    "name": "httpbin status",
+    "url": "https://httpbin.org/status/200",
+    "method": "GET"
+  },
+  {
+    "name": "httpbin get",
+    "url": "https://httpbin.org/get",
+    "method": "GET"
+  }
+]

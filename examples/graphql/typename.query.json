@@ -1,0 +1,11 @@
+{
+  "name": "GraphQL __typename",
+  "protocolId": "graphql",
+  "target": "https://countries.trevorblades.com/graphql",
+  "payload": {
+    "type": "graphql",
+    "query": "query Example { __typename }",
+    "variables": {},
+    "operationName": "Example"
+  }
+}

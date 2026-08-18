@@ -1,0 +1,13 @@
+{
+  "name": "httpbin GET",
+  "protocolId": "http",
+  "target": "https://httpbin.org/get",
+  "payload": {
+    "type": "http",
+    "method": "GET",
+    "headers": {},
+    "body": null,
+    "bodyEncoding": "text",
+    "followRedirects": true
+  }
+}

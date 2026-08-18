@@ -22,6 +22,7 @@ import { ScriptStepEditor } from "./ScriptStepEditor";
 import type { ScriptAsset } from "./scriptLibrary";
 import ts from "typescript";
 import { listEnvironmentResources } from "./agentResources";
+import { useI18n } from "./i18n";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 
@@ -575,6 +576,7 @@ export function HttpWorkbench({
   toolbarTargetId,
   workbenchSessionId,
 }: HttpWorkbenchProps) {
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [requestId, setRequestId] = useState<string | undefined>();
   const [method, setMethod] = useState<string>("GET");
@@ -1280,15 +1282,15 @@ export function HttpWorkbench({
         {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
       <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="接口路径" spellCheck={false} disabled={loading} /></label>
-      <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? "取消请求" : "发送请求"} onClick={() => loading ? void handleCancel() : void handleSend()}>
-        <Icon name={loading ? "close" : "send"}/>{loading ? "取消" : "发送"}
+      <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
+        <Icon name={loading ? "close" : "send"}/>{loading ? t("action.cancel") : t("action.send")}
       </button>
-      {onSave && <button className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}><Icon name="archive"/>保存</button>}
+      {onSave && <button className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}><Icon name="archive"/>{t("action.save")}</button>}
     </div>
   </div>;
 
   return (
-    <>{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>就绪</span>}>
+    <>{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
       <div className="http-workbench-layout">
       {requestCommandbar}
       <div className="http-workbench-split">
@@ -1522,7 +1524,7 @@ export function HttpWorkbench({
       )}
 
       </div>} secondary={<div className="http-response-pane">
-      {!result && !loading ? <div className="response-empty"><span className="response-empty-icon">↗</span><strong>等待响应</strong><p>发送请求后，状态、响应头、正文、断言与时间线会显示在这里。</p></div> : null}
+      {!result && !loading ? <div className="response-empty"><span className="response-empty-icon">↗</span><strong>{t("response.waitingTitle")}</strong><p>{t("response.waitingBody")}</p></div> : null}
 
       {loading && livePreview && <div className="http-response-content"><div style={styles.responseHeader}><strong>响应流正在接收…</strong><span>{new TextEncoder().encode(livePreview).length} bytes</span></div><pre className="http-response-body">{prettyPreview(livePreview).slice(0, 10000)}</pre></div>}
 

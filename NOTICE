@@ -19,23 +19,20 @@ Redistribution of modified software must not imply official endorsement
 by the ApiVoy project unless expressly permitted.
 
 ---------------------------------------------------------------------------
-Open Source vs Commercial Boundary
+Open Source Scope
 ---------------------------------------------------------------------------
 
-Apache-2.0 (this repository / core open source):
-  - Desktop client
-  - Local Agent
-  - Rust protocol core
-  - WASM plugin SDK
-  - CLI
-  - Public protocol plugins
-  - Local storage modules
+All source code contained in this repository is licensed under the
+Apache License 2.0, including but not limited to:
 
-Commercial / closed source (not covered by this NOTICE as OSS):
-  - Team cloud sync services
-  - Enterprise RBAC & audit
-  - Private plugin marketplace
-  - Cloud protocol gateway
-  - SSO / LDAP
-  - Enterprise policy management
-  - Commercial AI capabilities
+  - Desktop client
+  - Web workbench
+  - Local Agent and CLI
+  - Rust protocol core and drivers
+  - WASM plugin SDK and plugin runtime
+  - Collaboration server (optional self-hosted deployment)
+  - Protocol gateway (optional self-hosted deployment)
+  - Private deployment tooling under deploy/
+
+ApiVoy may offer separately developed hosted services in the future.
+Those services are not part of this repository.

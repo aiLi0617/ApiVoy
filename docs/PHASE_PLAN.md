@@ -10,7 +10,7 @@
 | 项 | PRD 原文倾向 | 项目定稿 |
 |----|--------------|----------|
 | 产品名 | 未定 | **ApiVoy**（旧称 Reqonaut；ApiLens 仅为内部代号） |
-| 许可证 | 待决策 | Apache-2.0 核心开源；企业云能力闭源 |
+| 许可证 | 待决策 | **Apache-2.0**（本仓库全部源码）；未来托管云不在本仓库 |
 | MVP 协作 | F-016 标为 P1 | **团队云同步放 P2**；MVP 仅本地工作区 + Git 友好文件 |
 | 脚本引擎 | F-009 标为 P0 | **P0 预留生命周期**；P1 接入 QuickJS，不重构主链路 |
 | Desktop / Agent | 待决策 | 共享 crates，**双二进制**，统一版本握手 |
@@ -21,7 +21,7 @@
 
 ## 2. 现状总览
 
-当前仓库已完成 **阶段 0、MVP、P1 与主要 P2 本地/私有化能力**，正在进行发布验证、细粒度国际化与云端执行能力收口。
+当前仓库已完成 **阶段 0、MVP、P1 与主要 P2 本地/私有化能力**，正在进行公开 alpha 发布验证、细粒度国际化与协议稳定性收口。状态以可验证证据为准，见下方能力矩阵；未经过真实用户验证的能力不标为 Stable。
 
 ### 2.1 已具备（可运行骨架）
 
@@ -50,13 +50,22 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
   → 摘要 + 正文预览（≤4KB）
 ```
 
-### 2.3 完成度粗估
+### 2.3 能力状态（可验证）
 
-| 范围 | 相对 PRD MVP | 说明 |
-|------|--------------|------|
-| 阶段 0 架构 | ~95% | 正式执行 API、SQLite、版本握手已落地 |
-| MVP / M1 内核 | ~100%（M1 退出条件） | HTTP 保存→环境→发送→断言→历史闭环；七协议属 M2 |
-| P1 / P2 | 持续推进 | P1 协议、脚本、插件、Mock、集合运行器已完成；P2 协作、AI、抓包、云协议网关与私有化均已完成 |
+| Capability | Status | Verification |
+|------------|--------|--------------|
+| HTTP execution | Beta | `crates/driver-http` integration tests + E2E smoke |
+| GraphQL execution | Beta | `crates/driver-graphql` tests + HTTP GraphQL workbench |
+| gRPC execution | Experimental | Frame/descriptor unit tests; reflection E2E pending |
+| WebSocket / SSE / TCP / UDP | Beta | Driver tokio tests + workbench E2E layout |
+| MQTT | Beta | `crates/driver-mqtt` connect/publish tests |
+| AMQP / Kafka | Experimental | Validate-only unit tests; broker integration pending |
+| Redis / SQL | Beta | Driver execution tests; no streaming |
+| WASM plugins | Experimental | `crates/plugin-runtime` tests + SDK WIT |
+| QuickJS scripts | Beta | Runtime limits + HTTP workbench |
+| Collaboration / private deploy | Preview | Docker compose + Java service tests |
+| Protocol gateway | Preview | `apps/protocol-gateway` + deploy docs |
+| i18n | Beta | Core nav translated; workbench fine-grained strings incomplete |
 
 ---
 
@@ -148,7 +157,7 @@ MVP / P0           M1 内核 → M2 七协议 → M3 自动化与导入 → M4 �
        ↓
 P1                 脚本 / WASM 插件 / MQ·DB / Mock / CLI 集合 / 导入增强
        ↓
-P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 / 云网关 / 私有化
+P2（可选 OSS 私有化 / Preview）  身份 / 团队同步 / 审计 / Java 协作服务 / 协议网关 / 私有化
 ```
 
 | 阶段 | 建议周期 | 退出条件（一句话） |
@@ -286,7 +295,7 @@ P2（商业闭源为主）  身份 / 团队同步 / 审计 / Java 协作服务 /
 
 ---
 
-## 8. P2 计划（商业 / 闭源为主）
+## 8. P2 计划（可选 OSS 私有化 / Preview）
 
 | 主题 | 交付 |
 |------|------|
