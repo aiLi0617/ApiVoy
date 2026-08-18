@@ -133,7 +133,7 @@ jobs:
           else
             tar -C dist -czf "dist/apivoy-tools-${VERSION}-${{ matrix.platform }}.tar.gz" "apivoy-tools-${VERSION}-${{ matrix.platform }}"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: apivoy-tools-${{ matrix.platform }}
           path: dist/apivoy-tools-*
