@@ -21,7 +21,7 @@ gh repo edit aiLi0617/ApiVoy \
 Enable these under **Settings → Code security and analysis** and **Settings → Security**:
 
 - Dependabot alerts
-- Dependabot security updates
+- Dependabot security updates (ignore rules for the Tauri GTK3/`glib` 0.18 stack live in `.github/dependabot.yml`)
 - Secret scanning
 - Push protection
 - Private vulnerability reporting (**Settings → Security → Private vulnerability reporting → Enable**)

@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # Tauri 2 / Wry still resolve gtk-rs 0.18 on Linux. glib 0.20 is the
+      # first patched release for RUSTSEC-2024-0429, but it is a breaking
+      # gtk-rs major and cannot be selected without a Tauri GTK backend upgrade.
+      # See docs/DEPENDENCY_SECURITY.md.
+      - dependency-name: glib
+      - dependency-name: glib-sys
+      - dependency-name: glib-macros
+      - dependency-name: gtk
+      - dependency-name: gtk-sys
+      - dependency-name: gdk
+      - dependency-name: gdk-sys
+      - dependency-name: gio
+      - dependency-name: gio-sys
+      - dependency-name: cairo-rs
+      - dependency-name: pango
+      - dependency-name: atk
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
