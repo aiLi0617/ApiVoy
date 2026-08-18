@@ -7,7 +7,7 @@ description = "Unified request execution pipeline"
 
 [dependencies]
 async-trait = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { workspace = true }
 core-domain = { workspace = true }
 event-stream = { workspace = true }
