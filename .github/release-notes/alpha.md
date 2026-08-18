@@ -19,12 +19,12 @@ Verify downloads with `SHA256SUMS.txt` attached to this release.
 
 ## Known limitations
 
-- This is an early alpha release.
+- This is an early release.
 - Some protocol workbenches are still experimental.
 - Fine-grained internationalization is incomplete.
 - Desktop Content Security Policy is baseline; HTML response sandboxing is still planned.
 - Automatic updates are not yet available.
-- Windows MSI ProductVersion is numeric `0.1.0.1` (WiX limitation); the public release remains `0.1.0-alpha.1`.
+- Windows MSI ProductVersion is `0.1.0` (WiX-compatible numeric format).
 
 ## Security
 

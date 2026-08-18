@@ -64,8 +64,8 @@ Historical tags `V1.0.0` and `V1.0.1` used inconsistent versioning and should **
 Recommended:
 
 1. Mark each release as **Pre-release** in the GitHub UI, or delete the release if it was internal testing only.
-2. Edit the release description to note they were internal preview builds superseded by `v0.1.0-alpha.1`.
-3. Do not create new tags using the `V*` prefix — release tags must use lowercase `v*` (for example `v0.1.0-alpha.1`).
+2. Edit the release description to note they were internal preview builds superseded by `v0.1.0`.
+3. Do not create new tags using the `V*` prefix — release tags must use lowercase `v*` (for example `v0.1.0`).
 
 ## Milestones
 
@@ -108,13 +108,13 @@ gh issue create --repo aiLi0617/ApiVoy --title "[Testing] Add protocol compatibi
 gh issue create --repo aiLi0617/ApiVoy --title "[Docs] Add protocol-specific getting started tutorials" --label "documentation,good first issue" --milestone "v0.1 Public Alpha" --body "Expand docs/protocols/ with step-by-step walkthroughs linked from README."
 ```
 
-## Release v0.1.0-alpha.1
+## Release v0.1.0
 
 After merging release workflow changes:
 
 ```bash
-git tag v0.1.0-alpha.1
-git push origin v0.1.0-alpha.1
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 The [Release workflow](../../.github/workflows/release.yml) will:
@@ -123,10 +123,10 @@ The [Release workflow](../../.github/workflows/release.yml) will:
 2. Build Desktop installers for Windows, macOS, and Linux
 3. Build and upload CLI/Agent archives
 4. Generate and upload `SHA256SUMS.txt`
-5. Create a **Draft pre-release** with notes from [CHANGELOG.md](../../CHANGELOG.md) or [.github/release-notes/alpha.md](../../.github/release-notes/alpha.md)
+5. Create a **Draft release** with notes from [CHANGELOG.md](../../CHANGELOG.md) or [.github/release-notes/alpha.md](../../.github/release-notes/alpha.md)
 
 Download and verify all platform assets, then **manually publish** the release from GitHub when ready. Do not auto-publish draft releases from CI.
 
 Release title:
 
-`ApiVoy v0.1.0-alpha.1 — First Public Alpha`
+`ApiVoy v0.1.0`

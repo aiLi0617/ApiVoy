@@ -70,7 +70,12 @@ jobs:
         run: |
           TAG="${RELEASE_TAG}"
           NOTES_FILE=".github/release-notes/alpha.md"
-          CHANGELOG_SECTION="$(awk '/^## \[0\.1\.0-alpha\.1\]/,/^## \[/{if ($0 ~ /^## \[/ && $0 !~ /0\.1\.0-alpha\.1/) exit; print}' CHANGELOG.md || true)"
+          VERSION="${TAG#v}"
+          CHANGELOG_SECTION="$(awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { in_section = 1 }
+            in_section && $0 ~ "^## \\[" && $0 !~ "^## \\[" v "\\]" { exit }
+            in_section { print }
+          ' CHANGELOG.md || true)"
           if [ -f "$NOTES_FILE" ]; then
             BODY="$(cat "$NOTES_FILE")"
           elif [ -n "$CHANGELOG_SECTION" ]; then
@@ -95,7 +100,7 @@ jobs:
           projectPath: apps/desktop
           args: --config src-tauri/tauri.sidecar.conf.json
           tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ApiVoy ${{ env.RELEASE_TAG }} — First Public Alpha
+          releaseName: ApiVoy ${{ env.RELEASE_TAG }}
           releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: true
 
@@ -188,5 +193,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=true
-          echo "Release ${RELEASE_TAG} remains a Draft pre-release. Download, verify SHA256SUMS.txt, then publish manually from GitHub."
+          gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=false
+          echo "Release ${RELEASE_TAG} remains a Draft release. Download, verify SHA256SUMS.txt, then publish manually from GitHub."

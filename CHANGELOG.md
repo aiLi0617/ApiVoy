@@ -14,11 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-## [0.1.0-alpha.1] - 2026-08-18
+## [0.1.0] - 2026-08-18
 
 ### Added
 
-- First public alpha release.
+- First public release.
 - Cross-platform desktop application (Windows, macOS, Linux).
 - HTTP, GraphQL, gRPC, WebSocket and SSE workbenches.
 - Local Agent and CLI.
@@ -27,11 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Known limitations
 
-- Early alpha quality; some protocol workbenches remain experimental.
+- Early release quality; some protocol workbenches remain experimental.
 - Fine-grained internationalization is incomplete.
 - Desktop Content Security Policy is baseline; HTML response sandboxing is still planned.
 - Automatic updates are not yet available.
-- Windows MSI ProductVersion is `0.1.0.1` because WiX requires numeric-only versions; the public release remains `0.1.0-alpha.1`.
+- Windows MSI ProductVersion matches app version `0.1.0` (numeric WiX-compatible format).
 
-[Unreleased]: https://github.com/aiLi0617/ApiVoy/compare/v0.1.0-alpha.1...HEAD
-[0.1.0-alpha.1]: https://github.com/aiLi0617/ApiVoy/releases/tag/v0.1.0-alpha.1
+[Unreleased]: https://github.com/aiLi0617/ApiVoy/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/aiLi0617/ApiVoy/releases/tag/v0.1.0

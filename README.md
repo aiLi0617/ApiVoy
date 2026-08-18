@@ -62,10 +62,9 @@ GraphQL is available via the HTTP workbench GraphQL body mode and a dedicated dr
 
 ### Install the desktop application
 
-The first public alpha release is currently being prepared.
-Source builds are available using the development instructions below.
+Releases are built as GitHub Drafts first, then published after maintainer verification.
 
-When [v0.1.0-alpha.1](https://github.com/aiLi0617/ApiVoy/releases/tag/v0.1.0-alpha.1) is published, downloads will include:
+Current release target: [v0.1.0](https://github.com/aiLi0617/ApiVoy/releases/tag/v0.1.0). Draft assets include:
 
 - **Windows**: `.msi`
 - **macOS**: `.dmg`
@@ -111,7 +110,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for validation commands and pull request 
 | Local Agent | `apivoy-agent` | Headless protocol runtime for Web |
 | CLI | `apivoy-cli` | CI and terminal automation |
 
-Alpha release assets will include platform installers, CLI/Agent archives, and SHA-256 checksums once `v0.1.0-alpha.1` is published.
+Release assets include platform installers, CLI/Agent archives, and SHA-256 checksums.
 
 ## Security and privacy
 

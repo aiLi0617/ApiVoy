@@ -16,8 +16,8 @@ const workspaceTree = {
 
 const health = {
   service: "apivoy-agent",
-  version: "0.1.0-alpha.1",
-  agentVersion: "0.1.0-alpha.1",
+  version: "0.1.0",
+  agentVersion: "0.1.0",
   protocolApiVersion: "1",
   minProtocolApiVersion: "1",
   maxProtocolApiVersion: "1",
