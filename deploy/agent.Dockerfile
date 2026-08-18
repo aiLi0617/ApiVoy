@@ -1,5 +1,8 @@
 FROM rust:1.88-bookworm AS build
 WORKDIR /workspace
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake g++ make pkg-config clang libclang-dev perl nasm \
+    && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY apps/local-agent ./apps/local-agent
