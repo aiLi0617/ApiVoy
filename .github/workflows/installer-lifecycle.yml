@@ -31,6 +31,9 @@ jobs:
           - os: windows-2025
             bundle: msi
     runs-on: ${{ matrix.os }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      ESBUILD_WORKER_THREADS: "1"
     steps:
       - uses: actions/checkout@v7
       - name: Install Linux desktop libraries
@@ -48,6 +51,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm prepare:sidecar
       - name: Build platform installer
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          ESBUILD_WORKER_THREADS: "1"
         run: pnpm --filter @apivoy/desktop exec tauri build --config src-tauri/tauri.sidecar.conf.json --bundles ${{ matrix.bundle }}
       - name: Linux install, upgrade, and uninstall
         if: runner.os == 'Linux'

@@ -45,6 +45,9 @@ jobs:
           - os: macos-14
           - os: windows-2025
     runs-on: ${{ matrix.os }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      ESBUILD_WORKER_THREADS: "1"
     steps:
       - uses: actions/checkout@v7
       - name: Install Linux desktop libraries
@@ -86,6 +89,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NODE_OPTIONS: --max-old-space-size=8192
+          ESBUILD_WORKER_THREADS: "1"
         with:
           projectPath: apps/desktop
           args: --config src-tauri/tauri.sidecar.conf.json
