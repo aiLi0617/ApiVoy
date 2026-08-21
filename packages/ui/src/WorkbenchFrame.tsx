@@ -12,11 +12,13 @@ export interface SplitPaneProps { id: string; primary: ReactNode; secondary: Rea
 export function SplitPane({ id, primary, secondary, secondaryActions, direction = "vertical", minPrimary = 280, minSecondary = 240, primaryLabel = "请求", secondaryLabel = "响应" }: SplitPaneProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const saved = useAppStore((state) => state.splitPreferences[id]);
+  const globalDirection = useAppStore((state) => state.splitDirection);
+  const setGlobalDirection = useAppStore((state) => state.setSplitDirection);
   const setPreference = useAppStore((state) => state.setSplitPreference);
   const [ratio, setRatio] = useState(() => saved?.ratio ?? .42);
   const [collapsedPanel, setCollapsedPanel] = useState<"primary" | "secondary" | null>(null);
   const expandedRatioRef = useRef(saved?.ratio && saved.ratio < .9 ? saved.ratio : .42);
-  const preferredDirection = saved?.direction ?? direction;
+  const preferredDirection = globalDirection ?? direction;
   const actualDirection: "vertical" | "horizontal" = preferredDirection === "horizontal" ? "horizontal" : "vertical";
   useEffect(() => setRatio(saved?.ratio ?? .42), [saved?.ratio]);
   function persist(nextDirection: WorkbenchLayoutPreference, nextRatio: number) {
@@ -29,7 +31,7 @@ export function SplitPane({ id, primary, secondary, secondaryActions, direction 
     if (collapsedPanel === "secondary") { setCollapsedPanel(null); persist(actualDirection, expandedRatioRef.current); }
     else { if (ratio < .94) expandedRatioRef.current = ratio; setCollapsedPanel("secondary"); }
   }
-  function setDirection(next: WorkbenchLayoutPreference) { persist(next, ratio); }
+  function setDirection(next: Exclude<WorkbenchLayoutPreference, "auto">) { setGlobalDirection(next); }
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     const root = rootRef.current; if (!root) return; event.currentTarget.setPointerCapture(event.pointerId);
     const bounds = root.getBoundingClientRect(); const vertical = getComputedStyle(root).gridTemplateColumns.split(" ").length === 1;

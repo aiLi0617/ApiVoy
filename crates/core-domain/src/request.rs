@@ -256,8 +256,8 @@ pub struct MultipartPart {
     pub base64: bool,
 }
 
-/// Request authentication reference. Secrets are stored by name in `secret-store`;
-/// this struct never carries plaintext credentials.
+/// Request authentication configuration. Credentials may be referenced from
+/// `secret-store`; bearer auth can also explicitly carry a request-local token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRef {
     /// `none` | `bearer` | `basic` | `api_key` | `oauth2_client_credentials`
@@ -265,6 +265,9 @@ pub struct AuthRef {
     /// Secret store ref for bearer token, basic password, or API key value.
     #[serde(default)]
     pub secret_ref: Option<String>,
+    /// Literal bearer token saved with the request when explicitly selected.
+    #[serde(default)]
+    pub token: Option<String>,
     /// Basic auth username (may contain `{{var}}` templates).
     #[serde(default)]
     pub username: Option<String>,
@@ -297,6 +300,7 @@ impl AuthRef {
         Self {
             kind: "bearer".into(),
             secret_ref: Some(secret_ref.into()),
+            token: None,
             username: None,
             header_name: None,
             token_url: None,
@@ -313,6 +317,7 @@ impl AuthRef {
         Self {
             kind: "basic".into(),
             secret_ref: Some(password_secret_ref.into()),
+            token: None,
             username: Some(username.into()),
             header_name: None,
             token_url: None,
@@ -329,6 +334,7 @@ impl AuthRef {
         Self {
             kind: "api_key".into(),
             secret_ref: Some(secret_ref.into()),
+            token: None,
             username: None,
             header_name: Some(header_name.into()),
             token_url: None,
@@ -349,6 +355,7 @@ impl AuthRef {
         Self {
             kind: "oauth2_client_credentials".into(),
             secret_ref: Some(client_secret_ref.into()),
+            token: None,
             username: Some(client_id.into()),
             header_name: None,
             token_url: Some(token_url.into()),

@@ -17,7 +17,7 @@ git push origin v0.1.0
 
 Release notes source: [CHANGELOG.md](../../CHANGELOG.md) or [.github/release-notes/alpha.md](../../.github/release-notes/alpha.md)
 
-Release title: **ApiVoy v0.1.0**
+Release title: **ApiVoy v0.1.0 — Explore Every Protocol**
 
 ## Verify downloads
 

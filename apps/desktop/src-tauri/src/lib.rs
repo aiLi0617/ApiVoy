@@ -116,6 +116,8 @@ struct AuthDto {
     #[serde(default)]
     secret_ref: Option<String>,
     #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
     username: Option<String>,
     #[serde(default)]
     header_name: Option<String>,
@@ -140,6 +142,7 @@ impl From<AuthDto> for AuthRef {
         AuthRef {
             kind: value.kind,
             secret_ref: value.secret_ref,
+            token: value.token,
             username: value.username,
             header_name: value.header_name,
             token_url: value.token_url,

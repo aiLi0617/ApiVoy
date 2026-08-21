@@ -53,12 +53,14 @@ export type ProtocolPayload =
   | ({ type: "grpc" } & GrpcPayload)
   | { type: "raw"; value: unknown };
 
-/** Request auth reference — secrets stay in Keychain / Agent secret-store. */
+/** Request authentication. Bearer tokens may be stored directly when explicitly selected. */
 export interface AuthRef {
   /** `none` | `bearer` | `basic` | `api_key` | `oauth2_client_credentials` */
   kind: string;
   /** Secret store name for bearer token, basic password, or API key. */
   secret_ref?: string | null;
+  /** Literal bearer token saved with the request when explicitly selected. */
+  token?: string | null;
   /** Basic auth username (may contain `{{var}}`). */
   username?: string | null;
   /** API Key header name (default `X-Api-Key`). */

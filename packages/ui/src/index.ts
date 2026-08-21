@@ -35,7 +35,7 @@ export { ApiVoyProviders } from "./ApiVoyProviders";
 export { WorkspaceExplorer, type WorkspaceTree, type WorkspaceExplorerProps, type WorkspaceRecord, type ProjectRecord, type CollectionRecord, type RequestRecord } from "./WorkspaceExplorer";
 export { flattenWorkspaceTree, type FlattenWorkspaceTreeOptions, type WorkspaceTreeRow } from "./workspaceTreeRows";
 export { SseWorkbench, type SseWorkbenchProps, type SseWorkbenchRequest } from "./SseWorkbench";
-export { SocketWorkbench, type SocketWorkbenchProps, type SocketWorkbenchRequest } from "./SocketWorkbench";
+export { TcpWorkbench, UdpWorkbench, type TcpWorkbenchProps, type UdpWorkbenchProps, type SocketWorkbenchProps, type SocketWorkbenchRequest } from "./SocketWorkbench";
 export { GraphqlWorkbench, type GraphqlWorkbenchProps, type GraphqlWorkbenchRequest } from "./GraphqlWorkbench";
 export { WebSocketWorkbench, type WebSocketWorkbenchProps, type WebSocketWorkbenchRequest } from "./WebSocketWorkbench";
 export { GrpcWorkbench, type GrpcWorkbenchProps, type GrpcWorkbenchRequest } from "./GrpcWorkbench";

@@ -13,7 +13,7 @@ export interface WorkspaceTree { workspaces: WorkspaceRecord[]; projects: Projec
 
 const CREATE_PROTOCOL_GROUPS = [
   { label: "API", items: [["http", "HTTP", "globe"], ["grpc", "gRPC", "network"]] },
-  { label: "实时通信", items: [["websocket", "WebSocket", "activity"], ["sse", "SSE", "activity"], ["socket", "TCP / UDP", "network"]] },
+  { label: "实时通信", items: [["websocket", "WebSocket", "activity"], ["sse", "SSE", "activity"], ["tcp", "TCP", "network"], ["udp", "UDP", "network"]] },
   { label: "消息协议", items: [["mqtt", "MQTT", "network"], ["amqp", "AMQP", "network"], ["kafka", "Kafka", "network"]] },
   { label: "数据协议", items: [["redis", "Redis", "database"], ["sql", "SQL", "database"]] },
 ] as const;
@@ -354,7 +354,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
         <div className="workspace-create-menu-title">其他</div>
         <div className="workspace-create-menu-grid">
           <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); importInput.current?.click(); }}><Icon name="download"/><span>导入文件</span></button>
-          <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-create-workbench", { detail: "http" })); window.setTimeout(() => window.dispatchEvent(new CustomEvent("apivoy-open-curl-import")), 0); }}><Icon name="code"/><span>导入 cURL</span></button>
+          <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-open-curl-import")); }}><Icon name="code"/><span>导入 cURL</span></button>
         </div>
       </div>, document.body) : null}
     </div>

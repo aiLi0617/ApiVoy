@@ -52,6 +52,33 @@ monaco.editor.defineTheme("apivoy-dark", {
   },
 });
 
+monaco.editor.defineTheme("apivoy-light", {
+  base: "vs",
+  inherit: true,
+  rules: [
+    { token: "comment", foreground: "54864A", fontStyle: "italic" },
+    { token: "keyword", foreground: "8B3F9B" },
+    { token: "string", foreground: "A4470A" },
+    { token: "number", foreground: "16736B" },
+    { token: "type", foreground: "267F99" },
+    { token: "type.identifier", foreground: "267F99" },
+    { token: "identifier", foreground: "795E26" },
+    { token: "variable", foreground: "005FB8" },
+    { token: "attribute.name", foreground: "005FB8" },
+    { token: "attribute.value", foreground: "A4470A" },
+    { token: "delimiter", foreground: "333333" },
+  ],
+  colors: {
+    "editor.background": "#F7F8FA",
+    "editor.foreground": "#172033",
+    "editor.findMatchBackground": "#9ECBFF",
+    "editor.findMatchBorder": "#1769D2",
+    "editor.findMatchHighlightBackground": "#C9E2FF99",
+    "editor.findMatchHighlightBorder": "#5693D066",
+    "editor.findRangeHighlightBackground": "#DCEBFA88",
+  },
+});
+
 function registerGeneratedCodeLanguage(id: string, keywords: string[]) {
   if (!monaco.languages.getLanguages().some((language) => language.id === id)) monaco.languages.register({ id });
   monaco.languages.setMonarchTokensProvider(id, {

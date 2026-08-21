@@ -10,6 +10,7 @@ Open the **HTTP** workbench for REST-style requests.
 - Headers, cookies, multipart, URL-encoded and raw bodies
 - GraphQL, JSON-RPC, and SOAP body modes on the same workbench
 - Authentication: Basic, Bearer, API Key, OAuth 2.0 flows
+  - Bearer tokens can be entered directly and saved with the local request, or resolved from a `secret_ref`.
 - Streaming responses with timeline and assertions
 - Code generation: cURL, Fetch, Python, Go, Rust, Java
 

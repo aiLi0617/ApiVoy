@@ -1000,10 +1000,19 @@ async fn tcp_session(
         .into_response()
 }
 
-async fn relay_tcp_session(socket: WebSocket, target: String) {
-    let Ok(stream) = TcpStream::connect(&target).await else {
-        return;
+async fn relay_tcp_session(mut socket: WebSocket, target: String) {
+    let stream = match TcpStream::connect(&target).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            let message = serde_json::json!({ "type": "error", "reason": format!("目标 TCP 连接失败：{error}") }).to_string();
+            let _ = socket.send(AxumWsMessage::Text(message.into())).await;
+            return;
+        }
     };
+    let connected = serde_json::json!({ "type": "connected", "target": target }).to_string();
+    if socket.send(AxumWsMessage::Text(connected.into())).await.is_err() {
+        return;
+    }
     let (mut tcp_read, mut tcp_write) = tokio::io::split(stream);
     let (mut ws_write, mut ws_read) = socket.split();
     let to_tcp = async {
@@ -1021,16 +1030,27 @@ async fn relay_tcp_session(socket: WebSocket, target: String) {
     };
     let from_tcp = async {
         let mut buffer = vec![0u8; 16 * 1024];
-        while let Ok(size) = tcp_read.read(&mut buffer).await {
-            if size == 0 {
-                break;
-            }
-            if ws_write
-                .send(AxumWsMessage::Binary(buffer[..size].to_vec().into()))
-                .await
-                .is_err()
-            {
-                break;
+        loop {
+            match tcp_read.read(&mut buffer).await {
+                Ok(0) => {
+                    let message = serde_json::json!({ "type": "closed", "reason": "远端服务器主动关闭了 TCP 连接" }).to_string();
+                    let _ = ws_write.send(AxumWsMessage::Text(message.into())).await;
+                    break;
+                }
+                Ok(size) => {
+                    if ws_write
+                        .send(AxumWsMessage::Binary(buffer[..size].to_vec().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let message = serde_json::json!({ "type": "error", "reason": format!("TCP 读取失败：{error}") }).to_string();
+                    let _ = ws_write.send(AxumWsMessage::Text(message.into())).await;
+                    break;
+                }
             }
         }
     };

@@ -457,9 +457,17 @@ small { color: var(--apivoy-muted); }
 .http-workbench-split > .split-pane-shell { height: 100%; }
 .websocket-workbench-layout { height:100%; min-height:0; }
 .websocket-workbench-layout > .split-pane-shell { height:100%; }
+.tcp-workbench-layout .split-panel { overflow:hidden; }
+.tcp-workbench-layout .websocket-frame-list { overflow:hidden; }
+.tcp-workbench-layout .websocket-message-list { overscroll-behavior:contain; }
+.udp-workbench-layout .websocket-frame { grid-template-columns:20px minmax(0,1fr) auto auto; }
+.udp-payload-size { margin-right:4px; color:var(--apivoy-muted); font:10px var(--apivoy-mono); }
+.udp-payload-size.is-invalid { color:var(--apivoy-danger); }
+.udp-frame-meta { color:var(--apivoy-subtle); font:9px var(--apivoy-mono); white-space:nowrap; }
+.websocket-commandbar > input[aria-invalid="true"] { border-color:var(--apivoy-danger); }
 .websocket-workbench { min-height:0; overflow:auto; display:grid; align-content:start; gap:14px; padding:14px; background:var(--apivoy-workspace); }
 .websocket-request-pane { height:100%; box-sizing:border-box; grid-template-rows:auto auto auto auto minmax(0,1fr); align-content:start; overflow:auto; }
-.websocket-request-pane.tab-message { grid-template-rows:auto auto auto minmax(220px,1fr) auto; align-content:stretch; overflow:hidden; }
+.websocket-request-pane.tab-message { grid-template-rows:auto auto auto minmax(117px,1fr) auto; align-content:stretch; overflow:hidden; }
 .websocket-name { width:100%; height:38px; box-sizing:border-box; padding:0 11px; border:1px solid var(--apivoy-border); border-radius:8px; outline:0; background:var(--apivoy-bg-elevated); color:var(--apivoy-text); }
 .websocket-name:focus { border-color:color-mix(in srgb,var(--apivoy-accent) 70%,var(--apivoy-border)); box-shadow:0 0 0 3px color-mix(in srgb,var(--apivoy-accent) 11%,transparent); }
 .websocket-commandbar { display:flex; align-items:center; gap:8px; }
@@ -475,18 +483,26 @@ small { color: var(--apivoy-muted); }
 .websocket-settings-fields input,.websocket-settings-fields select { height:34px; padding:0 9px; border:1px solid var(--apivoy-border); background:var(--apivoy-workspace); color:var(--apivoy-text); }
 .websocket-settings-headers small { margin-left:8px; color:var(--apivoy-subtle); }
 .websocket-settings-headers textarea { min-height:76px; resize:vertical; padding:9px; border:1px solid var(--apivoy-border); background:var(--apivoy-workspace); color:var(--apivoy-text); font-family:var(--apivoy-mono); }
-.websocket-message-editor { height:100%; min-height:220px; overflow:hidden; display:grid; grid-template-rows:36px minmax(0,1fr) 44px; border:1px solid var(--apivoy-border); border-radius:8px; background:var(--apivoy-bg-elevated); }
+.websocket-message-editor { height:100%; min-height:117px; overflow:hidden; display:grid; grid-template-rows:36px minmax(0,1fr) 44px; border:1px solid var(--apivoy-border); border-radius:8px; background:var(--apivoy-bg-elevated); }
 .websocket-message-editor > header { display:flex; align-items:center; gap:8px; padding:0 11px; border-bottom:1px solid var(--apivoy-border); }
 .websocket-message-editor > header strong { font-size:11px; }
 .websocket-message-editor > header select { width:auto; min-width:88px; height:28px; padding:0 24px 0 8px; border:0; background:transparent; color:var(--apivoy-muted); font-size:11px; }
-.websocket-format-button { height:28px; margin-left:auto; padding:0 9px; border:1px solid var(--apivoy-border); background:transparent; color:var(--apivoy-muted); font-size:10px; }
-.websocket-format-button:hover:not(:disabled) { border-color:var(--apivoy-border-strong); color:var(--apivoy-text); }
+.websocket-message-actions { flex:0 0 auto; margin-left:auto; display:flex; align-items:center; gap:4px; }
+.websocket-message-tool { width:28px; height:28px; padding:0; display:grid; place-items:center; border:1px solid transparent; border-radius:5px; background:transparent; color:var(--apivoy-muted); transition:color 160ms ease,background-color 160ms ease,border-color 160ms ease; }
+.websocket-message-tool svg { width:15px; height:15px; }
+.websocket-message-tool:hover:not(:disabled) { border-color:var(--apivoy-border); background:var(--apivoy-workspace); color:var(--apivoy-text); }
+.websocket-message-tool:focus-visible { outline:2px solid var(--apivoy-accent); outline-offset:1px; }
+.websocket-message-tool:disabled { opacity:.38; cursor:not-allowed; }
+.tcp-payload-error { min-width:0; overflow:hidden; color:var(--apivoy-danger); font:10px var(--apivoy-mono); text-overflow:ellipsis; white-space:nowrap; }
 .websocket-message-editor > footer { display:flex; align-items:center; justify-content:flex-end; padding:0 10px; border-top:1px solid var(--apivoy-border); }
 .websocket-clear-after-send { margin-right:10px; display:inline-flex; align-items:center; gap:7px; color:var(--apivoy-muted); font-size:11px; }
 .websocket-clear-after-send input { width:14px; height:14px; margin:0; }
+.websocket-settings-fields .tcp-checkbox { display:flex; min-height:36px; flex-direction:row; align-items:center; gap:8px; }
+.websocket-settings-fields .tcp-checkbox input { width:15px; height:15px; margin:0; }
+.websocket-message-toolbar > strong { padding:0 4px; color:var(--apivoy-muted); font-size:11px; }
 .websocket-message-editor .code-editor { min-height:0; }
 .websocket-params-panel { min-height:0; overflow:auto; align-content:start; border:0; background:transparent; }
-.websocket-params-panel::before { content:"Query 参数"; min-height:34px; display:flex; align-items:center; padding:0 10px; color:var(--apivoy-text); font-size:11px; font-weight:700; }
+.websocket-params-panel::before { content:attr(data-title); min-height:34px; display:flex; align-items:center; padding:0 10px; color:var(--apivoy-text); font-size:11px; font-weight:700; }
 .websocket-primary,.websocket-secondary,.websocket-danger { min-height:36px; padding:0 14px; border-radius:7px; font-size:11px; font-weight:700; white-space:nowrap; }
 .websocket-primary { border:0; background:var(--apivoy-accent); color:#06121d; }
 .websocket-secondary { border:1px solid var(--apivoy-border); background:var(--apivoy-bg-elevated); color:var(--apivoy-text); }

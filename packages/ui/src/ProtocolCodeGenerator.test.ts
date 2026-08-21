@@ -34,10 +34,11 @@ test("switches complete locale resources deterministically", () => {
 
 test("exports redacted team snapshots and restores hierarchy idempotently", async () => {
   const tree = { workspaces: [{ id: "w1", name: "Team" }], projects: [{ id: "p1", workspaceId: "w1", name: "API" }], collections: [{ id: "c1", projectId: "p1", name: "Root", parentId: null, sortOrder: 0 }], requests: [{ id: "r1", projectId: "p1", collectionId: "c1", name: "GET", method: "GET", target: "https://example.com" }] };
-  const envelope = createHttpRequest({ name: "GET", url: "https://example.com", headers: [["Authorization", "Bearer literal"]], variables: { apiKey: "literal", safe: "visible" } });
+  const envelope = createHttpRequest({ name: "GET", url: "https://example.com", headers: [["Authorization", "Bearer literal"]], variables: { apiKey: "literal", safe: "visible" }, auth: { kind: "bearer", token: "saved-token" } });
   const snapshot = await exportTeamSnapshot(tree, async () => envelope);
   assert.equal((snapshot.requests[0].envelope.payload as { headers: Array<[string,string]> }).headers[0][1], "{{redacted}}");
   assert.equal(snapshot.requests[0].envelope.variables.apiKey, "{{redacted}}");
+  assert.equal(snapshot.requests[0].envelope.authRef?.token, "{{redacted}}");
   assert.equal(snapshot.requests[0].envelope.variables.safe, "visible");
   const state: WorkspaceTree = { workspaces: [], projects: [], collections: [], requests: [] };
   const adapter = { getTree: async () => structuredClone(state), createWorkspace: async (name: string) => { const item={id:`w${state.workspaces.length+1}`,name};state.workspaces.push(item);return item; }, createProject: async (workspaceId: string,name: string) => {const item={id:`p${state.projects.length+1}`,workspaceId,name};state.projects.push(item);return item;}, createCollection: async (projectId:string,parentId:string|null,name:string)=>{const item={id:`c${state.collections.length+1}`,projectId,parentId,name,sortOrder:0};state.collections.push(item);return item;}, saveEnvelope: async (request: typeof envelope,projectId:string,collectionId:string)=>{state.requests=[{id:request.id,projectId,collectionId,name:request.name,target:request.target,method:"GET"}];} };

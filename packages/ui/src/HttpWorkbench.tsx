@@ -25,6 +25,7 @@ import { listEnvironmentResources } from "./agentResources";
 import { useI18n } from "./i18n";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
+type BearerTokenSource = "direct" | "secret_ref";
 
 export interface HttpWorkbenchRequest {
   id?: string;
@@ -340,44 +341,6 @@ export interface HttpWorkbenchProps {
 const DEFAULT_ENVIRONMENTS = [{ id: "default-env", name: "默认环境" }];
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
-function shellTokens(source: string): string[] {
-  const tokens: string[] = [];
-  const pattern = /"((?:\\.|[^"\\])*)"|'([^']*)'|([^\s]+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(source.replace(/\\\r?\n/g, " ")))) {
-    tokens.push((match[1] ?? match[2] ?? match[3]).replace(/\\(["\\])/g, "$1"));
-  }
-  return tokens;
-}
-
-function parseCurl(source: string): Partial<HttpWorkbenchRequest> {
-  const tokens = shellTokens(source.trim());
-  if (tokens[0]?.toLowerCase() !== "curl") {
-    throw new Error("请输入以 curl 开头的命令");
-  }
-  let method = "GET";
-  let url = "";
-  let body: string | undefined;
-  const headers: Array<[string, string]> = [];
-  for (let i = 1; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (token === "-X" || token === "--request") {
-      method = (tokens[++i] ?? "GET").toUpperCase();
-    } else if (token === "-H" || token === "--header") {
-      const value = tokens[++i] ?? "";
-      const split = value.indexOf(":");
-      if (split > 0) headers.push([value.slice(0, split).trim(), value.slice(split + 1).trim()]);
-    } else if (["-d", "--data", "--data-raw", "--data-binary"].includes(token)) {
-      body = tokens[++i] ?? "";
-      if (method === "GET") method = "POST";
-    } else if (!token.startsWith("-") && !url) {
-      url = token;
-    }
-  }
-  if (!url) throw new Error("cURL 命令中没有找到 URL");
-  return { method, url, headers, body };
-}
-
 function prettyPreview(preview: string): string {
   try {
     return JSON.stringify(JSON.parse(preview), null, 2);
@@ -533,6 +496,8 @@ function formatAssertions(list: Assertion[]): string {
 
 function buildAuth(
   kind: AuthKind,
+  bearerTokenSource: BearerTokenSource,
+  bearerToken: string,
   secretRef: string,
   username: string,
   headerName: string,
@@ -549,7 +514,8 @@ function buildAuth(
   }
   return {
     kind,
-    secret_ref: secretRef.trim() || null,
+    secret_ref: kind === "bearer" && bearerTokenSource === "direct" ? null : secretRef.trim() || null,
+    token: kind === "bearer" && bearerTokenSource === "direct" ? bearerToken.trim() || null : null,
     username: kind === "basic" || kind.startsWith("oauth2_") ? username.trim() || null : null,
     header_name: kind === "api_key" ? headerName.trim() || "X-Api-Key" : null,
     token_url: kind.startsWith("oauth2_") ? tokenUrl.trim() || null : null,
@@ -608,6 +574,8 @@ export function HttpWorkbench({
   const [assertionConfigOpen, setAssertionConfigOpen] = useState(false);
   const [assertionsDraft, setAssertionsDraft] = useState("");
   const [authKind, setAuthKind] = useState<AuthKind>("none");
+  const [bearerTokenSource, setBearerTokenSource] = useState<BearerTokenSource>("direct");
+  const [bearerToken, setBearerToken] = useState("");
   const [authSecretRef, setAuthSecretRef] = useState("");
   const [authUsername, setAuthUsername] = useState("");
   const [authHeaderName, setAuthHeaderName] = useState("X-Api-Key");
@@ -630,8 +598,6 @@ export function HttpWorkbench({
   const [historyStateFilter, setHistoryStateFilter] = useState("");
   const [historyStatusFilter, setHistoryStatusFilter] = useState("");
   const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [showCurlImport, setShowCurlImport] = useState(false);
-  const [curlText, setCurlText] = useState("");
   const [responseView, setResponseView] = useState<"pretty" | "raw" | "hex" | "table" | "preview">("pretty");
   const [responseCharset, setResponseCharset] = useState("auto");
   const [responseFormat, setResponseFormat] = useState<"auto" | "json" | "xml" | "html" | "text">("auto");
@@ -823,7 +789,7 @@ export function HttpWorkbench({
       timeoutMs,
       variables: parseKv(variablesText),
       assertions: assertionsEnabled ? parseAssertions(assertionsText) : [],
-      auth: buildAuth(authKind, authSecretRef, authUsername, authHeaderName, oauthTokenUrl, oauthScope, oauthAudience, oauthAuthorizationUrl, oauthRedirectUri, oauthCodeRef, oauthVerifierRef),
+      auth: buildAuth(authKind, bearerTokenSource, bearerToken, authSecretRef, authUsername, authHeaderName, oauthTokenUrl, oauthScope, oauthAudience, oauthAuthorizationUrl, oauthRedirectUri, oauthCodeRef, oauthVerifierRef),
       followRedirects,
       retryMax,
       retryBackoffMs,
@@ -834,23 +800,6 @@ export function HttpWorkbench({
       preScripts: resolveAssets(preScriptAssetIds),
       postScripts: resolveAssets(postScriptAssetIds),
     };
-  }
-
-  function handleImportCurl() {
-    try {
-      const parsed = parseCurl(curlText);
-      if (parsed.method) setMethod(parsed.method);
-      if (parsed.url) setUrl(parsed.url);
-      if (parsed.headers) {
-        setHeaderRows(headerRowsFromPairs(parsed.headers.filter(([key]) => key.toLowerCase() !== "cookie")));
-        setCookieRows(cookieRowsFromHeaders(parsed.headers));
-      }
-      if (parsed.body !== undefined) setBody(parsed.body);
-      setShowCurlImport(false);
-      setStatusMsg("已从 cURL 导入请求");
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : String(err));
-    }
   }
 
   async function copyText(text: string, success: string) {
@@ -932,6 +881,8 @@ export function HttpWorkbench({
     setAssertionsText(formatAssertions(loaded.assertions));
     setAssertionsEnabled(loaded.assertions.length > 0);
     const auth = loaded.auth;
+    setBearerToken(auth?.kind === "bearer" ? auth.token ?? "" : "");
+    setBearerTokenSource(auth?.kind === "bearer" && auth.secret_ref && !auth.token ? "secret_ref" : "direct");
     if (!auth || auth.kind === "none") {
       setAuthKind("none");
     } else if (auth.kind === "bearer" || auth.kind === "basic" || auth.kind === "api_key" || auth.kind === "oauth2_client_credentials" || auth.kind === "oauth2_authorization_code") {
@@ -1008,12 +959,6 @@ export function HttpWorkbench({
   }, workbenchSessionId);
 
   useAutosaveDraft("http", buildRequest);
-  useEffect(() => {
-    const openCurlImport = () => setShowCurlImport(true);
-    window.addEventListener("apivoy-open-curl-import", openCurlImport);
-    return () => window.removeEventListener("apivoy-open-curl-import", openCurlImport);
-  }, []);
-
   async function startPkceAuthorization() {
     if (!oauthAuthorizationUrl.trim() || !authUsername.trim() || !oauthRedirectUri.trim()) {
       setStatusMsg("请先填写 Authorization Endpoint、Client ID 和 Redirect URI");
@@ -1295,13 +1240,6 @@ export function HttpWorkbench({
       {requestCommandbar}
       <div className="http-workbench-split">
       <SplitPane id="http-workbench" direction="vertical" minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
-      {showCurlImport && (
-        <div style={styles.importPanel}>
-          <div style={styles.panelTitle}><strong>从 cURL 导入</strong><span>支持 method、header 和 request body</span></div>
-          <textarea aria-label="导入 cURL 命令" style={{ ...styles.textarea, minHeight: 110 }} value={curlText} onChange={(e) => setCurlText(e.target.value)} placeholder="curl -X POST 'https://api.example.com' -H 'Content-Type: application/json' --data-raw '{...}'" spellCheck={false} />
-          <div style={styles.row}><button style={styles.button} onClick={handleImportCurl}>导入请求</button><button style={styles.secondaryButton} onClick={() => setShowCurlImport(false)}>取消</button></div>
-        </div>
-      )}
       {(() => {
         const requestTabs = [
           { id: "params" as const, label: "Params", hint: queryRows.filter((row) => row.key.trim()).length || undefined },
@@ -1377,7 +1315,7 @@ export function HttpWorkbench({
               )}
             </div>}
             {activeTab === "auth" && <label style={styles.label}>
-              认证
+              鉴权方式
               <select style={styles.selectWide} value={authKind} onChange={(e) => setAuthKind(e.target.value as AuthKind)} disabled={loading}>
                 <option value="none">None</option>
                 <option value="bearer">Bearer Token</option>
@@ -1388,10 +1326,12 @@ export function HttpWorkbench({
               </select>
               {authKind !== "none" && (
                 <div style={styles.authFields}>
+                  <span style={styles.authCredentialLabel}>鉴权凭证</span>
                   {(authKind === "basic" || authKind.startsWith("oauth2_")) && (
                     <input aria-label={authKind.startsWith("oauth2_") ? "OAuth Client ID" : "认证用户名"} style={styles.input} value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder={authKind.startsWith("oauth2_") ? "Client ID（支持 {{var}}）" : "Username（支持 {{var}}）"} spellCheck={false} disabled={loading} />
                   )}
-                  <input aria-label="认证 Secret Ref" style={styles.input} value={authSecretRef} onChange={(e) => setAuthSecretRef(e.target.value)} placeholder={authKind === "basic" ? "Password secret_ref 名称" : authKind === "oauth2_client_credentials" ? "Client Secret secret_ref 名称" : authKind === "api_key" ? "API Key secret_ref 名称" : "Token secret_ref 名称"} spellCheck={false} disabled={loading} />
+                  {authKind === "bearer" && <input aria-label="鉴权凭证" type="password" autoComplete="off" style={styles.input} value={bearerTokenSource === "direct" ? bearerToken : authSecretRef} onChange={(e) => { setBearerTokenSource("direct"); setBearerToken(e.target.value); }} placeholder="Token 或 {{变量}}" spellCheck={false} disabled={loading} />}
+                  {authKind !== "bearer" && <input aria-label="认证 Secret Ref" style={styles.input} value={authSecretRef} onChange={(e) => setAuthSecretRef(e.target.value)} placeholder={authKind === "basic" ? "Password secret_ref 名称" : authKind === "oauth2_client_credentials" ? "Client Secret secret_ref 名称" : "API Key secret_ref 名称"} spellCheck={false} disabled={loading} />}
                   {authKind === "api_key" && <input aria-label="API Key Header 名称" style={styles.input} value={authHeaderName} onChange={(e) => setAuthHeaderName(e.target.value)} placeholder="Header 名（默认 X-Api-Key）" spellCheck={false} disabled={loading} />}
                   {authKind.startsWith("oauth2_") && <>
                     <input style={styles.input} value={oauthTokenUrl} onChange={(event) => setOauthTokenUrl(event.target.value)} placeholder="Token Endpoint URL" spellCheck={false} disabled={loading} />
@@ -1404,7 +1344,6 @@ export function HttpWorkbench({
                     <button type="button" style={styles.secondaryButton} disabled={loading} onClick={() => void startPkceAuthorization()}>打开浏览器授权（PKCE S256）</button>
                     <input style={styles.input} value={oauthAuthorizationCode} onChange={(event) => setOauthAuthorizationCode(event.target.value)} placeholder="粘贴回调参数 code（仅写入安全存储）" spellCheck={false} disabled={loading} />
                   </>}
-                  <div style={styles.muted}>仅保存密钥引用名；明文写入「变量与密钥」页签中的密钥存储。</div>
                 </div>
               )}
             </label>}
@@ -1703,6 +1642,12 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid var(--apivoy-border)",
     borderRadius: 8,
     padding: "10px 12px",
+  },
+
+  authCredentialLabel: {
+    color: "var(--apivoy-muted)",
+    fontSize: 11,
+    fontWeight: 650,
   },
   authFields: {
     display: "flex",

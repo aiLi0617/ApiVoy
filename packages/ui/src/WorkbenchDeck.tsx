@@ -6,6 +6,8 @@ import { stashHydrate } from "./openRequestPipeline";
 import { WorkbenchFrame } from "./WorkbenchFrame";
 import { clearWorkbenchDraft } from "./draftRecovery";
 import { ScriptLibraryWorkbench } from "./ScriptLibraryWorkbench";
+import { CurlImportDialog } from "./CurlImportDialog";
+import type { HttpWorkbenchRequest } from "./HttpWorkbench";
 
 export interface WorkbenchDefinition { id: string; label: string; protocol?: string; protocols?: string[]; group?: string; icon?: IconName }
 export type WorkbenchTab = WorkbenchDefinition;
@@ -17,21 +19,21 @@ export interface WorkbenchDeckProps {
   /** UX-012: show save target in frame status */
   saveTargetLabel?: string;
 }
-export const WORKBENCH_LABELS: Record<string, string> = { http:"HTTP", graphql:"GraphQL", grpc:"gRPC", rpc:"SOAP / RPC", websocket:"WebSocket", sse:"SSE", socket:"TCP / UDP", mqtt:"MQTT", amqp:"AMQP", kafka:"Kafka", redis:"Redis", sql:"SQL", mock:"Mock", runner:"Runner", gateway:"Gateway", capture:"Capture", plugins:"Plugins", ai:"AI" };
+export const WORKBENCH_LABELS: Record<string, string> = { http:"HTTP", graphql:"GraphQL", grpc:"gRPC", rpc:"SOAP / RPC", websocket:"WebSocket", sse:"SSE", tcp:"TCP", udp:"UDP", mqtt:"MQTT", amqp:"AMQP", kafka:"Kafka", redis:"Redis", sql:"SQL", mock:"Mock", runner:"Runner", gateway:"Gateway", capture:"Capture", plugins:"Plugins", ai:"AI" };
 export const WORKBENCH_ICONS: Record<string, IconName> = {
-  http: "globe", graphql: "code", grpc: "network", rpc: "code", websocket: "activity", sse: "activity", socket: "network",
+  http: "globe", graphql: "code", grpc: "network", rpc: "code", websocket: "activity", sse: "activity", tcp: "network", udp: "network",
   mqtt: "network", amqp: "network", kafka: "network", redis: "database", sql: "database",
   mock: "archive", runner: "send", gateway: "globe", capture: "search", plugins: "command", ai: "bolt", __scripts: "code",
 };
 export const DEFAULT_WORKBENCH_GROUPS: WorkbenchGroup[] = [
   { id:"api", label:"API", icon:"globe", workbenchIds:["http","grpc"] },
-  { id:"realtime", label:"实时通信", icon:"activity", workbenchIds:["websocket","sse","socket"] },
+  { id:"realtime", label:"实时通信", icon:"activity", workbenchIds:["websocket","sse","tcp","udp"] },
   { id:"messaging", label:"消息", icon:"network", workbenchIds:["mqtt","amqp","kafka"] },
   { id:"data", label:"数据", icon:"database", workbenchIds:["redis","sql"] },
   { id:"tools", label:"工具", icon:"bolt", workbenchIds:["mock","runner","gateway","capture","plugins","ai"] },
 ];
 const GROUP_BY_WORKBENCH = new Map(DEFAULT_WORKBENCH_GROUPS.flatMap((group) => group.workbenchIds.map((id) => [id, group.label])));
-const LAYOUT_BY_WORKBENCH: Record<string, "request" | "stream" | "editor" | "management"> = { graphql:"request", grpc:"request", rpc:"request", websocket:"stream", sse:"stream", socket:"stream", mqtt:"stream", amqp:"stream", kafka:"stream", redis:"editor", sql:"editor", mock:"management", runner:"management", gateway:"management", capture:"management", plugins:"management", ai:"management" };
+const LAYOUT_BY_WORKBENCH: Record<string, "request" | "stream" | "editor" | "management"> = { graphql:"request", grpc:"request", rpc:"request", websocket:"stream", sse:"stream", tcp:"stream", udp:"stream", mqtt:"stream", amqp:"stream", kafka:"stream", redis:"editor", sql:"editor", mock:"management", runner:"management", gateway:"management", capture:"management", plugins:"management", ai:"management" };
 export function resolveWorkbenchId(tabs: WorkbenchTab[], stored: string | null) { return tabs.some((tab) => tab.id === stored) ? stored! : tabs[0]?.id ?? ""; }
 export function resolveHashWorkbenchId(tabs: WorkbenchTab[], hash: string): string | null {
   const id = new URLSearchParams(hash.replace(/^#/, "")).get("workbench");
@@ -82,6 +84,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
   const [codeOpen, setCodeOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [homeMoreOpen, setHomeMoreOpen] = useState(false);
+  const [curlImportOpen, setCurlImportOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
 
@@ -143,7 +146,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
       const match = tabs.find((tab) => tab.protocol === protocol || tab.protocols?.includes(protocol ?? "") || tab.id === protocol);
       if (!match) return;
       const opened = detail as { id?: string; name?: string } | null;
-      const existing = opened?.id ? sessions.find((item) => item.requestId === opened.id) : undefined;
+      const existing = opened?.id ? sessions.find((item) => item.requestId === opened.id || item.id === opened.id) : undefined;
       if (existing) {
         activateSession(existing);
         return;
@@ -160,11 +163,14 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     window.addEventListener("apivoy-select-workbench", selectWorkbench);
     window.addEventListener("apivoy-create-workbench", createWorkbenchEvent);
     window.addEventListener("apivoy-open-script-library", openScriptLibrary);
+    const openCurlImport = () => setCurlImportOpen(true);
+    window.addEventListener("apivoy-open-curl-import", openCurlImport);
     return () => {
       window.removeEventListener("apivoy-open-request", openRequest);
       window.removeEventListener("apivoy-select-workbench", selectWorkbench);
       window.removeEventListener("apivoy-create-workbench", createWorkbenchEvent);
       window.removeEventListener("apivoy-open-script-library", openScriptLibrary);
+      window.removeEventListener("apivoy-open-curl-import", openCurlImport);
     };
   }, [tabs, setActive, sessions]);
   useEffect(() => {
@@ -233,7 +239,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     </div>
   );
   const favoriteTabs = favorites.map((id) => tabMap.get(id)).filter(Boolean) as WorkbenchTab[];
-  const showCode = selectedTab && ["graphql", "grpc", "websocket", "sse", "socket", "http"].includes(selectedTab.id);
+  const showCode = selectedTab && ["graphql", "grpc", "websocket", "sse", "tcp", "udp", "http"].includes(selectedTab.id);
   const frameStatus = (
     <span>
       {saveTargetLabel ? `${t("workbench.saveTarget")}: ${saveTargetLabel}` : t("status.ready")}
@@ -256,8 +262,15 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
   function runHomeAction(id: string) {
     setHomeMoreOpen(false);
     if (id !== "curl") { createWorkbench(id); return; }
-    createWorkbench("http");
-    window.setTimeout(() => window.dispatchEvent(new CustomEvent("apivoy-open-curl-import")), 0);
+    setCurlImportOpen(true);
+  }
+  function createCurlRequest(request: HttpWorkbenchRequest) {
+    const session = createWorkbench("http", true, true, { name: request.name });
+    if (!session) return;
+    const hydrate = { workbenchId: "http", sessionId: session.id, protocolId: "http", envelope: { request } };
+    stashHydrate(hydrate);
+    setCurlImportOpen(false);
+    queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
   }
   function renderHomePage(sessionId: string) {
     const primaryActions = homeActions.slice(0, 2);
@@ -282,15 +295,22 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     if(session.workbenchId==="__scripts") return <ScriptLibraryWorkbench projectId={saveTargetLabel?.split(" / ")[0] || "default-project"}/>;
     const index = tabs.findIndex((tab) => tab.id === session.workbenchId); if (index < 0) return null;
     const tab = tabs[index]; const source = items[index];
+    const sourceWithSaveIdentity = isValidElement(source) ? (() => {
+      const element = source as ReactElement<{ onSave?: (request: Record<string, unknown>) => Promise<void> }>;
+      const onSave = element.props.onSave;
+      if (!onSave) return element;
+      const requestId = session.requestId ?? session.id;
+      return cloneElement(element, { onSave: (request) => onSave({ ...request, id: requestId }) });
+    })() : source;
     if (session.workbenchId === "http" && isValidElement(source)) {
-      const item = cloneElement(source as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
+      const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
       return item;
     }
-    if (session.workbenchId === "websocket" && isValidElement(source)) {
-      const item = cloneElement(source as ReactElement<{ onTitleChange?: (title: string) => void }>, { key: session.id, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
-      return <WorkbenchFrame title="WebSocket" hideHeader toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH.websocket ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
+    if ((session.workbenchId === "websocket" || session.workbenchId === "tcp" || session.workbenchId === "udp") && isValidElement(source)) {
+      const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void }>, { key: session.id, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
+      return <WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} hideHeader toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
     }
-    const item = isValidElement(source) ? cloneElement(source, { key: session.id }) : source;
+    const item = isValidElement(sourceWithSaveIdentity) ? cloneElement(sourceWithSaveIdentity, { key: session.id }) : sourceWithSaveIdentity;
     return <WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} description={GROUP_BY_WORKBENCH.get(session.workbenchId)} badge={<span className="protocol-badge">{tab.protocol ?? tab.id.toUpperCase()}</span>} toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
   }
 
@@ -311,6 +331,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
         {!collapsed && favoriteTabs.length ? <div className="protocol-shortcuts" aria-label={t("workbench.favorites")}><div className="protocol-group-title"><Icon name="star"/><span>{t("workbench.favorites")}</span></div>{favoriteTabs.map(renderShortcut)}</div> : null}
         {!collapsed && recent.length ? <div className="protocol-shortcuts" aria-label={t("workbench.recent")}><div className="protocol-group-title"><Icon name="activity"/><span>{t("workbench.recent")}</span></div>{recent.slice(0,3).map((id) => tabMap.get(id)).filter(Boolean).map((tab) => renderShortcut(tab!))}</div> : null}
       </aside>
+      <CurlImportDialog open={curlImportOpen} onClose={() => setCurlImportOpen(false)} onCreate={createCurlRequest}/>
       <div className="workbench-content" data-workbench-label={selectedTab ? translateWorkbench(selectedTab.id, selectedTab.label) : selected === "__scripts" ? "脚本库" : ""}>
         <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button></div></div>
         {sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}

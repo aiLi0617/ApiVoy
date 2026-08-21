@@ -13,6 +13,7 @@ interface AppStore {
   collapsedExplorerNodes: string[];
   favoriteWorkbenches: string[];
   recentWorkbenches: string[];
+  splitDirection: Exclude<WorkbenchLayoutPreference, "auto">;
   splitPreferences: Record<string, SplitPanePreference>;
   setActiveWorkbench: (id: string) => void;
   setThemeMode: (mode: ThemeMode) => void;
@@ -20,13 +21,14 @@ interface AppStore {
   toggleExplorer: () => void;
   toggleExplorerNode: (id: string) => void;
   toggleFavorite: (id: string) => void;
+  setSplitDirection: (direction: Exclude<WorkbenchLayoutPreference, "auto">) => void;
   setSplitPreference: (id: string, value: SplitPanePreference) => void;
 }
 
 export const useAppStore = create<AppStore>()(persist(
   (set) => ({
     activeWorkbench: "", themeMode: "dark", collapsedNavigation: false, collapsedExplorer: false, collapsedExplorerNodes: [],
-    favoriteWorkbenches: [], recentWorkbenches: ["http"], splitPreferences: {},
+    favoriteWorkbenches: [], recentWorkbenches: ["http"], splitDirection: "vertical", splitPreferences: {},
     setActiveWorkbench: (activeWorkbench) => set((state) => ({
       activeWorkbench,
       recentWorkbenches: !activeWorkbench || activeWorkbench.startsWith("__")
@@ -38,7 +40,17 @@ export const useAppStore = create<AppStore>()(persist(
     toggleExplorer: () => set((state) => ({ collapsedExplorer: !state.collapsedExplorer })),
     toggleExplorerNode: (id) => set((state) => ({ collapsedExplorerNodes: state.collapsedExplorerNodes.includes(id) ? state.collapsedExplorerNodes.filter((item) => item !== id) : [...state.collapsedExplorerNodes, id] })),
     toggleFavorite: (id) => set((state) => ({ favoriteWorkbenches: state.favoriteWorkbenches.includes(id) ? state.favoriteWorkbenches.filter((item) => item !== id) : [...state.favoriteWorkbenches, id] })),
+    setSplitDirection: (splitDirection) => set({ splitDirection }),
     setSplitPreference: (id, value) => set((state) => ({ splitPreferences: { ...state.splitPreferences, [id]: value } })),
   }),
-  { name: "apivoy:ui-state", version: 3, migrate: (persisted) => { const state = persisted as Partial<AppStore>; return { ...state, collapsedExplorerNodes: Array.isArray(state.collapsedExplorerNodes) ? state.collapsedExplorerNodes : [] } as AppStore; } },
+  { name: "apivoy:ui-state", version: 4, migrate: (persisted) => {
+    const state = persisted as Partial<AppStore>;
+    const legacyDirection = state.splitPreferences?.["http-workbench"]?.direction
+      ?? Object.values(state.splitPreferences ?? {}).find((preference) => preference?.direction)?.direction;
+    return {
+      ...state,
+      collapsedExplorerNodes: Array.isArray(state.collapsedExplorerNodes) ? state.collapsedExplorerNodes : [],
+      splitDirection: state.splitDirection ?? (legacyDirection === "horizontal" ? "horizontal" : "vertical"),
+    } as AppStore;
+  } },
 ));

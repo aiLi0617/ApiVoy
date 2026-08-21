@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const workbenchIds = ["http", "grpc", "websocket", "sse", "socket", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "runner", "gateway", "capture", "plugins", "ai"];
+const workbenchIds = ["http", "grpc", "websocket", "sse", "tcp", "udp", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "runner", "gateway", "capture", "plugins", "ai"];
 
 async function expectActiveWorkbench(page: Page, id: string) {
   await expect(page.getByTestId(`workbench-${id}`).first()).toHaveAttribute("aria-current", "page");
