@@ -135,6 +135,11 @@ async function main() {
   await openWorkbench(page, "grpc");
   await page.screenshot({ path: path.join(outDir, "grpc-workbench.png") });
 
+  for (const protocol of ["mqtt", "amqp", "kafka", "redis", "sql"]) {
+    await openWorkbench(page, protocol);
+    await page.screenshot({ path: path.join(outDir, `${protocol}-workbench.png`) });
+  }
+
   await openWorkbench(page, "plugins");
   await page.screenshot({ path: path.join(outDir, "plugins-or-runner.png") });
 

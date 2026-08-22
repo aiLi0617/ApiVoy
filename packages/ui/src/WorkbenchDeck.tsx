@@ -306,7 +306,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
       const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
       return item;
     }
-    if ((session.workbenchId === "websocket" || session.workbenchId === "tcp" || session.workbenchId === "udp") && isValidElement(source)) {
+    if ((session.workbenchId === "websocket" || session.workbenchId === "sse" || session.workbenchId === "tcp" || session.workbenchId === "udp" || session.workbenchId === "grpc") && isValidElement(source)) {
       const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void }>, { key: session.id, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
       return <WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} hideHeader toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
     }

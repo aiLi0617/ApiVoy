@@ -1,121 +1,71 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import type { HttpRunResult, HttpSendHooks, HttpWorkbenchRequest } from "./HttpWorkbench";
+import { useEffect, useRef, useState } from "react";
+import type { ExecutionEvent, ResponseMeta } from "@apivoy/request-model";
+import { KeyValueRows, createQueryRow, queryRowsFromUrl, requestNameFromUrl, urlWithQueryRows, type HeaderRow, type HttpRunResult, type HttpSendHooks, type HttpWorkbenchRequest } from "./HttpWorkbench";
 import { ProtocolCodeGenerator } from "./ProtocolCodeGenerator";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
+import { SplitPane } from "./WorkbenchFrame";
 import { useWorkbenchHydration } from "./useWorkbenchHydration";
+import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
+import { Icon } from "./Icons";
+import { useMessageDetailResize } from "./useMessageDetailResize";
 
-export interface SseWorkbenchRequest {
-  name: string;
-  url: string;
-  headers: Array<[string, string]>;
-  lastEventId?: string;
-  reconnectMax: number;
-  reconnectDelayMs: number;
-  timeoutMs: number;
-}
-
+export interface SseWorkbenchRequest { name:string; url:string; headers:Array<[string,string]>; lastEventId?:string; reconnectMax:number; reconnectDelayMs:number; timeoutMs:number }
 export interface SseWorkbenchProps {
-  onConnect: (request: SseWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>;
-  onSendMessage?: (request: HttpWorkbenchRequest) => Promise<HttpRunResult>;
-  onCancel: (executionId: string) => Promise<void>;
-  onSave?: (request: SseWorkbenchRequest) => Promise<void>;
-  externalRequest?: SseWorkbenchRequest | null;
+  onConnect:(request:SseWorkbenchRequest,hooks?:HttpSendHooks)=>Promise<HttpRunResult>;
+  /** @deprecated SSE is receive-only. Create a separate HTTP request for companion sends. */
+  onSendMessage?:(request:HttpWorkbenchRequest)=>Promise<HttpRunResult>;
+  onCancel:(executionId:string)=>Promise<void>; onSave?:(request:SseWorkbenchRequest)=>Promise<void>; externalRequest?:SseWorkbenchRequest|null;
 }
-
-const HTTP_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const;
-
-export function SseWorkbench({ onConnect, onSendMessage, onCancel, onSave, externalRequest }: SseWorkbenchProps) {
-  const [url, setUrl] = useState("https://");
-  const [lastEventId, setLastEventId] = useState("");
-  const [headerText, setHeaderText] = useState("");
-  const [reconnectMax, setReconnectMax] = useState(3);
-  const [reconnectDelayMs, setReconnectDelayMs] = useState(1000);
-  const [runningId, setRunningId] = useState<string | null>(null);
-  const [output, setOutput] = useState("尚未连接");
-  const [busy, setBusy] = useState(false);
-  const [messageMethod, setMessageMethod] = useState<(typeof HTTP_METHODS)[number]>("POST");
-  const [messageUrl, setMessageUrl] = useState("");
-  const [messageHeaders, setMessageHeaders] = useState("Content-Type: application/json");
-  const [messageBody, setMessageBody] = useState("{\n  \"message\": \"\"\n}");
-  const [messageBusy, setMessageBusy] = useState(false);
-  const [messageResult, setMessageResult] = useState("尚未发送配套请求");
-  useEffect(() => {
-    const apply = (value: SseWorkbenchRequest) => {
-      setUrl(value.url);
-      setHeaderText(value.headers.map(([name, item]) => `${name}: ${item}`).join("\n"));
-      setLastEventId(value.lastEventId ?? "");
-      setReconnectMax(value.reconnectMax);
-      setReconnectDelayMs(value.reconnectDelayMs);
-    };
-    if (externalRequest) apply(externalRequest);
-    else {
-      const draft = readWorkbenchDraft<SseWorkbenchRequest>("sse");
-      if (draft) apply(draft);
-    }
-  }, [externalRequest]);
-  useWorkbenchHydration("sse", (envelope) => {
-    const detail = envelope as { name?: string; target?: string; timeoutMs?: number; payload?: { type?: string; headers?: Array<[string, string]>; lastEventId?: string | null; reconnectMax?: number; reconnectDelayMs?: number } };
-    if (detail?.payload?.type !== "sse") return;
-    setUrl(detail.target ?? "https://");
-    setHeaderText((detail.payload.headers ?? []).map(([name, item]) => `${name}: ${item}`).join("\n"));
-    setLastEventId(detail.payload.lastEventId ?? "");
-    setReconnectMax(detail.payload.reconnectMax ?? 3);
-    setReconnectDelayMs(detail.payload.reconnectDelayMs ?? 1000);
-  });
-  const request = (): SseWorkbenchRequest => ({ name: `SSE ${url}`, url, headers: headerText.split("\n").filter(Boolean).map((line): [string, string] => { const index = line.indexOf(":"); return index < 0 ? [line.trim(), ""] : [line.slice(0, index).trim(), line.slice(index + 1).trim()]; }), lastEventId: lastEventId || undefined, reconnectMax, reconnectDelayMs, timeoutMs: 0 });
-  useAutosaveDraft("sse", request);
-
-  async function connect() {
-    setBusy(true); setOutput("正在连接 SSE…");
-    try {
-      const result = await onConnect(request(), { onStarted: setRunningId, onChunk: (chunk) => setOutput((current) => current === "正在连接 SSE…" ? chunk : current + chunk) });
-      setOutput(result.error ? `连接失败：${result.error}` : result.preview ?? "连接已结束，没有收到事件");
-    } catch (error) { setOutput(error instanceof Error ? error.message : String(error)); }
-    finally { setBusy(false); setRunningId(null); }
-  }
-
-  async function sendMessage() {
-    if (!messageUrl.trim()) return;
-    setMessageBusy(true);
-    setMessageResult("正在发送…");
-    try {
-      const headers = parseHeaders(messageHeaders);
-      if (onSendMessage) {
-        const result = await onSendMessage({ name: `${messageMethod} ${messageUrl}`, url: messageUrl.trim(), method: messageMethod, headers, body: messageBody, bodyEncoding: "text", timeoutMs: 30_000, variables: {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true });
-        const status = result.responseMeta?.status ? `HTTP ${result.responseMeta.status}` : result.summary.state;
-        setMessageResult(result.error ? `发送失败：${result.error}` : `${status}\n${result.preview ?? "请求已完成，没有响应正文"}`);
-      } else {
-        const response = await fetch(messageUrl.trim(), { method: messageMethod, headers: new Headers(headers), body: messageBody });
-        const body = await response.text();
-        setMessageResult(`HTTP ${response.status} ${response.statusText}\n${body || "请求已完成，没有响应正文"}`);
-      }
-    } catch (error) { setMessageResult(`发送失败：${error instanceof Error ? error.message : String(error)}`); }
-    finally { setMessageBusy(false); }
-  }
-
-  return <section style={styles.root}>
-    <div style={styles.title}><div><small style={styles.eyebrow}>STREAMING PROTOCOL</small><h2 style={styles.h2}>Server-Sent Events</h2></div><span style={styles.badge}>{busy ? "CONNECTED" : "IDLE"}</span></div>
-    <div style={styles.target}><label style={styles.targetLabel}>SSE 接收地址<input aria-label="SSE 接收地址" style={styles.url} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/events" /></label><button style={styles.connect} disabled={busy || !url.trim()} onClick={() => void connect()}>连接</button>{onSave && <button style={styles.cancel} disabled={busy} onClick={() => void onSave(request())}>保存</button>}{runningId && <button style={styles.cancel} onClick={() => void onCancel(runningId)}>断开</button>}</div>
-    <div style={styles.grid}><label style={styles.label}>Last-Event-ID<input style={styles.input} value={lastEventId} onChange={(event) => setLastEventId(event.target.value)} placeholder="可选，用于断线续传" /></label><label style={styles.label}>请求头（每行 Name: Value）<textarea style={styles.headers} value={headerText} onChange={(event) => setHeaderText(event.target.value)} placeholder="Authorization: Bearer {{token}}" /></label></div>
-    <div style={styles.grid}><label style={styles.label}>最大重连次数<input style={styles.input} type="number" min={0} value={reconnectMax} onChange={(event) => setReconnectMax(Math.max(0, Number(event.target.value) || 0))} /></label><label style={styles.label}>重连间隔（ms）<input style={styles.input} type="number" min={0} max={60000} value={reconnectDelayMs} onChange={(event) => setReconnectDelayMs(Math.max(0, Number(event.target.value) || 0))} /></label></div>
-    <section style={styles.companion} aria-labelledby="sse-companion-title">
-      <div style={styles.companionHeader}><div><strong id="sse-companion-title">配套发送接口</strong><div style={styles.hint}>通过独立 HTTP 请求发送消息；SSE 连接继续负责接收事件。</div></div><button type="button" style={styles.sendMessage} disabled={messageBusy || !messageUrl.trim()} onClick={() => void sendMessage()}>{messageBusy ? "发送中…" : "发送"}</button></div>
-      <div style={styles.messageTarget}><select aria-label="请求方法" style={styles.select} value={messageMethod} onChange={(event) => setMessageMethod(event.target.value as (typeof HTTP_METHODS)[number])}>{HTTP_METHODS.map((method) => <option key={method}>{method}</option>)}</select><input aria-label="配套发送接口 URL" style={styles.url} value={messageUrl} onChange={(event) => setMessageUrl(event.target.value)} placeholder="https://example.com/messages" /></div>
-      <div style={styles.messageGrid}><label style={styles.label}>请求头（每行 Name: Value）<textarea style={styles.messageHeaders} value={messageHeaders} onChange={(event) => setMessageHeaders(event.target.value)} /></label><label style={styles.label}>请求正文<textarea style={styles.messageBody} value={messageBody} onChange={(event) => setMessageBody(event.target.value)} /></label></div>
-      <div style={styles.messageResultTitle}>发送结果</div><pre role="status" aria-live="polite" style={styles.messageResult}>{messageResult}</pre>
-    </section>
-    <ProtocolCodeGenerator input={{ protocol: "sse", request: request() }} /><div style={styles.responseTitle}>事件流</div><pre role="status" aria-live="polite" style={styles.output}>{output}</pre>
-  </section>;
+type RequestTab="params"|"headers"|"settings";
+type ResponseTab="events"|"headers"|"request";
+interface SseEventRecord { id:string; eventId:string; type:string; data:string; retry?:number; time:string }
+function rowsFromPairs(entries:Array<[string,string]>):HeaderRow[]{return [...entries.map(([key,value])=>createQueryRow(key,value)),createQueryRow()]}
+function enabledPairs(rows:HeaderRow[]):Array<[string,string]>{return rows.filter((row)=>row.enabled&&row.key.trim()).map((row)=>[row.key.trim(),row.value])}
+function normalizeUrl(value:string|undefined):string{return value?.trim()==="https://"?"":value??""}
+function parseEventBlock(block:string):SseEventRecord|null{
+  let eventId="",type="message",retry:number|undefined;const data:string[]=[];
+  for(const line of block.split("\n")){if(!line||line.startsWith(":"))continue;const separator=line.indexOf(":");const field=separator<0?line:line.slice(0,separator);const value=separator<0?"":line.slice(separator+1).replace(/^ /,"");if(field==="data")data.push(value);else if(field==="event")type=value||"message";else if(field==="id"&&!value.includes("\0"))eventId=value;else if(field==="retry"&&/^\d+$/.test(value))retry=Number(value)}
+  if(!data.length&&!eventId&&retry===undefined&&type==="message")return null;
+  return {id:crypto.randomUUID(),eventId,type,data:data.join("\n"),retry,time:new Date().toLocaleTimeString([],{hour12:false})};
 }
+function prettyData(value:string):string{try{return JSON.stringify(JSON.parse(value),null,2)}catch{return value}}
 
-function parseHeaders(value: string): Array<[string, string]> {
-  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => { const index = line.indexOf(":"); return index < 0 ? [line, ""] : [line.slice(0, index).trim(), line.slice(index + 1).trim()]; });
+export function SseWorkbench({onConnect,onCancel,onSave,externalRequest}:SseWorkbenchProps){
+  const [name,setName]=useState(""),[url,setUrl]=useState(""),[lastEventId,setLastEventId]=useState("");
+  const [queryRows,setQueryRows]=useState<HeaderRow[]>(()=>[createQueryRow()]),[headerRows,setHeaderRows]=useState<HeaderRow[]>(()=>[createQueryRow()]);
+  const [reconnectMax,setReconnectMax]=useState(3),[reconnectDelayMs,setReconnectDelayMs]=useState(1000);
+  const [runningId,setRunningId]=useState<string|null>(null),[statusMessage,setStatusMessage]=useState("尚未连接"),[busy,setBusy]=useState(false),[requestTab,setRequestTab]=useState<RequestTab>("params");
+  const [responseTab,setResponseTab]=useState<ResponseTab>("events"),[events,setEvents]=useState<SseEventRecord[]>([]),[selectedEventId,setSelectedEventId]=useState<string|null>(null),[eventQuery,setEventQuery]=useState(""),[responseMeta,setResponseMeta]=useState<ResponseMeta|null>(null),[hasConnected,setHasConnected]=useState(false);
+  const [detailFormat,setDetailFormat]=useState<"pretty"|"raw">("pretty"),[detailContentType,setDetailContentType]=useState<"auto"|"json"|"xml"|"html"|"javascript"|"text">("auto"),[detailWordWrap,setDetailWordWrap]=useState(true);
+  const eventBufferRef=useRef("");
+  const detailEditorRef=useRef<CodeEditorHandle|null>(null);
+  useMessageDetailResize("apivoy-sse-event-list-ratio",Boolean(selectedEventId),".sse-event-inspector.has-detail");
+  useEffect(()=>{const apply=(value:SseWorkbenchRequest)=>{const target=normalizeUrl(value.url);setName(value.name===`SSE ${value.url}`?"":value.name??"");setUrl(target);setQueryRows(queryRowsFromUrl(target));setHeaderRows(rowsFromPairs(value.headers));setLastEventId(value.lastEventId??"");setReconnectMax(value.reconnectMax);setReconnectDelayMs(value.reconnectDelayMs)};if(externalRequest)apply(externalRequest);else{const draft=readWorkbenchDraft<SseWorkbenchRequest>("sse");if(draft)apply(draft)}},[externalRequest]);
+  useWorkbenchHydration("sse",(envelope)=>{const detail=envelope as {name?:string;target?:string;payload?:{type?:string;headers?:Array<[string,string]>;lastEventId?:string|null;reconnectMax?:number;reconnectDelayMs?:number}};if(detail?.payload?.type!=="sse")return;const target=normalizeUrl(detail.target);setName(detail.name===`SSE ${detail.target}`?"":detail.name??"");setUrl(target);setQueryRows(queryRowsFromUrl(target));setHeaderRows(rowsFromPairs(detail.payload.headers??[]));setLastEventId(detail.payload.lastEventId??"");setReconnectMax(detail.payload.reconnectMax??3);setReconnectDelayMs(detail.payload.reconnectDelayMs??1000)});
+  const request=():SseWorkbenchRequest=>{const target=urlWithQueryRows(url,queryRows);return {name:name.trim()||requestNameFromUrl(target),url:target,headers:enabledPairs(headerRows),lastEventId:lastEventId||undefined,reconnectMax,reconnectDelayMs,timeoutMs:0}};
+  useAutosaveDraft("sse",request);
+  function consumeChunk(chunk:string){eventBufferRef.current=(eventBufferRef.current+chunk).replace(/\r\n/g,"\n");const parsed:SseEventRecord[]=[];let boundary=eventBufferRef.current.indexOf("\n\n");while(boundary>=0){const record=parseEventBlock(eventBufferRef.current.slice(0,boundary));eventBufferRef.current=eventBufferRef.current.slice(boundary+2);if(record)parsed.push(record);boundary=eventBufferRef.current.indexOf("\n\n")}if(parsed.length){setEvents((current)=>[...current,...parsed]);setHasConnected(true);setStatusMessage(`已接收 ${events.length+parsed.length} 个事件`)}}
+  function handleExecutionEvent(event:ExecutionEvent){if(event.type==="response_meta"){setResponseMeta(event);setHasConnected((event.status??0)>=200&&(event.status??0)<300);setStatusMessage(event.status?`HTTP ${event.status}${event.statusText?` ${event.statusText}`:""}`:"已连接")}else if(event.type==="warning")setStatusMessage(event.message);else if(event.type==="failed")setStatusMessage(`连接失败：${event.message}`)}
+  async function connect(){setBusy(true);setStatusMessage("正在连接 SSE…");setEvents([]);setSelectedEventId(null);setResponseMeta(null);setHasConnected(false);eventBufferRef.current="";try{const result=await onConnect(request(),{onStarted:setRunningId,onChunk:consumeChunk,onEvent:handleExecutionEvent});if(result.responseMeta){setResponseMeta(result.responseMeta);setHasConnected(true)}setStatusMessage(result.error?`连接失败：${result.error}`:result.summary.state==="completed"?"连接已结束":"连接已断开")}catch(error){setStatusMessage(`连接失败：${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false);setRunningId(null)}}
+  const paramCount=enabledPairs(queryRows).length,headerCount=enabledPairs(headerRows).length;
+  const tabs:Array<{id:RequestTab;label:string}>=[{id:"params",label:`Params${paramCount?` (${paramCount})`:""}`},{id:"headers",label:`Headers${headerCount?` (${headerCount})`:""}`},{id:"settings",label:"设置"}];
+  const primary=<div className="sse-request-pane"><div className="websocket-request-tabs" role="tablist" aria-label="SSE 请求配置">{tabs.map((tab)=><button key={tab.id} type="button" role="tab" aria-selected={requestTab===tab.id} className={requestTab===tab.id?"is-active":""} onClick={()=>setRequestTab(tab.id)}>{tab.label}</button>)}</div><div className="sse-request-tab-panel" role="tabpanel">
+    {requestTab==="params"?<section className="websocket-params-panel" data-title="Query 参数"><KeyValueRows rows={queryRows} setRows={setQueryRows} kind="Param" nameLabel="参数名" valueLabel="参数值" addPlaceholder="添加参数" loading={busy} onRowsChange={(rows)=>setUrl((current)=>urlWithQueryRows(current,rows))}/></section>:null}
+    {requestTab==="headers"?<section className="websocket-params-panel" data-title="请求 Headers"><KeyValueRows rows={headerRows} setRows={setHeaderRows} kind="Header" nameLabel="Header 名称" valueLabel="Header 值" addPlaceholder="添加 Header" loading={busy}/></section>:null}
+    {requestTab==="settings"?<div className="sse-settings-grid"><label className="sse-field">Last-Event-ID <span>可选，用于断线续传</span><input value={lastEventId} onChange={(event)=>setLastEventId(event.target.value)} placeholder="上次收到的事件 ID"/></label><label className="sse-field">最大重连次数<input type="number" min={0} value={reconnectMax} onChange={(event)=>setReconnectMax(Math.max(0,Number(event.target.value)||0))}/></label><label className="sse-field">重连间隔（ms）<input type="number" min={0} max={60000} value={reconnectDelayMs} onChange={(event)=>setReconnectDelayMs(Math.max(0,Number(event.target.value)||0))}/></label></div>:null}
+  </div><ProtocolCodeGenerator input={{protocol:"sse",request:request()}}/></div>;
+  const selectedEvent=events.find((event)=>event.id===selectedEventId)??null;
+  const visibleEvents=events.filter((event)=>!eventQuery.trim()||`${event.type} ${event.eventId} ${event.data}`.toLocaleLowerCase().includes(eventQuery.trim().toLocaleLowerCase()));
+  const selectedEventPayload=selectedEvent?(detailFormat==="pretty"?prettyData(selectedEvent.data):selectedEvent.data):"";
+  const selectedEventLanguage=detailContentType!=="auto"?(detailContentType==="text"?"plaintext":detailContentType):(()=>{try{JSON.parse(selectedEvent?.data??"");return "json"}catch{const source=selectedEvent?.data.trimStart()??"";if(/^<!doctype\s+html|^<html[\s>]/i.test(source))return "html";if(/^<\?xml|^<[A-Za-z_][\w:.-]*(?:\s|>)/.test(source))return "xml";return "plaintext"}})();
+  function clearEvents(){setEvents([]);setSelectedEventId(null)}
+  function downloadSelectedEvent(){if(!selectedEvent)return;const blob=new Blob([selectedEventPayload],{type:"text/plain;charset=utf-8"});const href=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=href;anchor.download=`sse-${selectedEvent.type}-${selectedEvent.time.replace(/:/g,"-")}.txt`;anchor.click();URL.revokeObjectURL(href)}
+  async function copySelectedEvent(){if(selectedEvent)await navigator.clipboard.writeText(selectedEventPayload)}
+  const actualRequest=request();
+  const secondary=<section className={`websocket-response sse-response${hasConnected||events.length?" has-response":""}`}>{!hasConnected&&!events.length?<div className="websocket-response-waiting"><strong>等待连接</strong><span>建立 SSE 连接后，事件、响应 Header 和实际请求会显示在这里。</span><small>{statusMessage}</small></div>:<><div className="websocket-response-tabs" role="tablist" aria-label="SSE 响应">{([['events',`Events ${events.length}`],['headers',`Headers ${responseMeta?.headers.length??0}`],['request','实际请求']] as const).map(([id,label])=><button key={id} type="button" role="tab" aria-selected={responseTab===id} className={responseTab===id?"is-active":""} onClick={()=>setResponseTab(id)}>{label}</button>)}</div>
+    {responseTab==="events"?<div className={`sse-event-inspector${selectedEvent?" has-detail":""}`}><section className="sse-event-list"><header><input type="search" aria-label="搜索 SSE 事件" value={eventQuery} onChange={(event)=>setEventQuery(event.target.value)} placeholder="搜索事件"/><span>{visibleEvents.length} 条</span><button type="button" className="sse-clear-events" aria-label="清空事件" title="清空事件" disabled={!events.length} onClick={clearEvents}><Icon name="broom"/></button></header><div>{visibleEvents.map((event)=><button type="button" key={event.id} className={`websocket-frame websocket-frame-incoming${selectedEventId===event.id?" is-selected":""}`} onClick={()=>setSelectedEventId(event.id)}><b>←</b><code><strong>{event.type}</strong> {event.data.replace(/\s+/g," ")||"(无 data)"}</code><time>{event.time}</time></button>)}</div></section>{selectedEvent?<section className="websocket-frame-detail"><header><div className="websocket-frame-detail-options"><select aria-label="事件展示格式" value={detailFormat} onChange={(event)=>setDetailFormat(event.target.value as typeof detailFormat)}><option value="pretty">Pretty</option><option value="raw">Raw</option></select><select aria-label="事件内容类型" value={detailContentType} onChange={(event)=>setDetailContentType(event.target.value as typeof detailContentType)}><option value="auto">Auto</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="javascript">JavaScript</option><option value="text">Text</option></select><button type="button" className={detailWordWrap?"is-active":""} aria-label="切换自动换行" title="自动换行" onClick={()=>setDetailWordWrap((current)=>!current)}><Icon name="wrap"/></button><span className="sse-event-meta">{selectedEvent.type}{selectedEvent.eventId?` · ID ${selectedEvent.eventId}`:""}{selectedEvent.retry!==undefined?` · ${selectedEvent.retry}ms`:""}</span></div><div className="websocket-frame-detail-actions"><button type="button" aria-label="下载事件" title="下载" onClick={downloadSelectedEvent}><Icon name="download"/></button><button type="button" aria-label="复制事件" title="复制" onClick={()=>void copySelectedEvent()}><Icon name="copy"/></button><button type="button" aria-label="搜索事件内容" title="搜索" onClick={()=>detailEditorRef.current?.openFind()}><Icon name="search"/></button><button type="button" aria-label="关闭事件详情" title="关闭" onClick={()=>setSelectedEventId(null)}><Icon name="close"/></button></div></header><CodeEditor ref={detailEditorRef} value={selectedEventPayload} onChange={()=>{}} language={selectedEventLanguage} height="100%" wordWrap={detailWordWrap} readOnly bare/></section>:null}</div>:null}
+    {responseTab==="headers"?<div className="websocket-response-table">{responseMeta?.headers.length?responseMeta.headers.map(([name,value],index)=><div key={`${name}-${index}`}><strong>{name}</strong><span>{value}</span></div>):<div className="websocket-response-empty">暂无响应 Header</div>}</div>:null}
+    {responseTab==="request"?<div className="websocket-response-table"><div><strong>Method</strong><span>GET</span></div><div><strong>URL</strong><span>{actualRequest.url}</span></div>{actualRequest.headers.map(([name,value],index)=><div key={`${name}-${index}`}><strong>{name}</strong><span>{value}</span></div>)}{actualRequest.lastEventId?<div><strong>Last-Event-ID</strong><span>{actualRequest.lastEventId}</span></div>:null}</div>:null}</>}</section>;
+  const connectionStatus=<span className={`websocket-status ${busy&&hasConnected?"is-open":busy?"is-connecting":""}`}>{busy&&hasConnected?`已连接 · ${events.length} 个事件`:busy?"连接中":"未连接"}</span>;
+  return <section className="sse-workbench-layout"><div className="sse-request-commandbar"><div className="sse-target-row"><span className="sse-method">GET</span><input aria-label="SSE 接收地址" value={url} onChange={(event)=>setUrl(event.target.value)} onBlur={(event)=>setQueryRows(queryRowsFromUrl(event.target.value))} placeholder="https://example.com/events"/>{!busy?<button className="ui-button primary" disabled={!url.trim()} onClick={()=>void connect()}>连接</button>:null}{runningId?<button className="ui-button danger" onClick={()=>void onCancel(runningId)}>断开</button>:null}{onSave?<button className="ui-button secondary" disabled={busy} onClick={()=>void onSave(request())}>保存</button>:null}</div></div><div className="sse-workbench-split"><SplitPane id="sse-workbench" primary={primary} secondary={secondary} primaryLabel="SSE 请求" secondaryLabel="响应检查器" secondaryActions={connectionStatus}/></div></section>;
 }
-
-const styles: Record<string, CSSProperties> = {
-  targetLabel: { display: "contents" }, root: { marginTop: 22, border: "1px solid var(--apivoy-border)", borderRadius: 14, padding: 18, background: "var(--apivoy-panel)" },
-  title: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }, eyebrow: { color: "var(--apivoy-accent)", letterSpacing: 1.4 }, h2: { margin: "3px 0 0", fontSize: 18 }, badge: { fontSize: 10, color: "#65d6a6", border: "1px solid #265b49", padding: "4px 7px", borderRadius: 999 },
-  target: { display: "flex", gap: 8 }, url: { flex: 1, minWidth: 0, background: "#0b1119", color: "var(--apivoy-text)", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: "10px 12px" }, connect: { border: 0, borderRadius: 8, padding: "0 18px", fontWeight: 700, background: "var(--apivoy-accent)", color: "#06121d", cursor: "pointer" }, cancel: { border: "1px solid #71434a", borderRadius: 8, background: "#2b171b", color: "#ff9ca8", padding: "0 12px" },
-  grid: { display: "grid", gridTemplateColumns: "minmax(180px,.45fr) 1fr", gap: 12, marginTop: 12 }, label: { display: "flex", flexDirection: "column", gap: 6, color: "var(--apivoy-muted)", fontSize: 11 }, input: { background: "#0b1119", color: "var(--apivoy-text)", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: 9 }, headers: { minHeight: 58, resize: "vertical", background: "#0b1119", color: "var(--apivoy-text)", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: 9 }, responseTitle: { marginTop: 15, color: "var(--apivoy-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }, output: { minHeight: 110, maxHeight: 360, overflow: "auto", whiteSpace: "pre-wrap", background: "#080d13", border: "1px solid var(--apivoy-border)", borderRadius: 9, padding: 12, color: "#b9d5e8", fontSize: 12 },
-  companion: { marginTop: 16, padding: 14, border: "1px solid var(--apivoy-border)", borderRadius: 10, background: "#0a1118" }, companionHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }, hint: { marginTop: 4, color: "var(--apivoy-muted)", fontSize: 11 }, sendMessage: { minHeight: 36, border: 0, borderRadius: 8, padding: "0 18px", background: "var(--apivoy-accent)", color: "#06121d", fontWeight: 700, cursor: "pointer" }, messageTarget: { display: "flex", gap: 8, marginTop: 12 }, select: { background: "#111a25", color: "var(--apivoy-text)", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: "8px 10px" }, messageGrid: { display: "grid", gridTemplateColumns: "minmax(220px,.7fr) 1fr", gap: 12, marginTop: 12 }, messageHeaders: { minHeight: 92, resize: "vertical", background: "#080d13", color: "var(--apivoy-text)", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: 9, fontFamily: "monospace" }, messageBody: { minHeight: 92, resize: "vertical", background: "#080d13", color: "var(--apivoy-text)", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: 9, fontFamily: "monospace" }, messageResultTitle: { marginTop: 12, color: "var(--apivoy-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: 1 }, messageResult: { minHeight: 44, maxHeight: 180, overflow: "auto", whiteSpace: "pre-wrap", marginBottom: 0, background: "#060b10", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: 10, color: "#b9d5e8", fontSize: 12 },
-};

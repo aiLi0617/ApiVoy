@@ -355,7 +355,7 @@ export function App() {
         onConnect={async (request, hooks) => {
           let activeExecutionId: string | null = null;
           const stop = await listen<string>("execution-started", (event) => { activeExecutionId = event.payload; hooks?.onStarted?.(event.payload); });
-          const stopEvents = await listen<{ executionId: string; event: ExecutionEvent }>("execution-event", ({ payload }) => { if (activeExecutionId === payload.executionId && payload.event.type === "response_chunk" && payload.event.preview) hooks?.onChunk?.(payload.event.preview); });
+          const stopEvents = await listen<{ executionId: string; event: ExecutionEvent }>("execution-event", ({ payload }) => { if (activeExecutionId !== payload.executionId) return; hooks?.onEvent?.(payload.event); if (payload.event.type === "response_chunk" && payload.event.preview) hooks?.onChunk?.(payload.event.preview); });
           try {
             const data = await invoke<ExecuteResponse>("execute_sse", { request: { ...request, variables: {} } });
             return { summary: data.summary, eventCount: data.eventCount, preview: data.responseBody ?? data.preview, executionId: data.executionId, assertions: [], responseMeta: data.responseMeta ?? null };

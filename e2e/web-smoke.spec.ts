@@ -82,3 +82,17 @@ test("HTTP workbench exposes busy state semantics", async ({ page }) => {
   await expect(frame).not.toHaveAttribute("aria-busy", "true");
   await expect(frame).toHaveAttribute("aria-labelledby", /workbench-title-http/);
 });
+
+test("broker and database workbenches keep save action compact and request content visible", async ({ page }) => {
+  for (const id of ["mqtt", "amqp", "kafka", "redis", "sql"]) {
+    await page.evaluate((workbenchId) => window.dispatchEvent(new CustomEvent("apivoy-create-workbench", { detail: workbenchId })), id);
+    await expectActiveWorkbench(page, id);
+    const frame = page.locator(".workbench-panel:not([hidden]) .workbench-frame");
+    const save = frame.getByRole("button", { name: "保存", exact: true });
+    await expect(save).toBeVisible();
+    expect((await save.boundingBox())?.height).toBeLessThanOrEqual(40);
+    const content = frame.locator(".protocol-request-content");
+    await expect(content).toBeVisible();
+    expect((await content.boundingBox())?.height).toBeGreaterThan(80);
+  }
+});

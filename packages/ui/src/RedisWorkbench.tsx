@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { consumeHydrate } from "./openRequestPipeline";
 import type { HttpRunResult, HttpSendHooks } from "./HttpWorkbench";
+import { ProtocolWorkbenchLayout } from "./ProtocolWorkbenchLayout";
 
 export interface RedisWorkbenchRequest {
   name: string;
@@ -94,19 +95,13 @@ export function RedisWorkbench({ onSend, onSave, onCancel }: RedisWorkbenchProps
     catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
   }
 
-  return <section style={styles.root}>
-    <header style={styles.header}><div><small style={styles.eyebrow}>RESP2 / RESP3</small><h2 style={styles.title}>Redis Console</h2><p style={styles.subtitle}>命令流水线 · ACL 认证 · 数据库选择 · 二进制安全响应</p></div><div style={styles.badge}>LOCAL DRIVER</div></header>
-    <div style={styles.targetRow}><input aria-label="请求名称" style={styles.name} value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Redis 地址" style={styles.target} value={target} onChange={(event) => setTarget(event.target.value)} /><button style={styles.send} disabled={loading} onClick={() => void send()}>{loading ? "执行中…" : "Run pipeline"}</button>{loading && onCancel && <button style={styles.cancel} onClick={() => executionId && void onCancel(executionId)}>取消</button>}</div>
-    <div style={styles.grid}>
+  return <ProtocolWorkbenchLayout id="redis" protocol="REDIS" name={name} target={target} targetLabel="Redis 地址" actionLabel="Run pipeline" loadingLabel="执行中…" loading={loading} result={result} responseTitle="Pipeline response" emptyResponse="每条命令的 RESP 响应会按顺序显示在这里" message={message} onNameChange={setName} onTargetChange={setTarget} onRun={() => void send()} onSave={onSave ? () => void save() : undefined} onCancel={onCancel && executionId ? () => void onCancel(executionId) : undefined}>
       <div style={styles.card}>
         <div style={styles.credentials}><label style={styles.label}>ACL USERNAME<input style={styles.input} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="default" /></label><label style={styles.label}>PASSWORD SECRET REF<input style={styles.input} value={passwordRef} onChange={(event) => setPasswordRef(event.target.value)} placeholder="redis-password" /></label><label style={styles.label}>DATABASE<input style={styles.input} type="number" min={0} value={database} onChange={(event) => setDatabase(Math.max(0, Number(event.target.value)))} /></label></div>
         <label style={styles.label}>COMMANDS · ONE PER LINE<textarea style={styles.editor} spellCheck={false} value={commands} onChange={(event) => setCommands(event.target.value)} /></label>
-        <div style={styles.actions}>{onSave && <button style={styles.secondary} onClick={() => void save()}>保存到集合</button>}<span style={styles.hint}>空格参数可使用单引号、双引号或反斜杠</span></div>
+        <div style={styles.actions}><span style={styles.hint}>空格参数可使用单引号、双引号或反斜杠</span></div>
       </div>
-      <div style={styles.response}><div style={styles.responseHeader}><b>Pipeline response</b>{result && <span>{result.summary.durationMs} ms · {result.summary.bytesReceived} B</span>}</div><pre style={styles.preview}>{result?.preview ?? "每条命令的 RESP 响应会按顺序显示在这里"}</pre></div>
-    </div>
-    {message && <div style={styles.notice}>{message}</div>}
-  </section>;
+  </ProtocolWorkbenchLayout>;
 }
 
 const styles: Record<string, CSSProperties> = {

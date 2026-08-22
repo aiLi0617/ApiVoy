@@ -73,6 +73,7 @@ impl GrpcDriver {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
+                .no_proxy()
                 .http2_prior_knowledge()
                 .build()
                 .unwrap_or_default(),
@@ -165,10 +166,11 @@ fn method_from_pool(
     Ok(method)
 }
 
-async fn reflect_method(
+async fn reflect_method_at_path(
     client: &Client,
     target: &str,
     payload: &core_domain::GrpcPayload,
+    reflection_service: &str,
 ) -> Result<MethodDescriptor, DriverError> {
     let request = ReflectionRequest {
         host: String::new(),
@@ -177,8 +179,8 @@ async fn reflect_method(
         )),
     };
     let url = format!(
-        "{}/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
-        target.trim_end_matches('/')
+        "{}/{reflection_service}/ServerReflectionInfo",
+        target.trim_end_matches('/'),
     );
     let mut builder = client
         .post(url)
@@ -191,7 +193,7 @@ async fn reflect_method(
     let response = builder
         .send()
         .await
-        .map_err(|error| DriverError::Connection(format!("gRPC reflection: {error}")))?;
+        .map_err(|error| DriverError::Connection(format!("gRPC reflection: {error:#}")))?;
     if !response.status().is_success() {
         return Err(DriverError::Protocol(format!(
             "gRPC reflection returned HTTP {}",
@@ -242,6 +244,51 @@ async fn reflect_method(
     method_from_pool(&pool, payload)
 }
 
+async fn reflect_method(
+    client: &Client,
+    target: &str,
+    payload: &core_domain::GrpcPayload,
+) -> Result<MethodDescriptor, DriverError> {
+    match reflect_method_at_path(
+        client,
+        target,
+        payload,
+        "grpc.reflection.v1.ServerReflection",
+    )
+    .await
+    {
+        Ok(method) => Ok(method),
+        Err(v1_error) => reflect_method_at_path(
+            client,
+            target,
+            payload,
+            "grpc.reflection.v1alpha.ServerReflection",
+        )
+        .await
+        .map_err(|v1alpha_error| {
+            DriverError::Protocol(format!(
+                "gRPC reflection failed with v1 ({v1_error}) and v1alpha ({v1alpha_error})"
+            ))
+        }),
+    }
+}
+
+fn request_json_values(
+    payload: &core_domain::GrpcPayload,
+    json: &str,
+) -> Result<Vec<serde_json::Value>, DriverError> {
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|error| {
+        DriverError::Validation(format!("gRPC request JSON is invalid: {error}"))
+    })?;
+    if payload.mode == "client_streaming" || payload.mode == "bidi_streaming" {
+        return Ok(match value {
+            serde_json::Value::Array(values) => values,
+            value => vec![value],
+        });
+    }
+    Ok(vec![value])
+}
+
 fn request_messages(
     payload: &core_domain::GrpcPayload,
     method: Option<&MethodDescriptor>,
@@ -254,17 +301,7 @@ fn request_messages(
         let method = method.ok_or_else(|| {
             DriverError::Validation("messageJson requires descriptorSetBase64".into())
         })?;
-        let values = if payload.mode == "client_streaming" || payload.mode == "bidi_streaming" {
-            serde_json::from_str::<Vec<serde_json::Value>>(json).map_err(|error| {
-                DriverError::Validation(format!(
-                    "streaming gRPC request JSON must be an array: {error}"
-                ))
-            })?
-        } else {
-            vec![serde_json::from_str(json).map_err(|error| {
-                DriverError::Validation(format!("gRPC request JSON is invalid: {error}"))
-            })?]
-        };
+        let values = request_json_values(payload, json)?;
         return values
             .into_iter()
             .map(|value| {
@@ -371,10 +408,29 @@ impl ProtocolDriver for GrpcDriver {
                         .errors
                         .push("gRPC message must be base64 protobuf bytes".into());
                 }
-                if let Err(error) = method_descriptor(payload)
-                    .and_then(|method| request_messages(payload, method.as_ref()).map(|_| ()))
-                {
-                    report.errors.push(error.to_string());
+                match method_descriptor(payload) {
+                    Ok(Some(method)) => {
+                        if let Err(error) = request_messages(payload, Some(&method)) {
+                            report.errors.push(error.to_string());
+                        }
+                    }
+                    Ok(None)
+                        if payload
+                            .message_json
+                            .as_deref()
+                            .is_some_and(|value| !value.trim().is_empty()) =>
+                    {
+                        let json = payload.message_json.as_deref().unwrap_or_default();
+                        if let Err(error) = request_json_values(payload, json) {
+                            report.errors.push(error.to_string());
+                        }
+                    }
+                    Ok(None) => {
+                        if let Err(error) = request_messages(payload, None) {
+                            report.errors.push(error.to_string());
+                        }
+                    }
+                    Err(error) => report.errors.push(error.to_string()),
                 }
             }
             _ => report
@@ -639,5 +695,26 @@ mod tests {
             .unwrap()["text"],
             "two"
         );
+        streaming.message_json = Some(r#"{"text":"single"}"#.into());
+        let encoded = request_messages(&streaming, Some(&method)).unwrap();
+        assert_eq!(encoded.len(), 1);
+    }
+
+    #[test]
+    fn json_without_descriptor_is_valid_for_server_reflection() {
+        let mut request = RequestEnvelope::http_get("gRPC reflection", "https://example.com");
+        request.payload = ProtocolPayload::Grpc(GrpcPayload {
+            service: "example.Echo".into(),
+            method: "Say".into(),
+            message_base64: String::new(),
+            mode: "unary".into(),
+            metadata: vec![],
+            descriptor_set_base64: None,
+            message_json: Some(r#"{"message":"hello"}"#.into()),
+        });
+
+        let report = GrpcDriver::new().validate(&request);
+
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
     }
 }
