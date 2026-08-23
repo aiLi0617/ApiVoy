@@ -376,6 +376,7 @@ async function createWorkspaceRecord<T>(path: string, body: unknown): Promise<T>
 }
 
 export const createProjectViaAgent = (workspaceId: string, name: string) => createWorkspaceRecord<WorkspaceTree["projects"][number]>("/v1/projects", { workspaceId, name });
+export const createModuleViaAgent = (projectId: string, name: string) => createWorkspaceRecord<NonNullable<WorkspaceTree["modules"]>[number]>("/v1/modules", { projectId, name });
 export const createWorkspaceViaAgent = (name: string) => createWorkspaceRecord<WorkspaceTree["workspaces"][number]>("/v1/workspaces", { name });
 export const renameWorkspaceViaAgent = (id: string, name: string) => mutateWorkspace(`/v1/workspaces/${id}`, "PATCH", { name });
 export const archiveWorkspaceViaAgent = (id: string, archived: boolean) => mutateWorkspace(`/v1/workspaces/${id}/archive`, "PATCH", { archived });
@@ -383,7 +384,7 @@ export const touchWorkspaceViaAgent = (id: string) => mutateWorkspace(`/v1/works
 export const deleteWorkspaceViaAgent = (id: string) => mutateWorkspace(`/v1/workspaces/${id}`, "DELETE");
 export const renameProjectViaAgent = (id: string, name: string) => mutateWorkspace(`/v1/projects/${id}`, "PATCH", { name });
 export const deleteProjectViaAgent = (id: string) => mutateWorkspace(`/v1/projects/${id}`, "DELETE");
-export const createCollectionViaAgent = (projectId: string, parentId: string | null, name: string) => createWorkspaceRecord<WorkspaceTree["collections"][number]>("/v1/collections", { projectId, parentId, name });
+export const createCollectionViaAgent = (projectId: string, parentId: string | null, name: string, moduleId?: string) => createWorkspaceRecord<WorkspaceTree["collections"][number]>("/v1/collections", { projectId, parentId, name, moduleId });
 export const renameCollectionViaAgent = (id: string, name: string, parentId: string | null, sortOrder: number) => mutateWorkspace(`/v1/collections/${id}`, "PATCH", { name, parentId, sortOrder });
 export const updateCollectionTagsViaAgent = (id: string, tags: string[]) => mutateWorkspace(`/v1/collections/${id}/tags`, "PATCH", { tags });
 export const deleteCollectionViaAgent = (id: string) => mutateWorkspace(`/v1/collections/${id}`, "DELETE");

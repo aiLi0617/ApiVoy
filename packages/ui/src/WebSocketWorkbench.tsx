@@ -215,7 +215,6 @@ export function WebSocketWorkbench({ onSave, externalRequest, onTitleChange }: W
     {requestTab === "headers" && <section className="websocket-params-panel" data-title="请求 Headers"><KeyValueRows rows={headerRows} setRows={setHeaderRows} kind="Header" nameLabel="Header 名称" valueLabel="Header 值" addPlaceholder="添加 Header" loading={connecting || interactive}/></section>}
     {requestTab === "cookies" && <section className="websocket-params-panel" data-title="请求 Cookies"><KeyValueRows rows={cookieRows} setRows={setCookieRows} kind="Cookie" nameLabel="Cookie 名称" valueLabel="Cookie 值" addPlaceholder="添加 Cookie" loading={connecting || interactive}/></section>}
     {requestTab === "settings" && <section className="websocket-settings-panel"><div className="websocket-settings-fields websocket-settings-fields-single"><label><span>子协议</span><input value={subprotocols} onChange={(event) => setSubprotocols(event.target.value)} placeholder="graphql-transport-ws"/></label></div></section>}
-    <ProtocolCodeGenerator input={{ protocol: "websocket", request: request() }} />
   </section>} secondary={<section className={`websocket-response${hasConnected ? " has-response" : ""}`}>
       {!hasConnected ? <div className="websocket-response-waiting"><strong>等待连接</strong><span>建立 WebSocket 连接后，消息、Header、Cookie 和实际请求会显示在这里。</span></div> : <>
       <div className="websocket-response-tabs" role="tablist" aria-label="WebSocket 响应">
@@ -228,7 +227,7 @@ export function WebSocketWorkbench({ onSave, externalRequest, onTitleChange }: W
         </div>}
         {responseTab === "headers" && (responseHeaders.length ? <div className="websocket-response-table">{responseHeaders.map(([header, value], index) => <div key={`${header}-${index}`}><strong>{header}</strong><span>{value}</span></div>)}</div> : <div className="websocket-response-empty">浏览器 WebSocket API 不提供握手响应 Header。</div>)}
         {responseTab === "cookies" && (responseCookies.length ? <div className="websocket-response-table">{responseCookies.map(([header, value], index) => <div key={`${header}-${index}`}><strong>{header}</strong><span>{value}</span></div>)}</div> : <div className="websocket-response-empty">没有响应 Cookie。</div>)}
-        {responseTab === "request" && <div className="websocket-actual-request"><section><strong>连接地址</strong><code>{actualRequest.url}</code></section><section><strong>子协议</strong><code>{actualRequest.subprotocols.join(", ") || "（空）"}</code></section><section><strong>请求 Header</strong><pre>{actualRequest.headers.length ? actualRequest.headers.map(([header, value]) => `${header}: ${value}`).join("\n") : "（空）"}</pre></section></div>}
+        {responseTab === "request" && <div className="websocket-actual-request"><section><strong>连接地址</strong><code>{actualRequest.url}</code></section><section><strong>子协议</strong><code>{actualRequest.subprotocols.join(", ") || "（空）"}</code></section><section><strong>请求 Header</strong>{actualRequest.headers.length ? <pre>{actualRequest.headers.map(([header, value]) => `${header}: ${value}`).join("\n")}</pre> : <code>（空）</code>}</section><section><ProtocolCodeGenerator input={{ protocol: "websocket", request: actualRequest }} /></section></div>}
       </div>
       </>}
     </section>}/></div>;

@@ -49,6 +49,20 @@ test("switches theme and keeps visible keyboard focus", async ({ page }) => {
   await expect(page.locator(".command-input-wrap input")).toBeFocused();
 });
 
+test("keeps project settings separate from application settings", async ({ page }) => {
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-project-settings")));
+  const projectSettings = page.getByRole("dialog", { name: "项目设置" });
+  await expect(projectSettings).toContainText("项目级");
+  await expect(projectSettings).toContainText("环境与变量");
+  await projectSettings.getByRole("button", { name: "完成" }).click();
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-settings")));
+  const applicationSettings = page.locator(".settings-dialog").filter({ hasText: /软件级|Application-wide/ });
+  await expect(applicationSettings).toContainText(/软件级|Application-wide/);
+  await expect(applicationSettings).toContainText(/不随项目切换|do not change with projects/);
+  await expect(applicationSettings).not.toContainText("环境与变量");
+});
+
 test("HTTP target URL has an accessible label and neutral empty state", async ({ page }) => {
   const input = page.locator("#http-target-url");
   await expect(input).toHaveAttribute("aria-label");

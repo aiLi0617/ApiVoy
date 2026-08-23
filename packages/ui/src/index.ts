@@ -32,7 +32,7 @@ export { FeedbackProvider, useFeedback, EmptyState, LoadingState } from "./Feedb
 export { useAppStore, type ThemeMode, type WorkbenchLayoutPreference, type SplitPanePreference } from "./appStore";
 export { VirtualList, getVirtualRange, type VirtualListProps, type VirtualRange } from "./VirtualList";
 export { ApiVoyProviders } from "./ApiVoyProviders";
-export { WorkspaceExplorer, type WorkspaceTree, type WorkspaceExplorerProps, type WorkspaceRecord, type ProjectRecord, type CollectionRecord, type RequestRecord } from "./WorkspaceExplorer";
+export { WorkspaceExplorer, type WorkspaceTree, type WorkspaceExplorerProps, type WorkspaceRecord, type ProjectRecord, type ModuleRecord, type CollectionRecord, type RequestRecord } from "./WorkspaceExplorer";
 export { flattenWorkspaceTree, type FlattenWorkspaceTreeOptions, type WorkspaceTreeRow } from "./workspaceTreeRows";
 export { SseWorkbench, type SseWorkbenchProps, type SseWorkbenchRequest } from "./SseWorkbench";
 export { TcpWorkbench, UdpWorkbench, type TcpWorkbenchProps, type UdpWorkbenchProps, type SocketWorkbenchProps, type SocketWorkbenchRequest } from "./SocketWorkbench";

@@ -2,6 +2,7 @@ import { AiWorkbench, AmqpWorkbench, AppShell, buildWorkbenchTabs, CaptureWorkbe
 import {
   cancelViaAgent,
   createCollectionViaAgent,
+  createModuleViaAgent,
   createProjectViaAgent,
   createWorkspaceViaAgent,
   renameWorkspaceViaAgent,
@@ -61,6 +62,7 @@ export function App() {
   const [treeError, setTreeError] = useState<string | null>(null);
   const refreshSequence = useRef(0);
   const treeAbort = useRef<AbortController | null>(null);
+  const initialRequestToRestore = useRef(initialRoute.get("request"));
   const [selectedProjectId, setSelectedProjectId] = useState(initialRoute.get("project") ?? "default-project");
   const [selectedCollectionId, setSelectedCollectionId] = useState(initialRoute.get("collection") ?? "default-collection");
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(initialRoute.get("request"));
@@ -90,8 +92,37 @@ export function App() {
       setTreeError(/401|unauthorized|session exchange/i.test(message) ? "Local Agent 在线，但尚未完成配对。请在设置中填写 Agent Token 后刷新页面。" : message);
     } finally { window.clearTimeout(timer); if (sequence === refreshSequence.current) setTreeLoading(false); }
   }
+  async function cloneProject(projectId: string, name: string) {
+    if (!tree) throw new Error("项目数据尚未加载完成");
+    const source = tree.projects.find((project) => project.id === projectId);
+    if (!source) throw new Error("未找到要克隆的项目");
+    const created = await createProjectViaAgent(source.workspaceId, name);
+    const collectionIds = new Map<string, string>();
+    const pending = tree.collections.filter((collection) => collection.projectId === projectId);
+    while (pending.length) {
+      const index = pending.findIndex((collection) => !collection.parentId || collectionIds.has(collection.parentId));
+      if (index < 0) throw new Error("项目集合层级存在循环，无法克隆");
+      const collection = pending.splice(index, 1)[0];
+      const copy = await createCollectionViaAgent(created.id, collection.parentId ? collectionIds.get(collection.parentId) ?? null : null, collection.name);
+      collectionIds.set(collection.id, copy.id);
+    }
+    for (const request of tree.requests.filter((item) => item.projectId === projectId)) {
+      const collectionId = collectionIds.get(request.collectionId);
+      if (!collectionId) continue;
+      const envelope = await loadEnvelopeViaAgent(request.id);
+      if (envelope) await saveEnvelopeViaAgent({ ...envelope, id: crypto.randomUUID(), createdAt: new Date().toISOString() }, created.id, collectionId);
+    }
+    setSelectedProjectId(created.id); setSelectedCollectionId(collectionIds.values().next().value ?? ""); setSelectedRequestId(null);
+    await refreshTree();
+  }
   useEffect(() => { void refreshTree(); }, []);
   useEffect(() => () => treeAbort.current?.abort("unmount"), []);
+  useEffect(() => {
+    const id = initialRequestToRestore.current;
+    if (!tree || !id) return;
+    initialRequestToRestore.current = null;
+    void loadEnvelopeViaAgent(id).then((envelope) => { if (envelope) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: envelope })); });
+  }, [tree]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     params.set("project", selectedProjectId); params.set("collection", selectedCollectionId);
@@ -102,6 +133,7 @@ export function App() {
   return (
     <AppShell
       channelLabel="Web → Local Agent"
+      projectContext={{ projects: tree?.projects ?? [], selectedProjectId, onSelectProject: (projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); } }}
       connectionStatus={treeLoading ? { label: "正在连接 Local Agent", tone: "warn" } : treeError ? { label: "Local Agent 连接异常", tone: "off" } : { label: "Local Agent 已连接", tone: "ok" }}
       environment={{
         onLoad: getEnvironmentViaAgent,
@@ -113,7 +145,7 @@ export function App() {
         comments: <CommentsWorkbench contextCollectionId={selectedCollectionId} contextRequestId={selectedRequestId} contextLabel={selectedRequestId ? `请求 ${selectedRequestId}` : selectedCollectionId ? `集合 ${selectedCollectionId}` : null} />,
         sso: <SsoWorkbench />,
       }}
-      explorer={<WorkspaceExplorer tree={tree} loading={treeLoading} error={treeError} onRetry={() => void refreshTree()} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
+      explorer={<WorkspaceExplorer tree={tree} loading={treeLoading} error={treeError} onRetry={() => void refreshTree()} selectedProjectId={selectedProjectId} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
       onSelectCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
       onOpenRequest={async (id) => { setSelectedRequestId(id); const envelope = await loadEnvelopeViaAgent(id); if (envelope) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: envelope })); }}
       onCreateWorkspace={async (name) => { await createWorkspaceViaAgent(name); await refreshTree(); }}
@@ -122,9 +154,10 @@ export function App() {
       onTouchWorkspace={async (id) => { await touchWorkspaceViaAgent(id); await refreshTree(); }}
       onDeleteWorkspace={async (id) => { await deleteWorkspaceViaAgent(id); await refreshTree(); }}
       onCreateProject={async (workspaceId, name) => { await createProjectViaAgent(workspaceId, name); await refreshTree(); }}
+      onCreateModule={async (projectId, name) => { await createModuleViaAgent(projectId, name); await refreshTree(); }}
       onRenameProject={async (id, name) => { await renameProjectViaAgent(id, name); await refreshTree(); }}
       onDeleteProject={async (id) => { await deleteProjectViaAgent(id); await refreshTree(); }}
-      onCreateCollection={async (projectId, parentId, name) => { await createCollectionViaAgent(projectId, parentId, name); await refreshTree(); }}
+      onCreateCollection={async (projectId, parentId, name, moduleId) => { await createCollectionViaAgent(projectId, parentId, name, moduleId); await refreshTree(); }}
       onRenameCollection={async (collection, name) => { await renameCollectionViaAgent(collection.id, name, collection.parentId ?? null, collection.sortOrder); await refreshTree(); }}
       onUpdateCollectionTags={async (collection, tags) => { await updateCollectionTagsViaAgent(collection.id, tags); await refreshTree(); }}
       onDeleteCollection={async (id) => { await deleteCollectionViaAgent(id); await refreshTree(); }}
@@ -136,7 +169,7 @@ export function App() {
       onDeleteRequest={async (id) => { await deleteRequestViaAgent(id); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }}
       onRunCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
     />}>
-      <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
+      <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} projects={(tree?.projects ?? []).map((project) => { const requests = tree?.requests.filter((request) => request.projectId === project.id) ?? []; return { id: project.id, name: project.name, resourceCount: requests.length, protocols: Array.from(new Set(requests.map((request) => request.protocolId ?? request.method ?? "http"))) }; })} selectedProjectId={selectedProjectId} onSelectProject={(projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); }} onCreateProject={async (name) => { const created = await createProjectViaAgent(tree?.workspaces[0]?.id ?? "default-workspace", name); setSelectedProjectId(created.id); setSelectedCollectionId(""); await refreshTree(); }} onRenameProject={async (id, name) => { await renameProjectViaAgent(id, name); await refreshTree(); }} onCloneProject={cloneProject} onDeleteProject={async (id) => { await deleteProjectViaAgent(id); if (selectedProjectId === id) { const fallback = tree?.projects.find((project) => project.id !== id); setSelectedProjectId(fallback?.id ?? ""); setSelectedCollectionId(fallback ? tree?.collections.find((item) => item.projectId === fallback.id)?.id ?? "" : ""); setSelectedRequestId(null); } await refreshTree(); }} onOpenProjectInNewWindow={(projectId) => { const params = new URLSearchParams(); params.set("project", projectId); params.set("collection", tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); params.set("view", "resources"); window.open(`${window.location.pathname}${window.location.search}#${params}`, "_blank", "noopener,noreferrer"); }} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
       <HttpWorkbench
         onSend={executeViaAgent}
         onCancel={cancelViaAgent}

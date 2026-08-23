@@ -18,6 +18,14 @@ export interface WorkbenchDeckProps {
   children: ReactNode;
   /** UX-012: show save target in frame status */
   saveTargetLabel?: string;
+  projects?: Array<{ id: string; name: string; resourceCount: number; protocols: string[] }>;
+  selectedProjectId?: string;
+  onSelectProject?: (projectId: string) => void;
+  onCreateProject?: (name: string) => Promise<void>;
+  onRenameProject?: (projectId: string, name: string) => Promise<void>;
+  onCloneProject?: (projectId: string, name: string) => Promise<void>;
+  onDeleteProject?: (projectId: string) => Promise<void>;
+  onOpenProjectInNewWindow?: (projectId: string) => void;
 }
 export const WORKBENCH_LABELS: Record<string, string> = { http:"HTTP", graphql:"GraphQL", grpc:"gRPC", rpc:"SOAP / RPC", websocket:"WebSocket", sse:"SSE", tcp:"TCP", udp:"UDP", mqtt:"MQTT", amqp:"AMQP", kafka:"Kafka", redis:"Redis", sql:"SQL", mock:"Mock", runner:"Runner", gateway:"Gateway", capture:"Capture", plugins:"Plugins", ai:"AI" };
 export const WORKBENCH_ICONS: Record<string, IconName> = {
@@ -40,6 +48,13 @@ export function resolveHashWorkbenchId(tabs: WorkbenchTab[], hash: string): stri
   if (!id) return null;
   return tabs.some((tab) => tab.id === id) ? id : null;
 }
+export function resolveInitialWorkbenchId(tabs: WorkbenchTab[], hash: string): string {
+  const workbench = resolveHashWorkbenchId(tabs, hash);
+  if (workbench) return workbench;
+  return new URLSearchParams(hash.replace(/^#/, "")).has("view") ? "__project" : "__new";
+}
+export function createProjectOverviewSession(id: string) { return { id, workbenchId: "__new", title: "项目概览" }; }
+export function createNewPageSession(id: string) { return { id, workbenchId: "__project", title: "新建" }; }
 function hashWorkbench() { if (typeof window === "undefined") return null; return new URLSearchParams(window.location.hash.replace(/^#/, "")).get("workbench"); }
 function clearInvalidWorkbenchHash() {
   if (typeof window === "undefined") return;
@@ -50,8 +65,9 @@ function clearInvalidWorkbenchHash() {
   history.replaceState(null, "", next ? `#${next}` : `${window.location.pathname}${window.location.search}`);
 }
 function initialWorkbenchSessions(tabs: WorkbenchTab[], sessionId: string): WorkbenchSession[] {
-  const routeId = typeof window === "undefined" ? null : resolveHashWorkbenchId(tabs, window.location.hash);
-  if (!routeId) return [{ id: sessionId, workbenchId: "__new", title: "新建" }];
+  const routeId = resolveInitialWorkbenchId(tabs, typeof window === "undefined" ? "" : window.location.hash);
+  if (routeId === "__new") return [createProjectOverviewSession(sessionId)];
+  if (routeId === "__project") return [createNewPageSession(sessionId)];
   const tab = tabs.find((item) => item.id === routeId);
   return [{ id: sessionId, workbenchId: routeId, title: translateWorkbench(routeId, tab?.label ?? routeId) }];
 }
@@ -68,7 +84,7 @@ function resolveOpenProtocol(detail: unknown): string | undefined {
   return undefined;
 }
 
-export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeckProps) {
+export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow }: WorkbenchDeckProps) {
   const items = Children.toArray(children); const { t } = useI18n();
   const active = useAppStore((state) => state.activeWorkbench); const setActive = useAppStore((state) => state.setActiveWorkbench);
   const favorites = useAppStore((state) => state.favoriteWorkbenches); const recent = useAppStore((state) => state.recentWorkbenches);
@@ -85,6 +101,16 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
   const [pickerOpen, setPickerOpen] = useState(false);
   const [homeMoreOpen, setHomeMoreOpen] = useState(false);
   const [curlImportOpen, setCurlImportOpen] = useState(false);
+  const [projectQuery, setProjectQuery] = useState("");
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [projectCreateBusy, setProjectCreateBusy] = useState(false);
+  const [projectCreateError, setProjectCreateError] = useState("");
+  const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
+  const [projectAction, setProjectAction] = useState<{ kind: "rename" | "clone" | "delete"; id: string; originalName: string } | null>(null);
+  const [projectActionName, setProjectActionName] = useState("");
+  const [projectActionBusy, setProjectActionBusy] = useState(false);
+  const [projectActionError, setProjectActionError] = useState("");
   const pickerRef = useRef<HTMLDivElement>(null);
   const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
 
@@ -110,12 +136,12 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     const sameTypeCount = sessions.filter((session) => session.workbenchId === id).length;
     const label = translateWorkbench(id, tabMap.get(id)?.label ?? id);
     const session = { id: crypto.randomUUID(), workbenchId: id, title: openedRequest?.name?.trim() || (sameTypeCount ? `${label} ${sameTypeCount + 1}` : label), requestId: openedRequest?.id };
-    setSessions((current) => activeSession?.workbenchId === "__new" ? current.map((item) => item.id === activeSession.id ? session : item) : [...current, session]);
+    setSessions((current) => activeSession?.workbenchId === "__new" || activeSession?.workbenchId === "__project" ? current.map((item) => item.id === activeSession.id ? session : item) : [...current, session]);
     activateSession(session, writeHash);
     return session;
   }
   function createNewPage() {
-    const session = { id: crypto.randomUUID(), workbenchId: "__new", title: "新建" };
+    const session = createNewPageSession(crypto.randomUUID());
     setSessions((current) => [...current, session]);
     setActiveSessionId(session.id);
     setPickerOpen(false);
@@ -131,7 +157,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     const index = sessions.findIndex((session) => session.id === id); if (index < 0) return;
     const remaining = sessions.filter((session) => session.id !== id);
     if (!remaining.length) {
-      const replacement = { id: crypto.randomUUID(), workbenchId: "__new", title: "新建" };
+      const replacement = createNewPageSession(crypto.randomUUID());
       setSessions([replacement]); setActiveSessionId(replacement.id); setPickerOpen(false);
       if (typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.delete("workbench"); history.pushState(null, "", `#${params}`); }
       return;
@@ -151,6 +177,14 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
         activateSession(existing);
         return;
       }
+      if (activeSession?.workbenchId === match.id && !activeSession.requestId) {
+        const restored = { ...activeSession, requestId: opened?.id, title: opened?.name?.trim() || activeSession.title };
+        setSessions((current) => current.map((item) => item.id === activeSession.id ? restored : item));
+        const hydrate = { workbenchId: match.id, sessionId: match.id === "http" ? restored.id : undefined, protocolId: protocol, envelope: detail };
+        stashHydrate(hydrate);
+        queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
+        return;
+      }
       const session = createWorkbench(match.id, true, false, { id: opened?.id, name: opened?.name });
       if (!session) return;
       const hydrate = { workbenchId: match.id, sessionId: match.id === "http" ? session.id : undefined, protocolId: protocol, envelope: detail };
@@ -159,10 +193,22 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     };
     const selectWorkbench = (event: Event) => activate((event as CustomEvent<string>).detail);
     const createWorkbenchEvent = (event: Event) => createWorkbench((event as CustomEvent<string>).detail);
+    const openProjectHome = () => {
+      const existing = sessions.find((session) => session.workbenchId === "__new");
+      if (existing) activateSession(existing, false);
+      else {
+        const overview = createProjectOverviewSession(crypto.randomUUID());
+        setSessions((current) => [...current, overview]);
+        setActiveSessionId(overview.id);
+        setPickerOpen(false);
+      }
+      if (hashWorkbench()) clearInvalidWorkbenchHash();
+    };
     window.addEventListener("apivoy-open-request", openRequest);
     window.addEventListener("apivoy-select-workbench", selectWorkbench);
     window.addEventListener("apivoy-create-workbench", createWorkbenchEvent);
     window.addEventListener("apivoy-open-script-library", openScriptLibrary);
+    window.addEventListener("apivoy-project-home", openProjectHome);
     const openCurlImport = () => setCurlImportOpen(true);
     window.addEventListener("apivoy-open-curl-import", openCurlImport);
     return () => {
@@ -170,6 +216,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
       window.removeEventListener("apivoy-select-workbench", selectWorkbench);
       window.removeEventListener("apivoy-create-workbench", createWorkbenchEvent);
       window.removeEventListener("apivoy-open-script-library", openScriptLibrary);
+      window.removeEventListener("apivoy-project-home", openProjectHome);
       window.removeEventListener("apivoy-open-curl-import", openCurlImport);
     };
   }, [tabs, setActive, sessions]);
@@ -182,16 +229,6 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, []);
-  useEffect(() => {
-    const restoreStored = () => {
-      const currentTabs = tabsRef.current;
-      if (resolveHashWorkbenchId(currentTabs, window.location.hash)) return;
-      const stored = useAppStore.getState().activeWorkbench;
-      if (stored && currentTabs.some((tab) => tab.id === stored)) activateRef.current(stored, true, false);
-    };
-    if (useAppStore.persist.hasHydrated()) restoreStored();
-    return useAppStore.persist.onFinishHydration(restoreStored);
   }, []);
   useEffect(() => { if (!selected || selected.startsWith("__") || selected === active) return; setActive(selected); }, [active, selected, setActive]);
   useEffect(() => { setCodeOpen(false); }, [selected]);
@@ -239,7 +276,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     </div>
   );
   const favoriteTabs = favorites.map((id) => tabMap.get(id)).filter(Boolean) as WorkbenchTab[];
-  const showCode = selectedTab && ["graphql", "grpc", "websocket", "sse", "tcp", "udp", "http"].includes(selectedTab.id);
+  const showCode = selectedTab && ["graphql", "grpc", "sse", "tcp", "udp", "http"].includes(selectedTab.id);
   const frameStatus = (
     <span>
       {saveTargetLabel ? `${t("workbench.saveTarget")}: ${saveTargetLabel}` : t("status.ready")}
@@ -272,14 +309,58 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
     setCurlImportOpen(false);
     queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
   }
+  function enterProjectNewPage() {
+    window.dispatchEvent(new CustomEvent("apivoy-project-resources"));
+    const session = createNewPageSession(crypto.randomUUID());
+    setSessions((current) => current.some((item) => item.id === activeSession?.id)
+      ? current.map((item) => item.id === activeSession?.id ? session : item)
+      : [...current, session]);
+    setActiveSessionId(session.id);
+    setPickerOpen(false);
+  }
   function renderHomePage(sessionId: string) {
+    const visibleProjects = projects.filter((project) => project.name.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()));
+    const openProject = (projectId: string) => {
+      onSelectProject?.(projectId);
+      enterProjectNewPage();
+    };
+    const openCreateProject = () => { setProjectName(""); setProjectCreateError(""); setProjectDialogOpen(true); };
+    const openProjectAction = (kind: "rename" | "clone" | "delete", project: { id: string; name: string }) => {
+      setProjectMenuId(null); setProjectActionError(""); setProjectAction({ kind, id: project.id, originalName: project.name });
+      setProjectActionName(kind === "clone" ? `${project.name} 副本` : project.name);
+    };
+    const runProjectAction = async () => {
+      if (!projectAction) return;
+      setProjectActionBusy(true); setProjectActionError("");
+      try {
+        if (projectAction.kind === "rename") await onRenameProject?.(projectAction.id, projectActionName.trim());
+        if (projectAction.kind === "clone") await onCloneProject?.(projectAction.id, projectActionName.trim());
+        if (projectAction.kind === "delete") await onDeleteProject?.(projectAction.id);
+        setProjectAction(null);
+      } catch (error) { setProjectActionError(error instanceof Error ? error.message : String(error)); }
+      finally { setProjectActionBusy(false); }
+    };
+    return <main className="project-launcher" aria-labelledby={`project-launcher-title-${sessionId}`}>
+      <header className="project-launcher-header"><div><h1 id={`project-launcher-title-${sessionId}`}>项目</h1><p>管理主窗口中的项目、环境与扩展能力</p></div><div className="project-launcher-actions"><label><Icon name="search"/><input aria-label="搜索项目" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索项目"/></label><button type="button" className="ui-button secondary" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-import-requests"))}>导入</button><button type="button" className="ui-button primary" onClick={openCreateProject}>新建项目</button></div></header>
+      <div className="project-launcher-section-title">我的项目 <span>{projects.length}</span></div>
+      <div className="project-card-grid">
+        {visibleProjects.map((project) => <article className={`project-card-wrap${project.id === selectedProjectId ? " is-current" : ""}`} key={project.id}>
+          <button type="button" className="project-card" onClick={() => { setProjectMenuId(null); openProject(project.id); }}><span className="project-card-icon"><Icon name="archive"/></span><strong>{project.name}</strong><p>{project.resourceCount ? `管理 ${project.resourceCount} 个多协议资源` : "尚未添加资源"}</p><footer><span>{project.resourceCount} 个资源</span><span className="project-protocols">{project.protocols.slice(0, 4).map((protocol) => <i key={protocol} title={protocol}>{protocol.slice(0, 1).toUpperCase()}</i>)}</span></footer></button>
+          <div className="project-card-menu-area">{onOpenProjectInNewWindow ? <button type="button" className="project-card-open-window" aria-label={`在新窗口打开 ${project.name}`} title="在新窗口打开" onClick={() => onOpenProjectInNewWindow(project.id)}><Icon name="external"/></button> : null}<button type="button" className="project-card-more" aria-label={`${project.name} 更多操作`} aria-haspopup="menu" aria-expanded={projectMenuId === project.id} onClick={() => setProjectMenuId((current) => current === project.id ? null : project.id)}><Icon name="more"/></button>{projectMenuId === project.id ? <div className="project-card-menu" role="menu" aria-label={`${project.name} 项目操作`}><button type="button" role="menuitem" onClick={() => openProjectAction("rename", project)}><Icon name="edit"/>修改名称</button><button type="button" role="menuitem" onClick={() => openProjectAction("clone", project)}><Icon name="copy"/>克隆项目</button><button type="button" role="menuitem" className="is-danger" onClick={() => openProjectAction("delete", project)}><Icon name="trash"/>删除项目</button></div> : null}</div>
+        </article>)}
+        <button type="button" className="project-card project-card-create" onClick={openCreateProject}><span className="project-create-icon"><Icon name="plus"/></span><strong>创建新项目</strong><p>从空项目开始，或导入已有 API 定义</p></button>
+      </div>
+      {projectDialogOpen ? <div className="dialog-backdrop" role="presentation" onMouseDown={() => !projectCreateBusy && setProjectDialogOpen(false)}><div className="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-create-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="project-create-title">新建项目</h2><p>项目用于隔离资源、环境和运行配置。</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}><Icon name="close"/></button></header><label><span>项目名称</span><input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="请输入项目名称"/></label>{projectCreateError ? <p className="project-create-error" role="alert">{projectCreateError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}>取消</button><button type="button" className="ui-button primary" disabled={projectCreateBusy || !projectName.trim()} onClick={async () => { if (!onCreateProject) return; setProjectCreateBusy(true); setProjectCreateError(""); try { await onCreateProject(projectName.trim()); setProjectDialogOpen(false); setProjectName(""); enterProjectNewPage(); } catch (error) { setProjectCreateError(error instanceof Error ? error.message : String(error)); } finally { setProjectCreateBusy(false); } }}>{projectCreateBusy ? "创建中…" : "创建项目"}</button></footer></div></div> : null}
+      {projectAction ? <div className="dialog-backdrop" role="presentation" onMouseDown={() => !projectActionBusy && setProjectAction(null)}><div className="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-action-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="project-action-title">{projectAction.kind === "rename" ? "修改项目名称" : projectAction.kind === "clone" ? "克隆项目" : "删除项目"}</h2><p>{projectAction.kind === "delete" ? `删除“${projectAction.originalName}”后，其中的集合和请求也会被删除。` : projectAction.kind === "clone" ? "将复制项目中的集合层级和全部请求。" : "修改后会同步更新项目入口和项目导航。"}</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectActionBusy} onClick={() => setProjectAction(null)}><Icon name="close"/></button></header>{projectAction.kind !== "delete" ? <label><span>项目名称</span><input autoFocus value={projectActionName} onChange={(event) => setProjectActionName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectActionName.trim()) void runProjectAction(); }}/></label> : null}{projectActionError ? <p className="project-create-error" role="alert">{projectActionError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectActionBusy} onClick={() => setProjectAction(null)}>取消</button><button type="button" className={`ui-button ${projectAction.kind === "delete" ? "danger" : "primary"}`} disabled={projectActionBusy || (projectAction.kind !== "delete" && !projectActionName.trim())} onClick={() => void runProjectAction()}>{projectActionBusy ? "处理中…" : projectAction.kind === "delete" ? "确认删除" : projectAction.kind === "clone" ? "创建副本" : "保存"}</button></footer></div></div> : null}
+    </main>;
+  }
+  function renderProjectHomePage(sessionId: string) {
     const primaryActions = homeActions.slice(0, 2);
     const moreActions = homeActions.slice(2);
     return <main className="workbench-home" aria-labelledby={`workbench-home-title-${sessionId}`}>
       <div className="workbench-home-copy"><span>APIVOY WORKSPACE</span><h1 id={`workbench-home-title-${sessionId}`}>从这里开始探索接口</h1><p>{saveTargetLabel ? `当前保存位置：${saveTargetLabel}` : "选择一种工作台，或从左侧资源树打开已有请求。"}</p></div>
       <div className="workbench-home-actions">{primaryActions.map((action) => <button key={action.id} type="button" onClick={() => runHomeAction(action.id)}><span className={`workbench-home-action-icon tone-${action.id}`}><Icon name={action.icon}/></span><strong>{action.title}</strong><small>{action.description}</small></button>)}</div>
       {moreActions.length ? <div className="workbench-home-more"><button type="button" className="workbench-home-more-trigger" aria-haspopup="menu" aria-expanded={homeMoreOpen} onClick={() => setHomeMoreOpen((open) => !open)}>更多功能 <Icon name="chevron"/></button>{homeMoreOpen ? <div className="workbench-home-more-menu" role="menu" aria-label="更多功能">{moreActions.map((action) => <button key={action.id} type="button" role="menuitem" onClick={() => runHomeAction(action.id)}><span className={`workbench-home-action-icon tone-${action.id}`}><Icon name={action.icon}/></span><span><strong>{action.title}</strong><small>{action.description}</small></span></button>)}</div> : null}</div> : null}
-      <div className="workbench-home-hint"><Icon name="folder"/><span>也可以从左侧资源树打开已保存的请求</span></div>
     </main>;
   }
   function updateSessionTitle(id: string, title: string) {
@@ -292,6 +373,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
 
   function renderSession(session: WorkbenchSession) {
     if (session.workbenchId === "__new") return renderHomePage(session.id);
+    if (session.workbenchId === "__project") return renderProjectHomePage(session.id);
     if(session.workbenchId==="__scripts") return <ScriptLibraryWorkbench projectId={saveTargetLabel?.split(" / ")[0] || "default-project"}/>;
     const index = tabs.findIndex((tab) => tab.id === session.workbenchId); if (index < 0) return null;
     const tab = tabs[index]; const source = items[index];
@@ -333,8 +415,8 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel }: WorkbenchDeck
       </aside>
       <CurlImportDialog open={curlImportOpen} onClose={() => setCurlImportOpen(false)} onCreate={createCurlRequest}/>
       <div className="workbench-content" data-workbench-label={selectedTab ? translateWorkbench(selectedTab.id, selectedTab.label) : selected === "__scripts" ? "脚本库" : ""}>
-        <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button></div></div>
-        {sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}
+        {selected !== "__new" ? <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button></div></div> : null}
+        {selected !== "__new" && sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}
         <div className="workbench-session-stack">{sessions.map((session) => <div key={session.id} role="tabpanel" aria-label={session.title} hidden={session.id !== activeSessionId} className="workbench-panel">{renderSession(session)}</div>)}</div>
         {items.slice(tabs.length)}
       </div>

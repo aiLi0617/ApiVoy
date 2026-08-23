@@ -92,25 +92,33 @@ const BUILTIN_GROUPS = [
 
 const VIEWER_LANGUAGE: Record<string, string> = { curl:"shell", "curl-windows":"bat", httpie:"shell", wget:"shell", powershell:"powershell", javascript:"javascript", java:"java", swift:"swift", go:"go", php:"php", python:"python", http:"http", c:"c", csharp:"csharp", "objective-c":"objective-c", ruby:"ruby", ocaml:"plaintext", dart:"dart", r:"r" };
 
-export function CodeGenerator({ request }: { request: HttpWorkbenchRequest }) {
+export interface CodeGeneratorGroup { id: string; label: string; variants: Array<{ id: string; label: string }> }
+export interface CodeGeneratorViewProps { groups: CodeGeneratorGroup[]; selected: string; onSelect: (id: string) => void; code: string; editorLanguage: string }
+
+export function CodeGeneratorView({ groups, selected, onSelect, code, editorLanguage }: CodeGeneratorViewProps) {
   const { t } = useI18n();
-  const [language, setLanguage] = useState<string>("curl");
   const [message, setMessage] = useState("");
-  const code = useMemo(() => generateHttpCode(request, language), [request, language]);
+  const activeGroup = groups.find((group) => group.variants.some((variant) => variant.id === selected)) ?? groups[0];
   const editorHeight = useMemo(() => Math.min(900, Math.max(440, code.split("\n").length * 19 + 32)), [code]);
-  const pluginVariants = listHttpCodeTemplates().map((template) => ({ id: template.id, label: template.label }));
-  const groups = pluginVariants.length ? [...BUILTIN_GROUPS, { id: "plugin", label: t("codegen.plugin"), variants: pluginVariants }] : BUILTIN_GROUPS;
-  const activeGroup = groups.find((group) => group.variants.some((variant) => variant.id === language)) ?? groups[0];
   return <div style={styles.root} className="http-code-generator">
     <div style={styles.heading}><strong>请求代码</strong><button style={styles.copy} onClick={async () => { await navigator.clipboard.writeText(code); setMessage("已复制"); }}>{message || t("action.copy")}</button></div>
     <div style={styles.languageTabs} role="tablist" aria-label="代码语言">
-      {groups.map((group) => <button key={group.id} type="button" role="tab" aria-selected={activeGroup.id === group.id} style={activeGroup.id === group.id ? styles.languageActive : styles.languageTab} onClick={() => { setLanguage(group.variants[0].id); setMessage(""); }}>{group.label}</button>)}
+      {groups.map((group) => <button key={group.id} type="button" role="tab" aria-selected={activeGroup?.id === group.id} style={activeGroup?.id === group.id ? styles.languageActive : styles.languageTab} onClick={() => { onSelect(group.variants[0].id); setMessage(""); }}>{group.label}</button>)}
     </div>
-    <div style={styles.variantTabs} role="tablist" aria-label={`${activeGroup.label} 客户端`}>
-      {activeGroup.variants.map((variant) => <button key={variant.id} type="button" role="tab" aria-selected={language === variant.id} style={language === variant.id ? styles.variantActive : styles.variantTab} onClick={() => { setLanguage(variant.id); setMessage(""); }}>{variant.label}</button>)}
-    </div>
-    <CodeEditor value={code} onChange={() => {}} language={VIEWER_LANGUAGE[language] ?? "plaintext"} height={editorHeight} readOnly bare wordWrap={false}/>
+    {activeGroup && <div style={styles.variantTabs} role="tablist" aria-label={`${activeGroup.label} 客户端`}>
+      {activeGroup.variants.map((variant) => <button key={variant.id} type="button" role="tab" aria-selected={selected === variant.id} style={selected === variant.id ? styles.variantActive : styles.variantTab} onClick={() => { onSelect(variant.id); setMessage(""); }}>{variant.label}</button>)}
+    </div>}
+    <CodeEditor value={code} onChange={() => {}} language={editorLanguage} height={editorHeight} readOnly bare wordWrap={false}/>
   </div>;
+}
+
+export function CodeGenerator({ request }: { request: HttpWorkbenchRequest }) {
+  const { t } = useI18n();
+  const [language, setLanguage] = useState<string>("curl");
+  const code = useMemo(() => generateHttpCode(request, language), [request, language]);
+  const pluginVariants = listHttpCodeTemplates().map((template) => ({ id: template.id, label: template.label }));
+  const groups = pluginVariants.length ? [...BUILTIN_GROUPS, { id: "plugin", label: t("codegen.plugin"), variants: pluginVariants }] : BUILTIN_GROUPS;
+  return <CodeGeneratorView groups={groups.map((group) => ({ ...group, variants: [...group.variants] }))} selected={language} onSelect={setLanguage} code={code} editorLanguage={VIEWER_LANGUAGE[language] ?? "plaintext"}/>;
 }
 
 const styles: Record<string, CSSProperties> = {

@@ -47,8 +47,8 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
   const [saved, setSaved] = useState(false);
   const [category, setCategory] = useState<"general" | "connection" | "ai" | "collaboration" | "plugins" | "shortcuts" | "about">("general");
   const categories = [
-    ["general", "通用"], ["connection", "连接"], ["ai", "AI"],
-    ["collaboration", "协作"], ["plugins", "插件"], ["shortcuts", "快捷键"], ["about", "关于"],
+    ["general", locale === "zh-CN" ? "通用" : "General"], ["connection", locale === "zh-CN" ? "连接" : "Connections"], ["ai", "AI"],
+    ["collaboration", locale === "zh-CN" ? "协作" : "Collaboration"], ["plugins", locale === "zh-CN" ? "插件" : "Plugins"], ["shortcuts", locale === "zh-CN" ? "快捷键" : "Shortcuts"], ["about", locale === "zh-CN" ? "关于" : "About"],
   ] as const;
 
   useEffect(() => {
@@ -85,8 +85,9 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
       >
         <header className="settings-dialog-header">
           <div>
-            <h2 id={titleId}>{t("settings.title")}</h2>
-            <p>{t("settings.subtitle")}</p>
+            <span className="settings-scope-label">{locale === "zh-CN" ? "软件级" : "Application-wide"}</span>
+            <h2 id={titleId}>{locale === "zh-CN" ? "软件设置" : "Application settings"}</h2>
+            <p>{locale === "zh-CN" ? "应用于 ApiVoy 软件和当前设备，不随项目切换，也不会写入项目文件。" : "Applies to ApiVoy on this device. These values do not change with projects or enter project files."}</p>
           </div>
           <button ref={closeRef} type="button" className="ui-icon-button" aria-label={t("action.close")} onClick={onClose}>
             <Icon name="close" />

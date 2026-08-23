@@ -44,7 +44,7 @@ use futures::stream::{self, Stream};
 use futures::{SinkExt, StreamExt};
 use local_store::{
     CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore, ScriptRecord,
-    ProjectRecord, StoredRequest, WorkspaceRecord,
+    ModuleRecord, ProjectRecord, StoredRequest, WorkspaceRecord,
 };
 use plugin_runtime::{InstalledPlugin, PluginManager, PluginManifest, PluginPermission};
 use secret_store::{SecretBackendKind, SecretStore};
@@ -267,6 +267,7 @@ struct CreateProjectBody {
 #[serde(rename_all = "camelCase")]
 struct CreateCollectionBody {
     project_id: String,
+    module_id: Option<String>,
     parent_id: Option<String>,
     name: String,
 }
@@ -303,6 +304,7 @@ struct MoveRequestBody {
 struct WorkspaceTree {
     workspaces: Vec<WorkspaceRecord>,
     projects: Vec<ProjectRecord>,
+    modules: Vec<ModuleRecord>,
     collections: Vec<CollectionRecord>,
     requests: Vec<StoredRequest>,
 }
@@ -449,6 +451,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/projects", post(create_project))
         .route("/v1/projects/{id}", patch(rename_project))
         .route("/v1/projects/{id}", delete(delete_project))
+        .route("/v1/modules", post(create_module))
         .route("/v1/collections", post(create_collection))
         .route("/v1/collections/{id}", patch(update_collection))
         .route("/v1/collections/{id}", delete(delete_collection))
@@ -1435,6 +1438,7 @@ async fn get_workspace_tree(
     let workspaces = store.list_workspaces().map_err(internal_store_error)?;
     let mut projects = Vec::new();
     let mut collections = Vec::new();
+    let mut modules = Vec::new();
     for workspace in &workspaces {
         projects.extend(
             store
@@ -1443,6 +1447,7 @@ async fn get_workspace_tree(
         );
     }
     for project in &projects {
+        modules.extend(store.list_modules(&project.id).map_err(internal_store_error)?);
         collections.extend(
             store
                 .list_collections(&project.id)
@@ -1453,9 +1458,23 @@ async fn get_workspace_tree(
     Ok(Json(WorkspaceTree {
         workspaces,
         projects,
+        modules,
         collections,
         requests,
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateModuleBody { project_id: String, name: String }
+
+async fn create_module(
+    State(state): State<AppState>, headers: HeaderMap, Json(body): Json<CreateModuleBody>,
+) -> Result<(StatusCode, Json<ModuleRecord>), (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.create_module(&body.project_id, &body.name)
+        .map(|record| (StatusCode::CREATED, Json(record)))
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
 
 async fn create_workspace(
@@ -1611,7 +1630,7 @@ async fn create_collection(
         .store
         .lock()
         .await
-        .create_collection(&body.project_id, body.parent_id.as_deref(), &body.name)
+        .create_collection_in_module(&body.project_id, body.module_id.as_deref(), body.parent_id.as_deref(), &body.name)
         .map(|record| (StatusCode::CREATED, Json(record)))
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }

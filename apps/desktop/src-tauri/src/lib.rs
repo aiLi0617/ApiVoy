@@ -26,7 +26,7 @@ use execution_engine::{
 };
 use local_store::{
     CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore,
-    ProjectRecord, StoredRequest, WorkspaceRecord,
+    ModuleRecord, ProjectRecord, StoredRequest, WorkspaceRecord,
 };
 use plugin_runtime::{InstalledPlugin, PluginManager, PluginManifest, PluginPermission};
 use secret_store::{SecretBackendKind, SecretStore};
@@ -105,6 +105,7 @@ struct ExecuteResponse {
 struct WorkspaceTree {
     workspaces: Vec<WorkspaceRecord>,
     projects: Vec<ProjectRecord>,
+    modules: Vec<ModuleRecord>,
     collections: Vec<CollectionRecord>,
     requests: Vec<StoredRequest>,
 }
@@ -864,6 +865,7 @@ async fn get_workspace_tree(state: State<'_, AppState>) -> Result<WorkspaceTree,
     let workspaces = store.list_workspaces().map_err(|e| e.to_string())?;
     let mut projects = Vec::new();
     let mut collections = Vec::new();
+    let mut modules = Vec::new();
     for workspace in &workspaces {
         projects.extend(
             store
@@ -872,6 +874,7 @@ async fn get_workspace_tree(state: State<'_, AppState>) -> Result<WorkspaceTree,
         );
     }
     for project in &projects {
+        modules.extend(store.list_modules(&project.id).map_err(|e| e.to_string())?);
         collections.extend(
             store
                 .list_collections(&project.id)
@@ -882,6 +885,7 @@ async fn get_workspace_tree(state: State<'_, AppState>) -> Result<WorkspaceTree,
     Ok(WorkspaceTree {
         workspaces,
         projects,
+        modules,
         collections,
         requests,
     })
@@ -964,6 +968,11 @@ async fn create_project(
 }
 
 #[tauri::command]
+async fn create_module(project_id: String, name: String, state: State<'_, AppState>) -> Result<ModuleRecord, String> {
+    state.store.lock().await.create_module(&project_id, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn rename_project(
     id: String,
     name: String,
@@ -990,6 +999,7 @@ async fn delete_project(id: String, state: State<'_, AppState>) -> Result<(), St
 #[tauri::command]
 async fn create_collection(
     project_id: String,
+    module_id: Option<String>,
     parent_id: Option<String>,
     name: String,
     state: State<'_, AppState>,
@@ -998,7 +1008,7 @@ async fn create_collection(
         .store
         .lock()
         .await
-        .create_collection(&project_id, parent_id.as_deref(), &name)
+        .create_collection_in_module(&project_id, module_id.as_deref(), parent_id.as_deref(), &name)
         .map_err(|e| e.to_string())
 }
 
@@ -1395,6 +1405,7 @@ pub fn run() {
             touch_workspace,
             delete_workspace,
             create_project,
+            create_module,
             rename_project,
             delete_project,
             create_collection,

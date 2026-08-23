@@ -13,6 +13,21 @@ test("generates protocol-specific snippets for all non-HTTP MVP protocols", () =
   assert.match(code, /nc localhost 9000/);
 });
 
+test("offers WebSocket snippets for common client languages", () => {
+  const request = { name: "events", url: "wss://example.com/events", headers: [["Authorization", "Bearer token"]] as Array<[string, string]>, subprotocols: ["graphql-transport-ws"], messages: [{ encoding: "text" as const, data: "ping" }], receiveLimit: 1, timeoutMs: 5000, reconnectMax: 3, reconnectDelayMs: 1000 };
+  const templates = listCodeTemplates("websocket");
+  assert.deepEqual(templates.map((template) => template.id), ["websocket.javascript", "websocket.node-ws", "websocket.python", "websocket.java", "websocket.go", "websocket.csharp", "websocket.swift", "websocket.websocat", "websocket.wscat", "websocket.php", "websocket.ruby", "websocket.dart", "websocket.objective-c", "websocket.rust", "websocket.r", "websocket.kotlin"]);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.node-ws"), /import WebSocket from "ws"/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.python"), /websockets\.connect/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.java"), /newWebSocketBuilder/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.go"), /gorilla\/websocket/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.csharp"), /ClientWebSocket/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.swift"), /webSocketTask/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.websocat"), /websocat/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.rust"), /tokio_tungstenite/);
+  assert.match(generateProtocolCode({ protocol: "websocket", request }, "websocket.kotlin"), /OkHttpClient/);
+});
+
 test("registers and removes plugin code templates", () => {
   const removeProtocol = registerCodeTemplate({ id: "plugin.demo", label: "Demo", protocols: ["udp"], source: "plugin", generate: () => "plugin protocol" });
   assert.equal(generateProtocolCode({ protocol: "udp", request: { protocol: "udp", name: "demo", target: "localhost:9", data: "", encoding: "text", sendCount: 1, intervalMs: 0, timeoutMs: 1000, tls: false } }, "plugin.demo"), "plugin protocol");

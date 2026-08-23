@@ -67,9 +67,20 @@ pub struct ProjectRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ModuleRecord {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub is_default: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CollectionRecord {
     pub id: String,
     pub project_id: String,
+    pub module_id: String,
     pub name: String,
     pub parent_id: Option<String>,
     pub sort_order: i64,
@@ -217,6 +228,16 @@ impl LocalStore {
               sort_order INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS modules (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              is_default INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS modules_one_default_per_project
+              ON modules(project_id) WHERE is_default = 1;
+
             CREATE TABLE IF NOT EXISTS requests (
               id TEXT PRIMARY KEY,
               project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -307,6 +328,7 @@ impl LocalStore {
             "ALTER TABLE collections ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
             [],
         );
+        let _ = self.conn.execute("ALTER TABLE collections ADD COLUMN module_id TEXT", []);
 
         Ok(())
     }
@@ -324,6 +346,7 @@ impl LocalStore {
             "INSERT OR IGNORE INTO projects (id, name, created_at, workspace_id) VALUES (?1, ?2, ?3, ?4)",
             params!["default-project", "Default Project", now, "default-workspace"],
         )?;
+        self.ensure_project_modules(&now)?;
         // Backfill workspace_id for projects created before the column existed.
         let _ = self.conn.execute(
             "UPDATE projects SET workspace_id = ?1 WHERE workspace_id IS NULL",
@@ -333,6 +356,10 @@ impl LocalStore {
             "INSERT OR IGNORE INTO collections (id, project_id, name, created_at) VALUES (?1, ?2, ?3, ?4)",
             params!["default-collection", "default-project", "Default Collection", now],
         )?;
+        let _ = self.conn.execute(
+            "UPDATE collections SET module_id = 'default-module' WHERE project_id = 'default-project' AND module_id IS NULL",
+            [],
+        );
         self.conn.execute(
             r#"
             INSERT OR IGNORE INTO environments (id, project_id, name, variables_json, secret_refs_json, updated_at)
@@ -347,6 +374,24 @@ impl LocalStore {
                 now,
             ],
         )?;
+        Ok(())
+    }
+
+    fn ensure_project_modules(&self, now: &str) -> StoreResult<()> {
+        let mut stmt = self.conn.prepare("SELECT id FROM projects")?;
+        let project_ids = stmt.query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for project_id in project_ids {
+            let module_id = if project_id == "default-project" { "default-module".to_string() } else { format!("default-module-{project_id}") };
+            self.conn.execute(
+                "INSERT OR IGNORE INTO modules (id, project_id, name, is_default, created_at) VALUES (?1, ?2, '默认模块', 1, ?3)",
+                params![module_id, project_id, now],
+            )?;
+            self.conn.execute(
+                "UPDATE collections SET module_id = ?1 WHERE project_id = ?2 AND module_id IS NULL",
+                params![module_id, project_id],
+            )?;
+        }
         Ok(())
     }
 
@@ -559,7 +604,42 @@ impl LocalStore {
                 record.workspace_id
             ],
         )?;
+        let module_id = format!("default-module-{}", record.id);
+        self.conn.execute(
+            "INSERT INTO modules (id, project_id, name, is_default, created_at) VALUES (?1, ?2, '默认模块', 1, ?3)",
+            params![module_id, record.id, record.created_at.to_rfc3339()],
+        )?;
         Ok(record)
+    }
+
+    pub fn create_module(&self, project_id: &str, name: &str) -> StoreResult<ModuleRecord> {
+        if name.trim().is_empty() {
+            return Err(StoreError::InvalidId("module name is required".into()));
+        }
+        let record = ModuleRecord {
+            id: Uuid::new_v4().to_string(),
+            project_id: project_id.into(),
+            name: name.trim().into(),
+            is_default: false,
+            created_at: Utc::now(),
+        };
+        self.conn.execute(
+            "INSERT INTO modules (id, project_id, name, is_default, created_at) VALUES (?1, ?2, ?3, 0, ?4)",
+            params![record.id, record.project_id, record.name, record.created_at.to_rfc3339()],
+        )?;
+        Ok(record)
+    }
+
+    pub fn list_modules(&self, project_id: &str) -> StoreResult<Vec<ModuleRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_id, name, is_default, created_at FROM modules WHERE project_id = ?1 ORDER BY is_default DESC, created_at, name",
+        )?;
+        let rows = stmt.query_map(params![project_id], |row| Ok(ModuleRecord {
+            id: row.get(0)?, project_id: row.get(1)?, name: row.get(2)?,
+            is_default: row.get::<_, i64>(3)? != 0,
+            created_at: parse_time(&row.get::<_, String>(4)?),
+        }))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn list_projects(&self, workspace_id: &str) -> StoreResult<Vec<ProjectRecord>> {
@@ -612,6 +692,16 @@ impl LocalStore {
         parent_id: Option<&str>,
         name: &str,
     ) -> StoreResult<CollectionRecord> {
+        self.create_collection_in_module(project_id, None, parent_id, name)
+    }
+
+    pub fn create_collection_in_module(
+        &self,
+        project_id: &str,
+        requested_module_id: Option<&str>,
+        parent_id: Option<&str>,
+        name: &str,
+    ) -> StoreResult<CollectionRecord> {
         if name.trim().is_empty() {
             return Err(StoreError::InvalidId("collection name is required".into()));
         }
@@ -632,9 +722,26 @@ impl LocalStore {
             "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM collections WHERE project_id = ?1 AND parent_id IS ?2",
             params![project_id, parent_id], |row| row.get(0),
         )?;
+        let module_id: String = if let Some(parent_id) = parent_id {
+            self.conn.query_row(
+                "SELECT module_id FROM collections WHERE id = ?1 AND project_id = ?2",
+                params![parent_id, project_id], |row| row.get(0),
+            )?
+        } else if let Some(module_id) = requested_module_id {
+            self.conn.query_row(
+                "SELECT id FROM modules WHERE id = ?1 AND project_id = ?2",
+                params![module_id, project_id], |row| row.get(0),
+            ).optional()?.ok_or_else(|| StoreError::NotFound(module_id.into()))?
+        } else {
+            self.conn.query_row(
+                "SELECT id FROM modules WHERE project_id = ?1 AND is_default = 1",
+                params![project_id], |row| row.get(0),
+            )?
+        };
         let record = CollectionRecord {
             id: Uuid::new_v4().to_string(),
             project_id: project_id.into(),
+            module_id,
             name: name.trim().into(),
             parent_id: parent_id.map(Into::into),
             sort_order,
@@ -642,25 +749,26 @@ impl LocalStore {
             created_at: Utc::now(),
         };
         self.conn.execute(
-            "INSERT INTO collections (id, project_id, name, created_at, parent_id, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![record.id, record.project_id, record.name, record.created_at.to_rfc3339(), record.parent_id, record.sort_order],
+            "INSERT INTO collections (id, project_id, module_id, name, created_at, parent_id, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![record.id, record.project_id, record.module_id, record.name, record.created_at.to_rfc3339(), record.parent_id, record.sort_order],
         )?;
         Ok(record)
     }
 
     pub fn list_collections(&self, project_id: &str) -> StoreResult<Vec<CollectionRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, project_id, name, parent_id, sort_order, created_at, tags_json FROM collections WHERE project_id = ?1 ORDER BY parent_id, sort_order, name",
+            "SELECT id, project_id, module_id, name, parent_id, sort_order, created_at, tags_json FROM collections WHERE project_id = ?1 ORDER BY parent_id, sort_order, name",
         )?;
         let rows = stmt.query_map(params![project_id], |row| {
             Ok(CollectionRecord {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
-                name: row.get(2)?,
-                parent_id: row.get(3)?,
-                sort_order: row.get(4)?,
-                created_at: parse_time(&row.get::<_, String>(5)?),
-                tags: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or_default(),
+                module_id: row.get(2)?,
+                name: row.get(3)?,
+                parent_id: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: parse_time(&row.get::<_, String>(6)?),
+                tags: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -1658,6 +1766,21 @@ mod tests {
             .find(|item| item.id == collection.id)
             .unwrap();
         assert_eq!(saved.tags, vec!["smoke", "api"]);
+    }
+
+    #[test]
+    fn projects_have_default_modules_and_collections_keep_module_scope() {
+        let store = LocalStore::open_in_memory().unwrap();
+        let project = store.create_project("default-workspace", "Orders").unwrap();
+        let modules = store.list_modules(&project.id).unwrap();
+        assert_eq!(modules.len(), 1);
+        assert!(modules[0].is_default);
+
+        let custom = store.create_module(&project.id, "Fulfillment").unwrap();
+        let root = store.create_collection_in_module(&project.id, Some(&custom.id), None, "API").unwrap();
+        let child = store.create_collection(&project.id, Some(&root.id), "Internal").unwrap();
+        assert_eq!(root.module_id, custom.id);
+        assert_eq!(child.module_id, custom.id);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { exportApiVoyProject, importDocument, type PortableRequest } from "@apivoy/import-export";
+import { importDocument, type PortableRequest } from "@apivoy/import-export";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useFeedback } from "./Feedback";
@@ -7,9 +7,10 @@ import { useAppStore } from "./appStore";
 
 export interface WorkspaceRecord { id: string; name: string; rootPath?: string | null; archived?: boolean; updatedAt?: string }
 export interface ProjectRecord { id: string; workspaceId: string; name: string }
-export interface CollectionRecord { id: string; projectId: string; name: string; parentId?: string | null; sortOrder: number; tags?: string[] }
+export interface ModuleRecord { id: string; projectId: string; name: string; isDefault: boolean }
+export interface CollectionRecord { id: string; projectId: string; moduleId?: string; name: string; parentId?: string | null; sortOrder: number; tags?: string[] }
 export interface RequestRecord { id: string; projectId: string; collectionId: string; name: string; protocolId?: string; method?: string; target: string }
-export interface WorkspaceTree { workspaces: WorkspaceRecord[]; projects: ProjectRecord[]; collections: CollectionRecord[]; requests: RequestRecord[] }
+export interface WorkspaceTree { workspaces: WorkspaceRecord[]; projects: ProjectRecord[]; modules?: ModuleRecord[]; collections: CollectionRecord[]; requests: RequestRecord[] }
 
 const CREATE_PROTOCOL_GROUPS = [
   { label: "API", items: [["http", "HTTP", "globe"], ["grpc", "gRPC", "network"]] },
@@ -25,6 +26,7 @@ export interface WorkspaceExplorerProps {
   onRetry?: () => void;
   selectedCollectionId?: string | null;
   selectedRequestId?: string | null;
+  selectedProjectId?: string | null;
   onSelectCollection: (projectId: string, collectionId: string) => void;
   onOpenRequest: (id: string) => void;
   onCreateWorkspace: (name: string) => Promise<void>;
@@ -33,9 +35,10 @@ export interface WorkspaceExplorerProps {
   onDeleteWorkspace: (id: string) => Promise<void>;
   onTouchWorkspace: (id: string) => Promise<void>;
   onCreateProject: (workspaceId: string, name: string) => Promise<void>;
+  onCreateModule?: (projectId: string, name: string) => Promise<void>;
   onRenameProject: (id: string, name: string) => Promise<void>;
   onDeleteProject: (id: string) => Promise<void>;
-  onCreateCollection: (projectId: string, parentId: string | null, name: string) => Promise<void>;
+  onCreateCollection: (projectId: string, parentId: string | null, name: string, moduleId?: string) => Promise<void>;
   onRenameCollection: (collection: CollectionRecord, name: string) => Promise<void>;
   onUpdateCollectionTags: (collection: CollectionRecord, tags: string[]) => Promise<void>;
   onDeleteCollection: (id: string) => Promise<void>;
@@ -49,12 +52,11 @@ export interface WorkspaceExplorerProps {
 }
 
 export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
-  const [draft, setDraft] = useState<{ kind: "project"; owner: string } | { kind: "collection"; owner: string; parentId: string | null } | null>(null);
+  const [draft, setDraft] = useState<{ kind: "project"; owner: string } | { kind: "module"; owner: string } | { kind: "collection"; owner: string; parentId: string | null; moduleId?: string } | null>(null);
   const [name, setName] = useState("");
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [batchTarget, setBatchTarget] = useState("");
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -184,25 +186,12 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     if (importInput.current) importInput.current.value = "";
   }
 
-  async function exportProject(project: ProjectRecord) {
-    try {
-      const requests = await props.onExportProject(project);
-      let content: string;
-      try { content = exportApiVoyProject(project.name, requests); }
-      catch (error) {
-        if (!(await confirm({ title: "导出项目", description: `${error instanceof Error ? error.message : String(error)}\\n仍然继续导出吗？` }))) return;
-        content = exportApiVoyProject(project.name, requests, true);
-      }
-      const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
-      const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${project.name.replace(/[^\w\u4e00-\u9fff-]+/g, "-")}.apivoy.json`; anchor.click(); URL.revokeObjectURL(url);
-    } catch (error) { notify(error instanceof Error ? error.message : String(error), "danger"); }
-  }
-
   async function submit() {
     const value = name.trim();
     if (!draft || !value) return;
     if (draft.kind === "project") await props.onCreateProject(draft.owner, value);
-    else await props.onCreateCollection(draft.owner, draft.parentId, value);
+    else if (draft.kind === "module") await props.onCreateModule?.(draft.owner, value);
+    else await props.onCreateCollection(draft.owner, draft.parentId, value, draft.moduleId);
     setDraft(null);
     setName("");
   }
@@ -211,10 +200,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   if (props.loading) return <div style={styles.empty} role="status" aria-live="polite">正在加载工作区…</div>;
   if (props.error) return <div className="workspace-load-error" role="alert"><Icon name="archive"/><strong>无法加载工作区</strong><span>{props.error}</span><div><button type="button" className="ui-button primary" onClick={props.onRetry}>重试</button><button type="button" className="ui-button secondary" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-settings"))}>检查 Local Agent 设置</button></div></div>;
   if (!tree) return <div style={styles.empty} role="status">尚未加载工作区</div>;
-  const workspace = tree.workspaces.find((item) => item.id === selectedWorkspaceId) ?? tree.workspaces[0];
+  const workspace = tree.workspaces[0];
   const workspaceProjects = tree.projects.filter((project) => project.workspaceId === workspace?.id);
-  const workspaceProjectIds = new Set(workspaceProjects.map((project) => project.id));
-  const workspaceRequestCount = tree.requests.filter((request) => workspaceProjectIds.has(request.projectId)).length;
   const collectionCountCache = new Map<string, number>();
   function collectionRequestCount(collectionId: string, ancestors = new Set<string>()): number {
     const cached = collectionCountCache.get(collectionId);
@@ -229,6 +216,33 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   }
   const selectedProjectIds = [...new Set(tree.requests.filter((item) => selectedIds.includes(item.id)).map((item) => item.projectId))];
   const normalizedQuery = query.trim().toLocaleLowerCase();
+  const selectedProject = tree.projects.find((project) => project.id === props.selectedProjectId) ?? workspaceProjects[0];
+  const selectedProjectRequestCount = selectedProject ? tree.requests.filter((request) => request.projectId === selectedProject.id).length : 0;
+  const projectModules = selectedProject ? (tree.modules?.filter((module) => module.projectId === selectedProject.id) ?? [{ id: `default-module-${selectedProject.id}`, projectId: selectedProject.id, name: "默认模块", isDefault: true }]) : [];
+  const collectionInModule = (collection: CollectionRecord, module: ModuleRecord) => collection.moduleId ? collection.moduleId === module.id : module.isDefault;
+  function moduleProtocols(module: ModuleRecord): Set<string> {
+    const collectionIds = new Set(tree!.collections.filter((item) => item.projectId === module.projectId && collectionInModule(item, module)).map((item) => item.id));
+    return new Set(tree!.requests.filter((item) => collectionIds.has(item.collectionId)).map((item) => item.protocolId ?? "http"));
+  }
+  function typeLabel(protocols: Set<string>): string | null {
+    if (protocols.has("grpc")) return "Proto 定义";
+    if (protocols.has("graphql")) return "GraphQL Schema";
+    if (["http", "websocket", "mqtt", "amqp", "kafka", "sse"].some((id) => protocols.has(id))) return "类型定义";
+    return null;
+  }
+  function collectionPath(parentId: string | null): CollectionRecord[] {
+    const path: CollectionRecord[] = [];
+    const visited = new Set<string>();
+    let currentId = parentId;
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
+      const current = tree!.collections.find((collection) => collection.id === currentId);
+      if (!current) break;
+      path.unshift(current);
+      currentId = current.parentId ?? null;
+    }
+    return path;
+  }
   function collectionMatches(collection: CollectionRecord): boolean {
     if (!normalizedQuery) return true;
     if (collection.name.toLocaleLowerCase().includes(normalizedQuery)) return true;
@@ -322,17 +336,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     </div>;
   }
   return <section style={styles.root} role="tree" aria-label="工作区资源树" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End" tabIndex={0} onKeyDown={onTreeKeyDown}>
-    <div style={styles.workspaceBar}>
-      <select aria-label="选择工作区" style={styles.workspaceSelect} value={workspace?.id ?? ""} onChange={(event) => { setSelectedWorkspaceId(event.target.value); void props.onTouchWorkspace(event.target.value); }}>
-        {tree.workspaces.map((item) => <option key={item.id} value={item.id}>{item.archived ? `【已归档】${item.name}` : item.name}</option>)}
-      </select>
-      <button style={styles.action} title="新建工作区" onClick={async () => { const value = (await prompt({ title: "新建工作区" }))?.trim(); if (value) void props.onCreateWorkspace(value); }}><Icon name="plus" /></button>
-      {workspace && <button style={styles.action} title="重命名工作区" onClick={async () => { const value = (await prompt({ title: "重命名工作区", initialValue: workspace.name }))?.trim(); if (value) void props.onRenameWorkspace(workspace.id, value); }}><Icon name="edit" /></button>}
-      {workspace && workspace.id !== "default-workspace" && <button style={styles.action} title={workspace.archived ? "恢复工作区" : "归档工作区"} onClick={async () => { if (workspace.archived || await confirm({ title: "归档工作区", description: `归档工作区“${workspace.name}”？` })) void props.onArchiveWorkspace(workspace.id, !workspace.archived); }}>{workspace.archived ? "恢复" : "归档"}</button>}
-      {workspace && workspace.id !== "default-workspace" && <button style={styles.delete} title="永久删除工作区" onClick={async () => { if (await confirm({ title: "永久删除工作区", description: `永久删除工作区“${workspace.name}”及其全部内容？此操作不可恢复。`, tone: "danger", confirmLabel: "永久删除" })) void props.onDeleteWorkspace(workspace.id); }}><Icon name="trash" /></button>}
-    </div>
     <div style={styles.heading}>
-      <span style={styles.headingLabel}>资源管理器 <small className="workspace-resource-count" title="当前工作区请求总数">{workspaceRequestCount}</small></span>
+      <span style={styles.headingLabel}>资源管理 <small className="workspace-resource-count" title="当前项目请求总数">{selectedProjectRequestCount}</small></span>
       <input ref={importInput} hidden multiple type="file" accept=".json,.yaml,.yml,.har,.apivoy" onChange={(event) => void importFiles(event.target.files)} />
     </div>
     <div ref={createMenuRef} className="workspace-quick-actions">
@@ -346,7 +351,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
         <div className="workspace-create-menu-divider"/>
         <div className="workspace-create-menu-title">项目资源</div>
         <div className="workspace-create-menu-grid">
-          <button type="button" role="menuitem" disabled={!workspace} onClick={() => { if (workspace) setDraft({ kind: "project", owner: workspace.id }); setCreateMenuOpen(false); }}><Icon name="archive"/><span>新建项目</span></button>
+          <button type="button" role="menuitem" disabled={!selectedProject} onClick={() => { if (selectedProject) setDraft({ kind: "collection", owner: selectedProject.id, parentId: null }); setCreateMenuOpen(false); }}><Icon name="folder"/><span>新建根集合</span></button>
+          <button type="button" role="menuitem" disabled={!selectedProject || !props.onCreateModule} onClick={() => { if (selectedProject) setDraft({ kind: "module", owner: selectedProject.id }); setCreateMenuOpen(false); }}><Icon name="folder"/><span>新建模块</span></button>
           <button type="button" role="menuitem" disabled={!props.selectedCollectionId} onClick={() => { const selected = tree.collections.find((item) => item.id === props.selectedCollectionId); if (selected) setDraft({ kind: "collection", owner: selected.projectId, parentId: selected.id }); setCreateMenuOpen(false); }}><Icon name="folder"/><span>新建子集合</span></button>
           <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-open-script-library")); }}><Icon name="code"/><span>脚本库</span></button>
         </div>
@@ -364,24 +370,17 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       <button style={styles.action} disabled={!batchTarget} onClick={() => void batchMove()}>移动</button>
       <button style={styles.delete} onClick={() => void batchDelete()}>删除</button>
     </div>}
-    {tree.projects.filter((project) => project.workspaceId === workspace?.id).filter((project) => !normalizedQuery || project.name.toLocaleLowerCase().includes(normalizedQuery) || tree.collections.some((item) => item.projectId === project.id && collectionMatches(item))).map((project, projectIndex, visibleProjects) => <div key={project.id} className="tree-project" style={styles.project} role="treeitem" aria-level={1} aria-setsize={visibleProjects.length} aria-posinset={projectIndex + 1} aria-label={`项目 ${project.name}`}>
-      <div style={styles.projectRow} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const item = readDrag(event); if (item?.type === "collection") { const source = tree.collections.find((collection) => collection.id === item.id); if (source?.projectId === project.id) void props.onMoveCollection(source, project.id, null); } }}>
-        <button type="button" aria-label={`${collapsedNodes.includes(`project:${project.id}`) ? "展开" : "折叠"}项目 ${project.name}`} aria-expanded={!collapsedNodes.includes(`project:${project.id}`)} className={`tree-chevron${collapsedNodes.includes(`project:${project.id}`) ? "" : " is-expanded"}`} style={styles.chevronBtn} onClick={() => toggleExplorerNode(`project:${project.id}`)}><Icon name="chevron" /></button>
-        <strong style={styles.projectName} title={project.name}>{project.name}</strong>
-        <small className="tree-count project-count" title="项目请求总数">{tree.requests.filter((request) => request.projectId === project.id).length}</small>
-        <span style={styles.projectActions}>
-          <button type="button" style={styles.action} title="新建集合" onClick={() => setDraft({ kind: "collection", owner: project.id, parentId: null })}><Icon name="plus" /></button>
-          <button type="button" style={styles.action} title="重命名项目" onClick={async () => { const value = (await prompt({ title: "重命名项目", initialValue: project.name }))?.trim(); if (value) void props.onRenameProject(project.id, value); }}><Icon name="edit" /></button>
-          <button type="button" style={styles.action} title="导出项目包" onClick={() => void exportProject(project)}><Icon name="download" /></button>
-          {project.id !== "default-project" && <button type="button" style={styles.delete} title="删除项目" onClick={async () => { if (await confirm({ title: "删除项目", description: `删除项目“${project.name}”及其中全部内容？`, tone: "danger", confirmLabel: "删除" })) void props.onDeleteProject(project.id); }}><Icon name="trash" /></button>}
-        </span>
-      </div>
-      {!collapsedNodes.includes(`project:${project.id}`) && tree.collections.filter((item) => item.projectId === project.id && !item.parentId && collectionMatches(item)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((collection) => renderCollection(collection))}
-    </div>)}
-    {draft && <div style={styles.createBox}>
-      <input autoFocus style={styles.input} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); if (event.key === "Escape") setDraft(null); }} placeholder={draft.kind === "project" ? "项目名称" : "集合名称"} />
-      <button style={styles.confirm} onClick={() => void submit()}>创建</button>
-    </div>}
+    {selectedProject ? projectModules.map((module) => { const protocols = moduleProtocols(module); const types = typeLabel(protocols); const moduleCollapsed = collapsedNodes.includes(`module:${module.id}`); return <div key={module.id} className="tree-module" role="treeitem" aria-expanded={!moduleCollapsed} aria-label={`模块 ${module.name}`}>
+      <div className="tree-row tree-module-row" style={styles.moduleRow}><button type="button" className={`tree-chevron${moduleCollapsed ? "" : " is-expanded"}`} style={styles.chevronBtn} aria-label={`${moduleCollapsed ? "展开" : "折叠"}模块 ${module.name}`} onClick={() => toggleExplorerNode(`module:${module.id}`)}><Icon name="chevron"/></button><Icon name="folder"/><strong className="tree-label">{module.name}</strong>{module.isDefault ? <small style={styles.moduleBadge}>默认</small> : null}<button type="button" style={styles.action} title="在此模块中新建集合" onClick={() => setDraft({ kind: "collection", owner: module.projectId, parentId: null, moduleId: module.id })}><Icon name="plus"/></button></div>
+      {!moduleCollapsed ? <div className="tree-module-content">
+        <div className="tree-resource-heading" style={styles.resourceHeading}><Icon name="network"/><span>接口</span><small>{tree.requests.filter((request) => tree.collections.some((collection) => collection.id === request.collectionId && collectionInModule(collection, module))).length}</small></div>
+        {tree.collections.filter((item) => item.projectId === selectedProject.id && collectionInModule(item, module) && !item.parentId && collectionMatches(item)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((collection) => renderCollection(collection, 1))}
+        {types ? <button type="button" className="tree-resource-entry" style={styles.resourceEntry} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-type-library", { detail: { moduleId: module.id, protocols: [...protocols] } }))}><Icon name="database"/><span>{types}</span></button> : null}
+        {protocols.has("http") ? <button type="button" className="tree-resource-entry" style={styles.resourceEntry} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-component-library", { detail: { moduleId: module.id } }))}><Icon name="code"/><span>公共组件</span></button> : null}
+      </div> : null}
+    </div>; }) : null}
+    {draft?.kind === "module" && typeof document !== "undefined" ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => setDraft(null)}><div className="collection-create-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><header><div><h2>新建模块</h2><p>模块用于划分独立的业务域</p></div><button type="button" className="ui-icon-button" aria-label="关闭" onClick={() => setDraft(null)}><Icon name="close"/></button></header><label><span>模块名称</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} placeholder="例如：用户中心"/></label><footer><button type="button" className="ui-button secondary" onClick={() => setDraft(null)}>取消</button><button type="button" className="ui-button primary" disabled={!name.trim()} onClick={() => void submit()}>创建模块</button></footer></div></div>, document.body) : null}
+    {draft?.kind === "collection" && typeof document !== "undefined" ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => setDraft(null)}><div className="collection-create-dialog" role="dialog" aria-modal="true" aria-labelledby="collection-create-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="collection-create-title">新建集合</h2><p>{collectionPath(draft.parentId).length ? `父级：${collectionPath(draft.parentId).map((item) => item.name).join(" / ")}` : `项目根目录：${selectedProject?.name ?? "当前项目"}`}</p></div><button type="button" className="ui-icon-button" aria-label="关闭" onClick={() => setDraft(null)}><Icon name="close"/></button></header><div className="collection-create-level"><Icon name="folder"/><span>新集合将位于第 <strong>{collectionPath(draft.parentId).length + 1}</strong> 层</span></div><label><span>集合名称</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} placeholder="请输入集合名称"/></label><footer><button type="button" className="ui-button secondary" onClick={() => { setDraft(null); setName(""); }}>取消</button><button type="button" className="ui-button primary" disabled={!name.trim()} onClick={() => void submit()}>创建集合</button></footer></div></div>, document.body) : null}
   </section>;
 }
 
@@ -404,6 +403,10 @@ const styles: Record<string, CSSProperties> = {
   chevronBtn: { flexShrink: 0, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", padding: 2, display: "inline-flex", alignItems: "center" },
   icon: { flexShrink: 0, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", fontSize: 16, padding: 2 },
   action: { flexShrink: 0, border: 0, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", padding: "3px", display: "inline-flex", alignItems: "center" },
+  moduleRow: { display: "flex", alignItems: "center", gap: 6, margin: "4px 6px 2px", padding: "7px 6px", borderRadius: 7, color: "var(--apivoy-text)", fontSize: 12 },
+  moduleBadge: { marginLeft: "auto", color: "var(--apivoy-muted)", fontSize: 9, fontWeight: 500 },
+  resourceHeading: { display: "flex", alignItems: "center", gap: 6, padding: "5px 12px 4px 25px", color: "var(--apivoy-muted)", fontSize: 10, fontWeight: 700 },
+  resourceEntry: { width: "calc(100% - 12px)", display: "flex", alignItems: "center", gap: 7, margin: "1px 6px", padding: "7px 12px 7px 25px", border: 0, borderRadius: 7, background: "transparent", color: "var(--apivoy-muted)", cursor: "pointer", fontSize: 11, textAlign: "left" },
   collection: { width: "100%", boxSizing: "border-box", display: "flex", gap: 4, alignItems: "center", background: "transparent", color: "var(--apivoy-text)", padding: "2px 5px 2px 22px", borderRadius: 7, fontSize: 12 },
   tags: { display: "flex", gap: 4, flexWrap: "wrap", paddingBottom: 3, color: "#8da6b8", fontSize: 9 },
   collectionMain: { flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "18px minmax(0,1fr) auto", gap: 5, alignItems: "center", border: 0, background: "transparent", color: "inherit", padding: "5px 4px", textAlign: "left", cursor: "pointer", overflow: "hidden" },
