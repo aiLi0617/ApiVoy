@@ -10,7 +10,6 @@ import type {
   ResponseMeta,
   RequestEnvelope,
 } from "@apivoy/request-model";
-import { CodeGenerator } from "./CodeGenerator";
 import { Icon } from "./Icons";
 import { CodeEditor } from "./CodeEditor";
 import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
@@ -22,6 +21,8 @@ import type { ScriptAsset } from "./scriptLibrary";
 import ts from "typescript";
 import { listEnvironmentResources } from "./agentResources";
 import { useI18n } from "./i18n";
+import { alignRequestToInterface, captureHttpInterfaceStructure, diffHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY, readInterfaceStructureMetadata } from "./interfaceStructureV2";
+import { HttpRequestResponseView } from "./HttpRequestResponseView";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 type BearerTokenSource = "direct" | "secret_ref";
@@ -195,6 +196,10 @@ export function formatJsonBody(value: string): string {
   return JSON.stringify(JSON.parse(value), null, 2);
 }
 
+function snapshotActualRequest(request: HttpWorkbenchRequest): HttpWorkbenchRequest {
+  return { ...request, metadata: {} };
+}
+
 function resolveAssets(ids:string[]):string[]{ let assets:ScriptAsset[]=[];try{assets=JSON.parse(localStorage.getItem("apivoy-project-scripts-v1")??"[]") as ScriptAsset[]}catch{return []}return ids.map((id)=>assets.find((item)=>item.id===id)).filter((item):item is ScriptAsset=>!!item).map((item)=>{const source=item.language==="typescript"?ts.transpileModule(item.source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None}}).outputText:item.source;return `// @apivoy-script:${item.id}\n${source}`})}
 function assetIdsFromScripts(scripts:string[]|undefined):string[]{return Array.from(new Set((scripts??[]).map((script)=>script.match(/^\/\/ @apivoy-script:([^\s]+)/m)?.[1]).filter((id):id is string=>Boolean(id))))}
 
@@ -299,9 +304,11 @@ interface KeyValueRowsProps {
   addPlaceholder: string;
   loading?: boolean;
   onRowsChange?: (rows: HeaderRow[]) => void;
+  inconsistentNames?: string[];
 }
 
-export function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPlaceholder, loading = false, onRowsChange }: KeyValueRowsProps) {
+export function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPlaceholder, loading = false, onRowsChange, inconsistentNames = [] }: KeyValueRowsProps) {
+  const inconsistent = new Set(inconsistentNames.map((name) => name.toLowerCase()));
   const update = (producer: (current: HeaderRow[]) => HeaderRow[]) => { if (loading) return; setRows((current) => { const next = producer(current); onRowsChange?.(next); return next; }); };
   const activateTypeSelection = (row: HeaderRow, index: number) => {
     if (row.typeSelected) return;
@@ -326,7 +333,8 @@ export function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPl
       const missingValue = row.required && !row.value.trim();
       const invalidValue = row.enabled && missingValue;
       const mutedInvalidValue = !row.enabled && missingValue;
-      return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${isEntry ? " is-entry" : ""}${row.enabled ? " is-enabled" : ""}${index === rows.length - 1 ? " is-new" : ""}`} key={row.id}>
+      const isInconsistent = Boolean(row.key.trim() && inconsistent.has(row.key.trim().toLowerCase()));
+      return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${isEntry ? " is-entry" : ""}${row.enabled ? " is-enabled" : ""}${index === rows.length - 1 ? " is-new" : ""}${isInconsistent ? " is-interface-inconsistent" : ""}`} key={row.id} title={isInconsistent ? "此字段与接口文档不一致" : undefined}>
         <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} ${kind} ${index + 1}`} checked={row.enabled} onChange={(event) => { const enabled = event.target.checked; update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, enabled } : item); return enabled && index === current.length - 1 ? [...next, createQueryRow()] : next; }); }} disabled={loading}/>
         <div className={`http-param-name-cell${mutedInvalidName ? " has-muted-error" : ""}`}><input aria-label={`${kind} ${index + 1} 名称`} aria-invalid={invalidName} aria-describedby={missingName ? `${row.id}-name-error` : undefined} title={missingName ? (row.enabled ? "参数名不能为空" : "参数名为空（已停用，不影响发送）") : undefined} style={styles.input} value={row.key} onFocus={() => activateEmptyRow(row, index)} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { key: event.target.value }) : item), index))} placeholder={missingName ? "" : row.enabled ? nameLabel : index === rows.length - 1 ? addPlaceholder : ""} spellCheck={false} disabled={loading}/>{missingName && <span id={`${row.id}-name-error`}>参数名不能为空</span>}</div>
         <div className={`http-param-value-cell${mutedInvalidValue ? " has-muted-error" : ""}`}><input aria-label={`${kind} ${index + 1} 值`} aria-invalid={invalidValue} aria-describedby={missingValue ? `${row.id}-value-error` : undefined} title={missingValue ? (row.enabled ? "参数值不能为空" : "参数值为空（已停用，不影响发送）") : undefined} style={styles.input} value={row.value} onFocus={() => activateEmptyRow(row, index)} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { value: event.target.value }) : item), index))} placeholder="" spellCheck={false} disabled={loading}/>{missingValue && <span id={`${row.id}-value-error`}>参数值不能为空</span>}</div>
@@ -345,6 +353,7 @@ export interface HttpWorkbenchProps {
   onCancel?: (executionId: string) => Promise<void>;
   onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
   onSaveAsCase?: (request: HttpWorkbenchRequest) => Promise<void>;
+  onUpdateInterface?: (request: HttpWorkbenchRequest) => Promise<void>;
   onPutSecret?: (name: string, value: string) => Promise<void>;
   onListCookies?: (url: string) => Promise<Array<{ name: string; value: string }>>;
   onSetCookie?: (url: string, name: string, value: string) => Promise<void>;
@@ -357,6 +366,8 @@ export interface HttpWorkbenchProps {
   toolbarTargetId?: string;
   commandbarTargetId?: string;
   workbenchSessionId?: string;
+  embeddedPreview?: boolean;
+  fixedSplitDirection?: "vertical" | "horizontal";
 }
 
 const DEFAULT_ENVIRONMENTS = [{ id: "default-env", name: "默认环境" }];
@@ -555,6 +566,7 @@ export function HttpWorkbench({
   onCancel,
   onSave,
   onSaveAsCase,
+  onUpdateInterface,
   onPutSecret,
   onListHistory,
   onReplayHistory,
@@ -564,6 +576,8 @@ export function HttpWorkbench({
   toolbarTargetId,
   commandbarTargetId,
   workbenchSessionId,
+  embeddedPreview = false,
+  fixedSplitDirection,
 }: HttpWorkbenchProps) {
   const { t } = useI18n();
   const [name, setName] = useState("");
@@ -586,9 +600,18 @@ export function HttpWorkbench({
   const [environmentRef,setEnvironmentRef]=useState<string>(defaultEnvironmentId);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
   const [commandbarTarget, setCommandbarTarget] = useState<HTMLElement | null>(null);
+  const [lifecycleTab, setLifecycleTab] = useState("debug");
   void toolbarTarget;
   useEffect(() => { setToolbarTarget(toolbarTargetId ? document.getElementById(toolbarTargetId) : null); }, [toolbarTargetId]);
   useEffect(() => { setCommandbarTarget(commandbarTargetId ? document.getElementById(commandbarTargetId) : null); }, [commandbarTargetId]);
+  useEffect(() => {
+    if (!commandbarTarget) return;
+    const sync = () => setLifecycleTab(commandbarTarget.dataset.activeTab || "debug");
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(commandbarTarget, { attributes: true, attributeFilter: ["data-active-tab"] });
+    return () => observer.disconnect();
+  }, [commandbarTarget]);
   const [environmentOptions,setEnvironmentOptions]=useState(environments);
   useEffect(()=>{listEnvironmentResources().then((items)=>setEnvironmentOptions(items.map(({id,name})=>({id,name})))).catch(()=>setEnvironmentOptions(environments))},[environments]);
   const [preScriptAssetIds,setPreScriptAssetIds]=useState<string[]>([]);
@@ -621,8 +644,8 @@ export function HttpWorkbench({
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
   const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   const [caseName, setCaseName] = useState("");
-  const [caseType, setCaseType] = useState<"debug" | "test">("debug");
   const [caseSaveResponse, setCaseSaveResponse] = useState(true);
+  const [caseType, setCaseType] = useState<"debug" | "test">("debug");
   const [caseCategory, setCaseCategory] = useState<"positive" | "negative" | "boundary" | "security" | "other">("positive");
   const [caseTags, setCaseTags] = useState("");
   const [caseSaving, setCaseSaving] = useState(false);
@@ -630,6 +653,8 @@ export function HttpWorkbench({
   const [openedCaseParentId, setOpenedCaseParentId] = useState<string | null>(null);
   const [openedCaseInterfaceName, setOpenedCaseInterfaceName] = useState("");
   const [syncCaseResponse, setSyncCaseResponse] = useState(false);
+  const [caseStructureBusy, setCaseStructureBusy] = useState(false);
+  const [caseDifferenceOpen, setCaseDifferenceOpen] = useState(false);
   const saveMenuRef = useRef<HTMLDivElement>(null);
   const hasResponseResult = Boolean(result && (result.summary.status != null || result.responseMeta || result.preview != null));
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -875,6 +900,7 @@ export function HttpWorkbench({
   }
 
   useEffect(() => {
+    if (embeddedPreview) return;
     function onKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !loading && url.trim()) {
         event.preventDefault();
@@ -883,7 +909,7 @@ export function HttpWorkbench({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  }, [embeddedPreview, loading, url]);
 
   function applyRequest(loaded: HttpWorkbenchRequest) {
     setRequestId(loaded.id);
@@ -891,6 +917,25 @@ export function HttpWorkbench({
     setOpenedCaseParentId(loaded.variables?.__apivoyCaseOf ?? null);
     setOpenedCaseInterfaceName(typeof loaded.metadata?.__apivoyCaseInterfaceName === "string" ? loaded.metadata.__apivoyCaseInterfaceName : loaded.variables?.__apivoyCaseInterfaceName ?? "");
     setSyncCaseResponse(Boolean(loaded.metadata?.__apivoySavedResponse));
+    const savedResponse = loaded.metadata?.__apivoySavedResponse as { status?: number | null; durationMs?: number; body?: string | null; headers?: Array<[string, string]>; contentType?: string | null } | undefined;
+    const savedActualRequest = loaded.metadata?.__apivoySavedActualRequest as HttpWorkbenchRequest | undefined;
+    setLastRequest(savedActualRequest && typeof savedActualRequest.url === "string" && Array.isArray(savedActualRequest.headers) ? savedActualRequest : savedResponse ? snapshotActualRequest(loaded) : null);
+    if (savedResponse) {
+      const savedBody = savedResponse.body ?? "";
+      const now = new Date().toISOString();
+      setResult({
+        summary: { executionId: "saved-response", requestId: loaded.id ?? "saved-request", protocolId: "http", state: "completed", startedAt: now, finishedAt: now, durationMs: savedResponse.durationMs ?? 0, bytesReceived: new TextEncoder().encode(savedBody).length, status: savedResponse.status ?? null },
+        eventCount: 0,
+        preview: savedBody,
+        responseMeta: { status: savedResponse.status ?? null, headers: Array.isArray(savedResponse.headers) ? savedResponse.headers : [], contentType: savedResponse.contentType ?? null, sizeHint: new TextEncoder().encode(savedBody).length },
+        assertions: [],
+      });
+      setResponseBytes(null);
+      setResponseTab("body");
+      setStatusMsg("已加载用例保存的响应");
+    } else {
+      setResult(null);
+    }
     setName(loaded.name ?? "");
     setMethod(loaded.method);
     setUrl(loaded.url);
@@ -969,7 +1014,6 @@ export function HttpWorkbench({
   useEffect(() => {
     if (externalRequest) {
       applyRequest(externalRequest);
-      setResult(null);
       setStatusMsg("已打开集合中的请求");
     } else {
       const draft = readWorkbenchDraft<HttpWorkbenchRequest>("http");
@@ -983,9 +1027,16 @@ export function HttpWorkbench({
   useWorkbenchHydration("http", (raw) => {
     const savedRequest = httpRequestFromHydration(raw);
     if (savedRequest) {
-      applyRequest(savedRequest);
-      setResult(null);
-      setStatusMsg((raw as { request?: unknown } | null)?.request ? "接口定义已同步到调试请求" : "已打开资源树中的请求");
+      const latestInterface = savedRequest.variables?.__apivoyCaseOf ? readInterfaceStructureMetadata(savedRequest.metadata) : null;
+      const differences = latestInterface ? diffHttpInterfaceStructure(captureHttpInterfaceStructure(savedRequest), latestInterface) : [];
+      const requestToOpen = latestInterface && differences.length ? alignRequestToInterface(savedRequest, latestInterface) : savedRequest;
+      if (latestInterface && differences.length) {
+        requestToOpen.metadata = { ...(requestToOpen.metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: latestInterface };
+        void onSave?.(requestToOpen).then(() => setStatusMsg(`用例已自动同步接口的 ${differences.length} 项参数变化`)).catch((error) => setStatusMsg(`用例参数已同步，但保存失败：${error instanceof Error ? error.message : String(error)}`));
+      }
+      applyRequest(requestToOpen);
+      const hasSavedResponse = Boolean(requestToOpen.metadata?.__apivoySavedResponse);
+      setStatusMsg(differences.length ? `正在同步接口的 ${differences.length} 项参数变化…` : hasSavedResponse ? "已打开用例及其保存的响应" : (raw as { request?: unknown } | null)?.request ? "接口定义已同步到调试请求" : "已打开资源树中的请求");
       return;
     }
     const envelope = raw as { target?: string; payload?: { type?: string; query?: string; variables?: unknown; operationName?: string | null; headers?: Array<[string, string]> } };
@@ -1007,8 +1058,7 @@ export function HttpWorkbench({
     if (!detail?.request) return;
     applyRequest(detail.request);
     if (detail.aiAssertions) setAssertionsText(detail.aiAssertions);
-    setResult(null);
-    setStatusMsg("已载入请求，请检查后再发送");
+    setStatusMsg(detail.request.metadata?.__apivoySavedResponse ? "已载入用例及其保存的响应" : "已载入请求，请检查后再发送");
   }, workbenchSessionId);
 
   useAutosaveDraft("http", buildRequest);
@@ -1139,6 +1189,7 @@ export function HttpWorkbench({
     if (!onSave || !validateParameterNames()) return;
     try {
       const request = buildRequest();
+      if (!openedCaseParentId) request.metadata = { ...(request.metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: captureHttpInterfaceStructure(request) };
       const responseSnapshot = syncCaseResponse && openedCaseParentId && result && hasResponseResult ? {
         status: result.summary.status ?? null,
         durationMs: result.summary.durationMs,
@@ -1147,7 +1198,7 @@ export function HttpWorkbench({
         contentType: result.responseMeta?.contentType ?? null,
       } : null;
       if (responseSnapshot) {
-        request.metadata = { ...(request.metadata ?? {}), __apivoySavedResponse: responseSnapshot };
+        request.metadata = { ...(request.metadata ?? {}), __apivoySavedResponse: responseSnapshot, ...(lastRequest ? { __apivoySavedActualRequest: snapshotActualRequest(lastRequest) } : {}) };
         setRequestMetadata(request.metadata);
       }
       await onSave(request);
@@ -1158,24 +1209,46 @@ export function HttpWorkbench({
     }
   }
 
-  function openCaseDialog() {
+  useEffect(() => {
+    const saveInterfaceDraft = (event: Event) => {
+      const detail = (event as CustomEvent<{ requestId?: string; sessionId?: string }>).detail;
+      const targetId = detail?.requestId;
+      if (detail?.sessionId && detail.sessionId !== workbenchSessionId) return;
+      if (openedCaseParentId || (targetId && requestId && targetId !== requestId)) return;
+      void handleSave();
+    };
+    window.addEventListener("apivoy-save-interface-draft", saveInterfaceDraft);
+    return () => window.removeEventListener("apivoy-save-interface-draft", saveInterfaceDraft);
+  });
+
+  function openCaseDialog(defaultType: "debug" | "test" = "debug") {
     if (!onSaveAsCase || !validateParameterNames()) return;
     const request = buildRequest();
     setCaseName(caseNameFromRequestName(request.name ?? requestNameFromUrl(request.url)));
-    setCaseType("debug");
-    setCaseSaveResponse(hasResponseResult);
+    setCaseType(defaultType);
+    setCaseSaveResponse(defaultType === "debug" && hasResponseResult);
     setCaseCategory("positive");
     setCaseTags("");
     setSaveMenuOpen(false);
     setCaseDialogOpen(true);
   }
 
+  useEffect(() => {
+    const createCase = (event: Event) => {
+      const detail = (event as CustomEvent<{ caseType?: "debug" | "test"; sessionId?: string }>).detail;
+      if (detail?.sessionId && detail.sessionId !== workbenchSessionId) return;
+      openCaseDialog(detail?.caseType ?? "debug");
+    };
+    window.addEventListener("apivoy-create-interface-example", createCase);
+    return () => window.removeEventListener("apivoy-create-interface-example", createCase);
+  }, [workbenchSessionId]);
+
   async function saveAsCase() {
     const nextName = caseName.trim();
     if (!onSaveAsCase || !nextName || caseSaving) return;
     setCaseSaving(true);
     try {
-      const responseSnapshot = caseSaveResponse && result && hasResponseResult ? {
+      const responseSnapshot = caseType === "debug" && caseSaveResponse && result && hasResponseResult ? {
         status: result.summary.status ?? null,
         durationMs: result.summary.durationMs,
         body: result.preview ?? null,
@@ -1183,14 +1256,17 @@ export function HttpWorkbench({
         contentType: result.responseMeta?.contentType ?? null,
       } : null;
       const request = buildRequest();
+      const interfaceStructure = captureHttpInterfaceStructure(request);
       await onSaveAsCase({
         ...request,
         name: nextName,
         metadata: {
           ...(request.metadata ?? {}),
+          [INTERFACE_STRUCTURE_METADATA_KEY]: interfaceStructure,
           __apivoyCaseType: caseType,
           ...(caseType === "test" ? { __apivoyCaseCategory: caseCategory, __apivoyCaseTags: caseTags.split(",").map((tag) => tag.trim()).filter(Boolean) } : {}),
           ...(responseSnapshot ? { __apivoySavedResponse: responseSnapshot } : {}),
+          ...(lastRequest ? { __apivoySavedActualRequest: snapshotActualRequest(lastRequest) } : {}),
         },
       });
       setCaseDialogOpen(false);
@@ -1200,6 +1276,43 @@ export function HttpWorkbench({
     } finally {
       setCaseSaving(false);
     }
+  }
+
+  const caseStructureState = (() => {
+    if (!openedCaseParentId) return null;
+    const baseline = readInterfaceStructureMetadata(requestMetadata);
+    if (!baseline) return null;
+    try {
+      const request = buildRequest();
+      return { baseline, differences: diffHttpInterfaceStructure(captureHttpInterfaceStructure(request), baseline) };
+    } catch { return null; }
+  })();
+
+  function syncCaseWithInterface() {
+    if (!caseStructureState || caseStructureBusy) return;
+    setCaseStructureBusy(true);
+    try {
+      const aligned = alignRequestToInterface(buildRequest(), caseStructureState.baseline);
+      aligned.metadata = { ...(aligned.metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: caseStructureState.baseline };
+      applyRequest(aligned);
+      setStatusMsg("当前用例已同步接口结构，请保存用例");
+    } finally { setCaseStructureBusy(false); }
+  }
+
+  async function updateInterfaceFromCase() {
+    if (!onUpdateInterface || !caseStructureState?.differences.length || caseStructureBusy) return;
+    setCaseStructureBusy(true);
+    try {
+      const request = buildRequest();
+      const structure = captureHttpInterfaceStructure(request);
+      const variables = { ...request.variables };
+      delete variables.__apivoyCaseOf;
+      delete variables.__apivoyCaseInterfaceName;
+      await onUpdateInterface({ ...request, id: openedCaseParentId ?? undefined, name: openedCaseInterfaceName || request.name, variables, metadata: { [INTERFACE_STRUCTURE_METADATA_KEY]: structure } });
+      setRequestMetadata((current) => ({ ...current, [INTERFACE_STRUCTURE_METADATA_KEY]: structure }));
+      setStatusMsg("接口已更新；保存当前用例后将记录新的接口基线");
+    } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); }
+    finally { setCaseStructureBusy(false); }
   }
 
   useEffect(() => {
@@ -1348,9 +1461,13 @@ export function HttpWorkbench({
         {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
       <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="接口路径" spellCheck={false} disabled={loading} /></label>
-      <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
-        <Icon name={loading ? "close" : "send"}/>{loading ? t("action.cancel") : t("action.send")}
-      </button>
+      {lifecycleTab === "definition" ? <>
+        <button type="button" className="http-send-button" style={styles.button} disabled={!url.trim()} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId } }))}><Icon name="archive"/>保存</button>
+        <button type="button" className="http-save-button" style={styles.secondaryButton} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-lifecycle-tab", { detail: { sessionId: workbenchSessionId, tab: "debug" } }))}><Icon name="send"/>调试</button>
+      </> : <>
+        <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
+          <Icon name={loading ? "close" : "send"}/>{loading ? t("action.cancel") : t("action.send")}
+        </button>
       {onSave && <div className="http-save-split" ref={saveMenuRef}>
         <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => void handleSave()}><Icon name="archive"/>{t("action.save")}</button>
         {openedCaseParentId ? <label className="http-save-response-sync" title="勾选后，点击保存时同步当前响应">
@@ -1358,10 +1475,11 @@ export function HttpWorkbench({
         </label> : onSaveAsCase ? <>
           <button type="button" className="http-save-menu-trigger" aria-label="更多保存方式" aria-haspopup="menu" aria-expanded={saveMenuOpen} disabled={loading || !url.trim()} onClick={() => setSaveMenuOpen((open) => !open)}><Icon name="chevron"/></button>
           {saveMenuOpen ? <div className="http-save-menu" role="menu" aria-label="保存方式">
-            <button type="button" role="menuitem" onClick={openCaseDialog}><Icon name="copy"/><span>保存为用例</span></button>
+            <button type="button" role="menuitem" onClick={() => openCaseDialog("debug")}><Icon name="copy"/><span>保存为用例</span></button>
           </div> : null}
         </> : null}
       </div>}
+      </>}
     </div>
   </div>;
 
@@ -1372,26 +1490,27 @@ export function HttpWorkbench({
         <div className="case-save-fields">
           <label><span>用例名称 <i>*</i></span><div className="case-name-composer"><input autoFocus list="case-name-presets" aria-label="用例场景名称" value={caseName} onChange={(event) => setCaseName(event.target.value)} placeholder="选择预设或输入自定义名称" /><datalist id="case-name-presets">{CASE_NAME_PRESETS.map((preset) => <option key={preset} value={preset}/>)}</datalist></div></label>
           <fieldset className="case-type-options"><legend>用例类型</legend>
-            <label><input type="radio" name="case-type" value="debug" checked={caseType === "debug"} onChange={() => setCaseType("debug")}/><span>调试用例</span></label>
-            <label><input type="radio" name="case-type" value="test" checked={caseType === "test"} onChange={() => setCaseType("test")}/><span>测试用例</span></label>
+            <label><input type="radio" name="case-type" value="debug" checked={caseType === "debug"} onChange={() => { setCaseType("debug"); setCaseSaveResponse(hasResponseResult); }}/><span>调试用例</span></label>
+            <label><input type="radio" name="case-type" value="test" checked={caseType === "test"} onChange={() => { setCaseType("test"); setCaseSaveResponse(false); }}/><span>测试用例</span></label>
           </fieldset>
           {caseType === "test" ? <>
             <label><span>目标分类</span><select value={caseCategory} onChange={(event) => setCaseCategory(event.target.value as typeof caseCategory)}><option value="positive">正向</option><option value="negative">负向</option><option value="boundary">边界值</option><option value="security">安全性</option><option value="other">其他</option></select></label>
             <label><span>单接口用例标签</span><div className="case-tag-input"><Icon name="tag"/><input value={caseTags} onChange={(event) => setCaseTags(event.target.value)} placeholder="添加标签，多个标签用逗号分隔"/></div></label>
           </> : null}
         </div>
-        <label className={"case-save-response" + (hasResponseResult ? "" : " is-disabled")}>
-          <input type="checkbox" checked={caseSaveResponse} disabled={!hasResponseResult} onChange={(event) => setCaseSaveResponse(event.target.checked)}/>
-          <span><strong>同时保存响应</strong>{!hasResponseResult ? <small>当前没有响应，仅保存请求配置</small> : null}</span>
-        </label>
+        {caseType === "debug" ? <label className={"case-save-response" + (hasResponseResult ? "" : " is-disabled")}>
+          <input type="checkbox" checked={caseSaveResponse} disabled={!hasResponseResult || caseSaving} onChange={(event) => setCaseSaveResponse(event.target.checked)}/>
+          <span><strong>同时保存响应</strong><small>{hasResponseResult ? "包含状态码、Headers、Content-Type、耗时和响应正文" : "当前没有响应，仅保存请求配置"}</small></span>
+        </label> : null}
         <footer><button type="button" className="ui-button secondary" disabled={caseSaving} onClick={() => setCaseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={caseSaving || !caseName.trim()}>{caseSaving ? "保存中…" : "保存"}</button></footer>
       </form>
-    </div>, document.body) : null}{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}{commandbarTarget ? createPortal(requestCommandbar, commandbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
-      <div className={`http-workbench-layout${commandbarTarget ? " has-external-commandbar" : ""}`}>
-      {commandbarTarget ? null : requestCommandbar}
+    </div>, document.body) : null}{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}{commandbarTarget ? createPortal(requestCommandbar, commandbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={embeddedPreview ? undefined : statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
+      <div className={`http-workbench-layout${commandbarTarget || embeddedPreview ? " has-external-commandbar" : ""}${embeddedPreview ? " is-embedded-preview" : ""}`}>
+      {commandbarTarget || embeddedPreview ? null : requestCommandbar}
       <div className="http-workbench-split">
-      <SplitPane id="http-workbench" direction="vertical" minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
+      <SplitPane id={embeddedPreview ? "http-test-case-preview" : "http-workbench"} direction="vertical" fixedDirection={fixedSplitDirection ?? (embeddedPreview ? "horizontal" : undefined)} minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
       {(() => {
+        const paramDifferenceCount = caseStructureState?.differences.filter((item) => item.field.location === "query").length ?? 0;
         const requestTabs = [
           { id: "params" as const, label: "Params", hint: queryRows.filter((row) => row.key.trim()).length || undefined },
           { id: "body" as const, label: "Body" },
@@ -1413,16 +1532,23 @@ export function HttpWorkbench({
             setRequestTab(requestTabs[next].id);
             queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus());
           }}>
-            {requestTabs.map((tab) => <button key={tab.id} type="button" role="tab" tabIndex={activeTab === tab.id ? 0 : -1} aria-selected={activeTab === tab.id} id={`http-request-tab-${tab.id}`} aria-controls={`http-request-panel-${tab.id}`} style={activeTab === tab.id ? styles.tabActive : styles.tab} onClick={() => setRequestTab(tab.id)}>{tab.label}{tab.hint != null && tab.hint !== "" ? <span aria-label={`${tab.hint} 项`} style={styles.count}>{tab.hint}</span> : null}</button>)}
+            {requestTabs.map((tab) => <button key={tab.id} type="button" role="tab" tabIndex={activeTab === tab.id ? 0 : -1} aria-selected={activeTab === tab.id} id={`http-request-tab-${tab.id}`} aria-controls={`http-request-panel-${tab.id}`} className={tab.id === "params" && paramDifferenceCount ? "has-interface-difference" : undefined} style={activeTab === tab.id ? styles.tabActive : styles.tab} onClick={() => setRequestTab(tab.id)}>{tab.label}{tab.hint != null && tab.hint !== "" ? <span aria-label={`${tab.hint} 项`} style={styles.count}>{tab.hint}</span> : null}{tab.id === "params" && paramDifferenceCount ? <span className="http-tab-difference" title={`${paramDifferenceCount} 个参数与接口文档不一致`} aria-label={`${paramDifferenceCount} 个参数不一致`}>{paramDifferenceCount}</span> : null}</button>)}
+            {openedCaseParentId && caseStructureState?.differences.length ? <div className="http-case-consistency" onMouseEnter={() => setCaseDifferenceOpen(true)} onMouseLeave={() => setCaseDifferenceOpen(false)} onFocusCapture={() => setCaseDifferenceOpen(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setCaseDifferenceOpen(false); }}>
+              <button type="button" className="http-case-consistency-trigger" aria-haspopup="dialog" aria-expanded={caseDifferenceOpen} onClick={() => setCaseDifferenceOpen((open) => !open)}><Icon name="activity"/><span>不一致</span><small>{caseStructureState.differences.length}</small></button>
+              {caseDifferenceOpen ? <div className="http-case-consistency-popover" role="dialog" aria-label="参数与接口文档不一致">
+                <strong>参数与接口文档不一致</strong>
+                <div><button type="button" disabled={caseStructureBusy} onClick={() => { syncCaseWithInterface(); setCaseDifferenceOpen(false); }}>同步接口</button><button type="button" disabled={caseStructureBusy || !onUpdateInterface} onClick={() => { void updateInterfaceFromCase(); setCaseDifferenceOpen(false); }}>更新接口</button></div>
+              </div> : null}
+            </div> : null}
           </div>
           <div className="http-request-tab-panel" role="tabpanel" id={`http-request-panel-${activeTab}`} aria-labelledby={`http-request-tab-${activeTab}`}>
             {activeTab === "params" && <div className="http-kv-editor" aria-label="URL Query Params">
               <div className="http-section-heading">Query 参数</div>
-              <KeyValueRows rows={queryRows} setRows={setQueryRows} kind="Param" nameLabel="参数名" valueLabel="参数值" addPlaceholder="添加参数" loading={loading} onRowsChange={(rows) => setUrl((current) => urlWithQueryRows(current, rows))}/>
+              <KeyValueRows rows={queryRows} setRows={setQueryRows} kind="Param" nameLabel="参数名" valueLabel="参数值" addPlaceholder="添加参数" loading={loading} inconsistentNames={caseStructureState?.differences.filter((item) => item.field.location === "query").map((item) => item.field.name)} onRowsChange={(rows) => setUrl((current) => urlWithQueryRows(current, rows))}/>
             </div>}
             {activeTab === "headers" && <div className="http-kv-editor" aria-label="请求 Headers">
               <div className="http-section-heading">请求 Headers</div>
-              <KeyValueRows rows={headerRows} setRows={setHeaderRows} kind="Header" nameLabel="Header 名称" valueLabel="Header 值" addPlaceholder="例如 Content-Type" loading={loading}/>
+              <KeyValueRows rows={headerRows} setRows={setHeaderRows} kind="Header" nameLabel="Header 名称" valueLabel="Header 值" addPlaceholder="例如 Content-Type" loading={loading} inconsistentNames={caseStructureState?.differences.filter((item) => item.field.location === "header").map((item) => item.field.name)}/>
             </div>}
             {activeTab === "body" && <div style={styles.label}>
               <div className="http-body-mode-tabs" role="tablist" aria-label="请求体类型">
@@ -1685,12 +1811,7 @@ export function HttpWorkbench({
               </div>}
               {responseTab === "cookies" && responseCookies.length === 0 && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "cookies" && responseCookies.length > 0 && <div style={styles.headerTable}>{responseCookies.map((cookie, index) => <div key={index} style={styles.headerRow}><strong>{cookie.split("=", 1)[0]}</strong><span>{cookie}</span></div>)}</div>}
-              {responseTab === "request" && (lastRequest ? <div className="http-live-request">
-                <section><h4>请求信息</h4><div className="http-request-summary"><strong>{lastRequest.method}</strong><code>{lastRequest.url}</code></div></section>
-                <section className="http-live-data-section"><h4>Header <span>{lastRequest.headers.length}</span></h4><div className="http-request-data">{lastRequest.headers.length ? lastRequest.headers.map(([name, value], index) => <div key={`${name}-${index}`}><strong>{name}</strong><span>{value}</span></div>) : <p>（空）</p>}</div></section>
-                <section className="http-live-data-section"><h4>Body <span>{lastRequest.headers.find(([header]) => header.toLowerCase() === "content-type")?.[1] ?? formatBytes(requestBodySize(lastRequest))}</span></h4><pre className={`http-request-body${lastRequest.body ? "" : " is-empty"}`}>{lastRequest.body || "（空）"}</pre></section>
-                <section><CodeGenerator request={lastRequest}/></section>
-              </div> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
+              {responseTab === "request" && (lastRequest ? <HttpRequestResponseView request={lastRequest} result={{ passed: !result.error, error: result.error, status: result.summary.status, durationMs: result.summary.durationMs, body: result.preview, headers: result.responseMeta?.headers ?? [] }}/> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
               {responseTab === "body" && !responseHasBody && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "body" && responseHasBody && responseView === "table" && responseTable && <div style={styles.jsonTableWrap}><table style={styles.jsonTable}><thead><tr>{responseTable.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{responseTable.rows.slice(0, 1000).map((row, index) => <tr key={index}>{responseTable.columns.map((column) => <td key={column}>{typeof row[column] === "object" ? JSON.stringify(row[column]) : String(row[column] ?? "")}</td>)}</tr>)}</tbody></table>{responseTable.rows.length > 1000 && <div style={styles.muted}>仅显示前 1000 行，共 {responseTable.rows.length} 行。</div>}</div>}
               {responseTab === "body" && responseHasBody && responseView === "preview" && responsePreviewKind === "html" && <iframe className="http-response-html-preview" title="HTML 响应预览" sandbox="allow-forms allow-modals allow-popups" srcDoc={decodedResponse}/>}
@@ -1814,7 +1935,7 @@ const styles: Record<string, CSSProperties> = {
     flex: 1,
     minWidth: 220,
     fontFamily: "var(--apivoy-mono)",
-    fontSize: 14,
+    fontSize: 12,
     color: "var(--apivoy-text)",
     background: "#0d131b",
     border: "1px solid var(--apivoy-border)",
@@ -1824,7 +1945,7 @@ const styles: Record<string, CSSProperties> = {
   },
   timeout: {
     fontFamily: "var(--apivoy-mono)",
-    fontSize: 14,
+    fontSize: 12,
     color: "var(--apivoy-text)",
     background: "#0d131b",
     border: "1px solid var(--apivoy-border)",
@@ -1834,7 +1955,7 @@ const styles: Record<string, CSSProperties> = {
   },
   textarea: {
     fontFamily: "var(--apivoy-mono)",
-    fontSize: 13,
+    fontSize: 11,
     color: "var(--apivoy-text)",
     background: "var(--apivoy-bg-elevated)",
     border: "1px solid var(--apivoy-border)",
@@ -1911,11 +2032,11 @@ const styles: Record<string, CSSProperties> = {
   },
   tab: {
     border: 0, background: "transparent", color: "var(--apivoy-muted)",
-    height: 40, display: "flex", alignItems: "center", padding: "0 10px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid transparent",
+    height: 34, display: "flex", alignItems: "center", padding: "0 8px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid transparent", fontSize: 11,
   },
   tabActive: {
     border: 0, background: "transparent", color: "var(--apivoy-accent)",
-    height: 40, display: "flex", alignItems: "center", padding: "0 10px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid var(--apivoy-accent)",
+    height: 34, display: "flex", alignItems: "center", padding: "0 8px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid var(--apivoy-accent)", fontSize: 11,
   },
   pre: {
     margin: 0,

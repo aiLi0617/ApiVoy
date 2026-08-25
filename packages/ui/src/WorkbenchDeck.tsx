@@ -7,13 +7,15 @@ import { WorkbenchFrame } from "./WorkbenchFrame";
 import { clearWorkbenchDraft } from "./draftRecovery";
 import { ScriptLibraryWorkbench } from "./ScriptLibraryWorkbench";
 import { CurlImportDialog } from "./CurlImportDialog";
-import type { HttpWorkbenchRequest } from "./HttpWorkbench";
-import { InterfaceLifecycleShell, type InterfaceDefinitionClient } from "./InterfaceLifecycle";
+import type { HttpWorkbenchProps, HttpWorkbenchRequest } from "./HttpWorkbench";
+import { InterfaceLifecycleShell, type InterfaceCaseRunOutcome, type InterfaceCaseSummary, type InterfaceDefinitionClient } from "./InterfaceLifecycle";
+import { captureHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY } from "./interfaceStructureV2";
+import { consumeCaseInterfaceStructure } from "./caseStructureBridge";
 
 export interface WorkbenchDefinition { id: string; label: string; protocol?: string; protocols?: string[]; group?: string; icon?: IconName }
 export type WorkbenchTab = WorkbenchDefinition;
 export interface WorkbenchGroup { id: string; label: string; icon: IconName; workbenchIds: string[] }
-interface WorkbenchSession { id: string; workbenchId: string; title: string; requestId?: string; icon?: IconName; caseInterfaceName?: string }
+interface WorkbenchSession { id: string; workbenchId: string; title: string; requestId?: string; icon?: IconName; caseInterfaceName?: string; caseParentId?: string }
 export interface WorkbenchDeckProps {
   tabs: WorkbenchTab[];
   children: ReactNode;
@@ -28,6 +30,10 @@ export interface WorkbenchDeckProps {
   onDeleteProject?: (projectId: string) => Promise<void>;
   onOpenProjectInNewWindow?: (projectId: string) => void;
   definitionClient?: InterfaceDefinitionClient;
+  onCreateHttpInterface?: (request: HttpWorkbenchRequest, projectId: string, collectionId: string) => Promise<void>;
+  onLoadHttpInterface?: (requestId: string) => Promise<HttpWorkbenchRequest | null>;
+  interfaceCases?: Array<InterfaceCaseSummary & { parentId: string }>;
+  onDeleteHttpInterface?: (requestId: string) => Promise<void>;
 }
 export const WORKBENCH_LABELS: Record<string, string> = { http:"HTTP", graphql:"GraphQL", grpc:"gRPC", rpc:"SOAP / RPC", websocket:"WebSocket", sse:"SSE", tcp:"TCP", udp:"UDP", mqtt:"MQTT", amqp:"AMQP", kafka:"Kafka", redis:"Redis", sql:"SQL", mock:"Mock", runner:"Runner", gateway:"Gateway", capture:"Capture", plugins:"Plugins", ai:"AI" };
 export const WORKBENCH_ICONS: Record<string, IconName> = {
@@ -74,13 +80,13 @@ function initialWorkbenchSessions(tabs: WorkbenchTab[], sessionId: string): Work
   return [{ id: sessionId, workbenchId: routeId, title: translateWorkbench(routeId, tab?.label ?? routeId) }];
 }
 
-function resolveCasePresentation(detail: unknown): { title: string; interfaceName: string; icon: IconName } | null {
+function resolveCasePresentation(detail: unknown): { title: string; interfaceName: string; parentId: string; icon: IconName } | null {
   if (!detail || typeof detail !== "object") return null;
   const value = detail as { name?: unknown; variables?: Record<string, string>; metadata?: Record<string, unknown> };
   if (!value.variables?.__apivoyCaseOf) return null;
   const interfaceName = typeof value.metadata?.__apivoyCaseInterfaceName === "string" ? value.metadata.__apivoyCaseInterfaceName.trim() : "";
   const status = typeof value.name === "string" ? value.name.trim() : "";
-  return { title: interfaceName && status ? `${interfaceName}（${status}）` : interfaceName || status || "接口用例", interfaceName, icon: "bolt" };
+  return { title: interfaceName && status ? `${interfaceName}（${status}）` : interfaceName || status || "接口用例", interfaceName, parentId: value.variables.__apivoyCaseOf, icon: "bolt" };
 }
 
 function resolveOpenProtocol(detail: unknown): string | undefined {
@@ -95,7 +101,13 @@ function resolveOpenProtocol(detail: unknown): string | undefined {
   return undefined;
 }
 
-export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow, definitionClient }: WorkbenchDeckProps) {
+function openDebugTab(sessionId: string) {
+  queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-open-lifecycle-tab", {
+    detail: { sessionId, tab: "debug" },
+  })));
+}
+
+export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow, definitionClient, onCreateHttpInterface, onLoadHttpInterface, interfaceCases = [], onDeleteHttpInterface }: WorkbenchDeckProps) {
   const items = Children.toArray(children); const { t } = useI18n();
   const active = useAppStore((state) => state.activeWorkbench); const setActive = useAppStore((state) => state.setActiveWorkbench);
   const favorites = useAppStore((state) => state.favoriteWorkbenches); const recent = useAppStore((state) => state.recentWorkbenches);
@@ -112,6 +124,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [homeMoreOpen, setHomeMoreOpen] = useState(false);
   const [curlImportOpen, setCurlImportOpen] = useState(false);
+  const [curlImportTarget, setCurlImportTarget] = useState<{ projectId?: string; collectionId?: string }>({});
   const [projectQuery, setProjectQuery] = useState("");
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -138,7 +151,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   function activate(id: string, writeHash = true, resetDraft = true) { if (!tabMap.has(id)) return; const existing = [...sessions].reverse().find((session) => session.workbenchId === id); if (existing) activateSession(existing, writeHash); else createWorkbench(id, writeHash, resetDraft); }
   const activateRef = useRef(activate);
   activateRef.current = activate;
-  function createWorkbench(id: string, writeHash = true, resetDraft = true, openedRequest?: { id?: string; name?: string; title?: string; icon?: IconName; caseInterfaceName?: string }): WorkbenchSession | null {
+  function createWorkbench(id: string, writeHash = true, resetDraft = true, openedRequest?: { id?: string; name?: string; title?: string; icon?: IconName; caseInterfaceName?: string; caseParentId?: string }): WorkbenchSession | null {
     if (!tabMap.has(id)) return null;
     if (resetDraft) {
       clearWorkbenchDraft(id);
@@ -146,7 +159,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     }
     const sameTypeCount = sessions.filter((session) => session.workbenchId === id).length;
     const label = translateWorkbench(id, tabMap.get(id)?.label ?? id);
-    const session = { id: crypto.randomUUID(), workbenchId: id, title: openedRequest?.title?.trim() || openedRequest?.name?.trim() || (sameTypeCount ? `${label} ${sameTypeCount + 1}` : label), requestId: openedRequest?.id, icon: openedRequest?.icon, caseInterfaceName: openedRequest?.caseInterfaceName };
+    const session = { id: crypto.randomUUID(), workbenchId: id, title: openedRequest?.title?.trim() || openedRequest?.name?.trim() || (sameTypeCount ? `${label} ${sameTypeCount + 1}` : label), requestId: openedRequest?.id, icon: openedRequest?.icon, caseInterfaceName: openedRequest?.caseInterfaceName, caseParentId: openedRequest?.caseParentId };
     setSessions((current) => activeSession?.workbenchId === "__new" || activeSession?.workbenchId === "__project" ? current.map((item) => item.id === activeSession.id ? session : item) : [...current, session]);
     activateSession(session, writeHash);
     return session;
@@ -177,30 +190,39 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     if (id === activeSessionId) activateSession(remaining[Math.min(index, remaining.length - 1)]);
   }
   useEffect(() => {
-    const openRequest = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
+    const openRequest = async (event: Event) => {
+      let detail = (event as CustomEvent).detail;
       const protocol = resolveOpenProtocol(detail);
       const match = tabs.find((tab) => tab.protocol === protocol || tab.protocols?.includes(protocol ?? "") || tab.id === protocol);
       if (!match) return;
       const opened = detail as { id?: string; name?: string } | null;
       const casePresentation = resolveCasePresentation(detail);
+      const stashedStructure = opened?.id ? consumeCaseInterfaceStructure(opened.id) : null;
+      if (casePresentation && onLoadHttpInterface) {
+        const parent = await onLoadHttpInterface(casePresentation.parentId).catch(() => null);
+        const structure = parent ? captureHttpInterfaceStructure(parent) : null;
+        if (structure) detail = { ...detail, metadata: { ...((detail as { metadata?: Record<string, unknown> }).metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: structure } };
+      }
+      if (casePresentation && stashedStructure && !onLoadHttpInterface) detail = { ...detail, metadata: { ...((detail as { metadata?: Record<string, unknown> }).metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: stashedStructure } };
       const existing = opened?.id ? sessions.find((item) => item.requestId === opened.id || item.id === opened.id) : undefined;
       if (existing) {
         activateSession(existing);
         return;
       }
       if (activeSession?.workbenchId === match.id && !activeSession.requestId) {
-        const restored = { ...activeSession, requestId: opened?.id, title: casePresentation?.title || opened?.name?.trim() || activeSession.title, icon: casePresentation?.icon, caseInterfaceName: casePresentation?.interfaceName };
+        const restored = { ...activeSession, requestId: opened?.id, title: casePresentation?.title || opened?.name?.trim() || activeSession.title, icon: casePresentation?.icon, caseInterfaceName: casePresentation?.interfaceName, caseParentId: casePresentation?.parentId };
         setSessions((current) => current.map((item) => item.id === activeSession.id ? restored : item));
         const hydrate = { workbenchId: match.id, sessionId: match.id === "http" ? restored.id : undefined, protocolId: protocol, envelope: detail };
         stashHydrate(hydrate);
+        openDebugTab(restored.id);
         queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
         return;
       }
-      const session = createWorkbench(match.id, true, false, { id: opened?.id, name: opened?.name, title: casePresentation?.title, icon: casePresentation?.icon, caseInterfaceName: casePresentation?.interfaceName });
+      const session = createWorkbench(match.id, true, false, { id: opened?.id, name: opened?.name, title: casePresentation?.title, icon: casePresentation?.icon, caseInterfaceName: casePresentation?.interfaceName, caseParentId: casePresentation?.parentId });
       if (!session) return;
       const hydrate = { workbenchId: match.id, sessionId: match.id === "http" ? session.id : undefined, protocolId: protocol, envelope: detail };
       stashHydrate(hydrate);
+      openDebugTab(session.id);
       queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
     };
     const selectWorkbench = (event: Event) => activate((event as CustomEvent<string>).detail);
@@ -221,7 +243,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     window.addEventListener("apivoy-create-workbench", createWorkbenchEvent);
     window.addEventListener("apivoy-open-script-library", openScriptLibrary);
     window.addEventListener("apivoy-project-home", openProjectHome);
-    const openCurlImport = () => setCurlImportOpen(true);
+    const openCurlImport = (event: Event) => { setCurlImportTarget(((event as CustomEvent<{ projectId?: string; collectionId?: string }>).detail) ?? {}); setCurlImportOpen(true); };
     window.addEventListener("apivoy-open-curl-import", openCurlImport);
     return () => {
       window.removeEventListener("apivoy-open-request", openRequest);
@@ -313,10 +335,21 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     if (id !== "curl") { createWorkbench(id); return; }
     setCurlImportOpen(true);
   }
-  function createCurlRequest(request: HttpWorkbenchRequest) {
-    const session = createWorkbench("http", true, true, { name: request.name });
+  async function createCurlRequest(request: HttpWorkbenchRequest) {
+    const id = request.id ?? crypto.randomUUID();
+    const saved = { ...request, id, metadata: { ...(request.metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: captureHttpInterfaceStructure(request) } };
+    const [fallbackProject = "", fallbackCollection = ""] = (saveTargetLabel ?? "").split(" / ");
+    const projectId = curlImportTarget.projectId || selectedProjectId || fallbackProject;
+    const collectionId = curlImportTarget.collectionId || fallbackCollection;
+    if (onCreateHttpInterface) await onCreateHttpInterface(saved, projectId, collectionId);
+    else {
+      const httpIndex = tabs.findIndex((tab) => tab.id === "http");
+      const httpWorkbench = items[httpIndex];
+      if (isValidElement(httpWorkbench)) await (httpWorkbench as ReactElement<{ onSave?: (value: HttpWorkbenchRequest) => Promise<void> }>).props.onSave?.(saved);
+    }
+    const session = createWorkbench("http", true, true, { id, name: saved.name });
     if (!session) return;
-    const hydrate = { workbenchId: "http", sessionId: session.id, protocolId: "http", envelope: { request } };
+    const hydrate = { workbenchId: "http", sessionId: session.id, protocolId: "http", envelope: { request: saved } };
     stashHydrate(hydrate);
     setCurlImportOpen(false);
     queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
@@ -389,13 +422,34 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     if(session.workbenchId==="__scripts") return <ScriptLibraryWorkbench projectId={saveTargetLabel?.split(" / ")[0] || "default-project"}/>;
     const index = tabs.findIndex((tab) => tab.id === session.workbenchId); if (index < 0) return null;
     const tab = tabs[index]; const source = items[index];
-    const lifecycle = (content: ReactNode) => <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} definitionClient={definitionClient}>{content}</InterfaceLifecycleShell>;
+    const lifecycle = (content: ReactNode) => {
+      const caseName = session.caseInterfaceName && session.title.startsWith(`${session.caseInterfaceName}（`)
+        ? session.title.slice(session.caseInterfaceName.length + 1).replace(/）$/, "")
+        : session.title;
+      const cases = session.requestId ? interfaceCases.filter((item) => item.parentId === session.requestId && item.metadata?.__apivoyCaseType === "test") : [];
+      const openCase = onLoadHttpInterface ? async (caseId: string) => {
+        const detail = await onLoadHttpInterface(caseId);
+        if (detail) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: { ...detail, protocolId: "http", metadata: { ...(detail.metadata ?? {}), __apivoyCaseInterfaceName: session.title } } }));
+      } : undefined;
+      const saveCase = onLoadHttpInterface && onCreateHttpInterface ? async (caseId: string | null, input: { name: string; group: string; tags: string[]; request?: HttpWorkbenchRequest }) => {
+        const source = input.request ?? await onLoadHttpInterface(caseId ?? session.requestId ?? ""); if (!source) return;
+        const summary = caseId ? interfaceCases.find((item) => item.id === caseId) : undefined;
+        const [fallbackProject = selectedProjectId ?? "", fallbackCollection = ""] = (saveTargetLabel ?? "").split(" / ");
+        await onCreateHttpInterface({ ...source, id: caseId ?? crypto.randomUUID(), name: input.name, variables: { ...(source.variables ?? {}), __apivoyCaseOf: session.requestId ?? source.id ?? "", __apivoyCaseInterfaceName: session.title }, metadata: { ...(source.metadata ?? {}), __apivoyCaseType: "test", __apivoyCaseGroup: input.group, __apivoyCaseTags: input.tags } }, summary?.projectId ?? fallbackProject, summary?.collectionId ?? fallbackCollection);
+      } : undefined;
+      const duplicateCase = onLoadHttpInterface && onCreateHttpInterface ? async (caseId: string) => { const source = await onLoadHttpInterface(caseId); const summary = interfaceCases.find((item) => item.id === caseId); if (!source || !summary) return; const [fallbackProject = selectedProjectId ?? "", fallbackCollection = ""] = (saveTargetLabel ?? "").split(" / "); await onCreateHttpInterface({ ...source, id: crypto.randomUUID(), name: `${source.name ?? "测试用例"} 副本` }, summary.projectId ?? fallbackProject, summary.collectionId ?? fallbackCollection); } : undefined;
+      const copyCurl = onLoadHttpInterface ? async (caseId: string) => { const source = await onLoadHttpInterface(caseId); if (!source) return ""; const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`; return [`curl --location --request ${source.method} ${quote(source.url)}`, ...source.headers.map(([key,value]) => `  --header ${quote(`${key}: ${value}`)}`), ...(source.body ? [`  --data-raw ${quote(source.body)}`] : [])].join(" \\\n"); } : undefined;
+      const sendCase = isValidElement(source) ? (source as ReactElement<{ onSend?: HttpWorkbenchProps["onSend"] }>).props.onSend : undefined;
+      const runCases = onLoadHttpInterface && sendCase ? async (caseIds: string[]): Promise<Record<string, InterfaceCaseRunOutcome>> => Object.fromEntries(await Promise.all(caseIds.map(async (id) => { const request = await onLoadHttpInterface(id); if (!request) return [id, { passed: false, error: "用例不存在" }] as const; const result = await sendCase(request); return [id, { passed: !result.error, error: result.error, status: result.summary.status ?? null, durationMs: result.summary.durationMs, body: result.preview, headers: result.responseMeta?.headers ?? [] }] as const; }))) : undefined;
+      const deleteCase = onDeleteHttpInterface ?? (async (caseId: string) => { window.dispatchEvent(new CustomEvent("apivoy-delete-test-case", { detail: { caseId } })); });
+      return <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} definitionClient={definitionClient} caseMode={Boolean(session.caseParentId)} caseInterfaceName={session.caseInterfaceName} caseName={caseName} cases={cases} onOpenCase={openCase} onSaveCase={saveCase} onDeleteCase={deleteCase} onDuplicateCase={duplicateCase} onRunCases={runCases} onRunRequest={sendCase} onCopyCurl={copyCurl} onLoadCase={onLoadHttpInterface}>{content}</InterfaceLifecycleShell>;
+    };
     const sourceWithSaveIdentity = isValidElement(source) ? (() => {
-      const element = source as ReactElement<{ onSave?: (request: Record<string, unknown>) => Promise<void>; onSaveAsCase?: (request: Record<string, unknown>) => Promise<void> }>;
+      const element = source as ReactElement<{ onSave?: (request: Record<string, unknown>) => Promise<void>; onSaveAsCase?: (request: Record<string, unknown>) => Promise<void>; onUpdateInterface?: (request: Record<string, unknown>) => Promise<void> }>;
       const onSave = element.props.onSave;
       if (!onSave) return element;
       const requestId = session.requestId ?? session.id;
-      return cloneElement(element, { onSave: (request) => onSave({ ...request, id: requestId }), onSaveAsCase: (request) => onSave({ ...request, id: crypto.randomUUID(), name: String(request.name || session.title + " - 成功用例"), variables: { ...((request.variables as Record<string, string> | undefined) ?? {}), __apivoyCaseOf: requestId, __apivoyCaseInterfaceName: session.title.replace(/^[A-Z]+\s+/, "") } }) });
+      return cloneElement(element, { onSave: (request) => onSave({ ...request, id: requestId }), onSaveAsCase: (request) => onSave({ ...request, id: crypto.randomUUID(), name: String(request.name || session.title + " - 成功用例"), variables: { ...((request.variables as Record<string, string> | undefined) ?? {}), __apivoyCaseOf: requestId, __apivoyCaseInterfaceName: session.title.replace(/^[A-Z]+\s+/, "") } }), onUpdateInterface: session.caseParentId ? (request) => onSave({ ...request, id: session.caseParentId }) : undefined });
     })() : source;
     if (session.workbenchId === "http" && isValidElement(source)) {
       const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; commandbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, commandbarTargetId: `interface-commandbar-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, session.caseInterfaceName ? `${session.caseInterfaceName}（${title.replace(/^[A-Z]+\s+/, "")}）` : title) });

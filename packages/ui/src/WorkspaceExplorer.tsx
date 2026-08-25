@@ -3,14 +3,20 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createPortal } from "react-dom";
 import { useFeedback } from "./Feedback";
 import { Icon } from "./Icons";
+import { readInterfaceStructureMetadata } from "./interfaceStructureV2";
+import { stashCaseInterfaceStructure } from "./caseStructureBridge";
 import { useAppStore } from "./appStore";
 
 export interface WorkspaceRecord { id: string; name: string; rootPath?: string | null; archived?: boolean; updatedAt?: string }
 export interface ProjectRecord { id: string; workspaceId: string; name: string }
 export interface ModuleRecord { id: string; projectId: string; name: string; isDefault: boolean }
 export interface CollectionRecord { id: string; projectId: string; moduleId?: string; name: string; parentId?: string | null; sortOrder: number; tags?: string[] }
-export interface RequestRecord { id: string; projectId: string; collectionId: string; name: string; protocolId?: string; method?: string; target: string; envelope?: { variables?: Record<string, string> } }
+export interface RequestRecord { id: string; projectId: string; collectionId: string; name: string; protocolId?: string; method?: string; target: string; envelope?: { variables?: Record<string, string>; metadata?: Record<string, unknown> } }
 export interface WorkspaceTree { workspaces: WorkspaceRecord[]; projects: ProjectRecord[]; modules?: ModuleRecord[]; collections: CollectionRecord[]; requests: RequestRecord[] }
+
+function isDebugCase(request: RequestRecord): boolean {
+  return Boolean(request.envelope?.variables?.__apivoyCaseOf) && request.envelope?.metadata?.__apivoyCaseType !== "test";
+}
 
 const CREATE_PROTOCOL_GROUPS = [
   { label: "API", items: [["http", "HTTP", "globe"], ["grpc", "gRPC", "network"]] },
@@ -310,7 +316,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   function renderCollection(collection: CollectionRecord, depth = 0) {
     const collectionRequests = tree!.requests.filter((item) => item.collectionId === collection.id);
     const requests = collectionRequests.filter((item) => !item.envelope?.variables?.__apivoyCaseOf).flatMap((request) => {
-      const cases = collectionRequests.filter((item) => item.envelope?.variables?.__apivoyCaseOf === request.id);
+      const cases = collectionRequests.filter((item) => item.envelope?.variables?.__apivoyCaseOf === request.id && isDebugCase(item));
       return collapsedNodes.includes(`request:${request.id}`) ? [request] : [request, ...cases];
     });
     const siblings = tree!.collections.filter((item) => item.projectId === collection.projectId && (item.parentId ?? null) === (collection.parentId ?? null)).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
@@ -342,8 +348,8 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
       </div>
       {!isCollapsed && !!collection.tags?.length && <div style={{ ...styles.tags, paddingLeft: 39 + depth * 14 }}>{collection.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
       {!isCollapsed && requests.filter((request) => !normalizedQuery || `${request.name} ${request.target}`.toLocaleLowerCase().includes(normalizedQuery)).map((request, requestIndex, visibleRequests) => <div draggable={!batchMode} onDragStart={(event) => setDrag(event, "request", request.id)} className={`tree-row${request.envelope?.variables?.__apivoyCaseOf ? " tree-case-row" : ""}${batchMode ? " is-batch-mode" : ""}${selectedIds.includes(request.id) ? " is-selected" : ""}${props.selectedRequestId === request.id ? " is-active" : ""}${openMenuId === `request:${request.id}` ? " is-menu-open" : ""}`} role="treeitem" aria-selected={batchMode ? selectedIds.includes(request.id) : undefined} aria-level={depth + (request.envelope?.variables?.__apivoyCaseOf ? 3 : 2)} aria-setsize={visibleRequests.length} aria-posinset={requestIndex + 1} key={request.id} style={{...styles.requestRow, paddingLeft: (request.envelope?.variables?.__apivoyCaseOf ? 81 : 46) + depth * 14, ...(props.selectedRequestId === request.id && !batchMode ? styles.active : {})}}>
-        {!request.envelope?.variables?.__apivoyCaseOf ? (collectionRequests.some((item) => item.envelope?.variables?.__apivoyCaseOf === request.id) ? <span className="tree-actions-leading"><button type="button" className={`tree-chevron tree-request-chevron${collapsedNodes.includes(`request:${request.id}`) ? "" : " is-expanded"}`} style={styles.chevronBtn} aria-label={`${collapsedNodes.includes(`request:${request.id}`) ? "展开" : "收起"}用例 ${request.name}`} aria-expanded={!collapsedNodes.includes(`request:${request.id}`)} onClick={() => toggleExplorerNode(`request:${request.id}`)}><Icon name="chevron"/></button></span> : <span className="tree-actions-leading tree-chevron-placeholder" aria-hidden="true"><span className="tree-chevron tree-request-chevron" style={styles.chevronBtn}><Icon name="chevron"/></span></span>) : null}
-        <button type="button" className="tree-main" style={styles.request} onClick={() => batchMode ? toggleSelected(request.id) : props.onOpenRequest(request.id)} title={batchMode ? (selectedIds.includes(request.id) ? "取消选择" : "选择此项") : request.target}>{request.envelope?.variables?.__apivoyCaseOf ? <span className="tree-case-icon" title="接口用例"><Icon name="bolt"/></span> : request.protocolId === "websocket" ? <span className="tree-protocol-icon tree-protocol-websocket" title="WebSocket"><Icon name="websocket" /></span> : <b>{request.method ?? request.protocolId?.toUpperCase() ?? "HTTP"}</b>}<span className="tree-label">{request.name}</span>{!request.envelope?.variables?.__apivoyCaseOf && collectionRequests.some((item) => item.envelope?.variables?.__apivoyCaseOf === request.id) ? <small className="tree-interface-case-count" title="接口用例数量">（{collectionRequests.filter((item) => item.envelope?.variables?.__apivoyCaseOf === request.id).length}）</small> : null}</button>
+        {!request.envelope?.variables?.__apivoyCaseOf ? (collectionRequests.some((item) => item.envelope?.variables?.__apivoyCaseOf === request.id && isDebugCase(item)) ? <span className="tree-actions-leading"><button type="button" className={`tree-chevron tree-request-chevron${collapsedNodes.includes(`request:${request.id}`) ? "" : " is-expanded"}`} style={styles.chevronBtn} aria-label={`${collapsedNodes.includes(`request:${request.id}`) ? "展开" : "收起"}调试用例 ${request.name}`} aria-expanded={!collapsedNodes.includes(`request:${request.id}`)} onClick={() => toggleExplorerNode(`request:${request.id}`)}><Icon name="chevron"/></button></span> : <span className="tree-actions-leading tree-chevron-placeholder" aria-hidden="true"><span className="tree-chevron tree-request-chevron" style={styles.chevronBtn}><Icon name="chevron"/></span></span>) : null}
+        <button type="button" className="tree-main" style={styles.request} onClick={() => { if (batchMode) { toggleSelected(request.id); return; } const parentId = request.envelope?.variables?.__apivoyCaseOf; const parentStructure = parentId ? readInterfaceStructureMetadata(collectionRequests.find((item) => item.id === parentId)?.envelope?.metadata) : null; if (parentStructure) stashCaseInterfaceStructure(request.id, parentStructure); props.onOpenRequest(request.id); }} title={batchMode ? (selectedIds.includes(request.id) ? "取消选择" : "选择此项") : request.target}>{request.envelope?.variables?.__apivoyCaseOf ? <span className="tree-case-icon" title="调试用例"><Icon name="bolt"/></span> : request.protocolId === "websocket" ? <span className="tree-protocol-icon tree-protocol-websocket" title="WebSocket"><Icon name="websocket" /></span> : <b>{request.method ?? request.protocolId?.toUpperCase() ?? "HTTP"}</b>}<span className="tree-label">{request.name}</span>{!request.envelope?.variables?.__apivoyCaseOf && collectionRequests.some((item) => item.envelope?.variables?.__apivoyCaseOf === request.id && isDebugCase(item)) ? <small className="tree-interface-case-count" title="调试用例数量">（{collectionRequests.filter((item) => item.envelope?.variables?.__apivoyCaseOf === request.id && isDebugCase(item)).length}）</small> : null}</button>
         <span className="tree-actions tree-more" data-tree-menu={`request:${request.id}`}><button type="button" ref={(node) => { const id = `request:${request.id}`; if (node) menuButtonRefs.current.set(id, node); else menuButtonRefs.current.delete(id); }} style={styles.action} title="更多操作" aria-label={`${request.name} 更多操作`} aria-expanded={openMenuId === `request:${request.id}`} aria-haspopup="menu" onClick={(event) => { event.stopPropagation(); openCollectionMenu(`request:${request.id}`); }}><Icon name="menu" /></button>{renderRequestMenu(request)}</span>
       </div>)}
       {!isCollapsed && children.filter(collectionMatches).map((child) => renderCollection(child, depth + 1))}
@@ -374,7 +380,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
         <div className="workspace-create-menu-title">其他</div>
         <div className="workspace-create-menu-grid">
           <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); importInput.current?.click(); }}><Icon name="download"/><span>导入文件</span></button>
-          <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-open-curl-import")); }}><Icon name="code"/><span>导入 cURL</span></button>
+          <button type="button" role="menuitem" onClick={() => { setCreateMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-open-curl-import", { detail: { projectId: selectedProject?.id, collectionId: props.selectedCollectionId ?? undefined } })); }}><Icon name="code"/><span>导入 cURL</span></button>
         </div>
       </div>, document.body) : null}
     </div>

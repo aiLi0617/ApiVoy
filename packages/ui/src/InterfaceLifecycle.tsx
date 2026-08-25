@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
 import { CodeEditor } from "./CodeEditor";
+import { HttpWorkbench, type HttpWorkbenchRequest } from "./HttpWorkbench";
 import { readWorkbenchDraft } from "./draftRecovery";
 import { peekHydrate, stashHydrate } from "./openRequestPipeline";
 
@@ -20,7 +21,7 @@ interface LifecycleTabDefinition {
 const TABS: Record<InterfaceLifecycleTab, LifecycleTabDefinition> = {
   debug: { id: "debug", label: "\u8c03\u8bd5", icon: "send" },
   definition: { id: "definition", label: "\u8bbe\u8ba1", icon: "code" },
-  examples: { id: "examples", label: "\u7528\u4f8b", icon: "archive" },
+  examples: { id: "examples", label: "测试用例", icon: "archive" },
   docs: { id: "docs", label: "\u6587\u6863\u9884\u89c8", icon: "copy" },
   mock: { id: "mock", label: "Mock", icon: "bolt" },
 };
@@ -87,7 +88,31 @@ export interface InterfaceLifecycleShellProps {
   projectId?: string;
   requestId?: string;
   definitionClient?: InterfaceDefinitionClient;
+  /** Saved cases are runnable configurations, not interface lifecycle roots. */
+  caseMode?: boolean;
+  caseInterfaceName?: string;
+  caseName?: string;
+  cases?: InterfaceCaseSummary[];
+  onOpenCase?: (caseId: string) => void;
+  onSaveCase?: (caseId: string | null, input: { name: string; group: string; tags: string[]; request?: HttpWorkbenchRequest }) => Promise<void>;
+  onDeleteCase?: (caseId: string) => Promise<void>;
+  onDuplicateCase?: (caseId: string) => Promise<void>;
+  onRunCases?: (caseIds: string[]) => Promise<Record<string, InterfaceCaseRunOutcome>>;
+  onCopyCurl?: (caseId: string) => Promise<string>;
+  onLoadCase?: (caseId: string) => Promise<HttpWorkbenchRequest | null>;
+  onRunRequest?: (request: HttpWorkbenchRequest) => Promise<import("./HttpWorkbench").HttpRunResult>;
 }
+
+export interface InterfaceCaseSummary {
+  id: string;
+  name: string;
+  method?: string;
+  target?: string;
+  metadata?: Record<string, unknown>;
+  projectId?: string;
+  collectionId?: string;
+}
+export interface InterfaceCaseRunOutcome { passed: boolean; error?: string; status?: number | null; durationMs?: number; body?: string | null; headers?: Array<[string, string]> }
 
 export interface ApiDefinition {
   id: string;
@@ -214,6 +239,18 @@ export function InterfaceLifecycleShell({
   projectId,
   requestId,
   definitionClient,
+  caseMode = false,
+  caseInterfaceName,
+  caseName,
+  cases = [],
+  onOpenCase,
+  onSaveCase,
+  onDeleteCase,
+  onDuplicateCase,
+  onRunCases,
+  onCopyCurl,
+  onLoadCase,
+  onRunRequest,
 }: InterfaceLifecycleShellProps) {
   const availableTabs = lifecycleTabsFor(workbenchId);
   const [activeTab, setActiveTab] = useState<InterfaceLifecycleTab>("debug");
@@ -231,7 +268,38 @@ export function InterfaceLifecycleShell({
       ),
     );
   }, [activeTab, pendingDebugHydrate, workbenchId]);
+  useEffect(() => {
+    const openTab = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; tab?: InterfaceLifecycleTab }>).detail;
+      if (detail?.sessionId === sessionId && detail.tab && availableTabs.includes(detail.tab)) setActiveTab(detail.tab);
+    };
+    window.addEventListener("apivoy-open-lifecycle-tab", openTab);
+    return () => window.removeEventListener("apivoy-open-lifecycle-tab", openTab);
+  }, [availableTabs, sessionId]);
   if (!availableTabs.length) return children;
+
+  if (caseMode) {
+    return (
+      <section className="interface-lifecycle interface-case-workspace has-commandbar" aria-label={`${title} \u7528\u4f8b\u5de5\u4f5c\u53f0`}>
+        <header className="interface-case-header">
+          <span className="interface-case-header-icon" aria-hidden="true"><Icon name="bolt" /></span>
+          <span className="interface-case-header-copy">
+            <span className="interface-case-breadcrumb" aria-label="用例所属接口">
+              <span>{caseInterfaceName || "所属接口"}</span>
+              <Icon name="chevron" />
+              <strong>{caseName || "用例详情"}</strong>
+            </span>
+            <small>继承接口结构，独立保存参数值、前后置操作与断言</small>
+          </span>
+          <span className="interface-case-badge"><i aria-hidden="true" />已关联接口</span>
+        </header>
+        <div id={`interface-commandbar-${sessionId}`} className="interface-lifecycle-commandbar" />
+        <div className="interface-lifecycle-content interface-lifecycle-debug" role="region" aria-label="用例配置">
+          {children}
+        </div>
+      </section>
+    );
+  }
 
   const active = availableTabs.includes(activeTab) ? activeTab : "debug";
   return (
@@ -262,7 +330,7 @@ export function InterfaceLifecycleShell({
           );
         })}
       </div>
-      <div id={`interface-commandbar-${sessionId}`} className={`interface-lifecycle-commandbar${active === "debug" || active === "definition" ? "" : " is-hidden"}`} />
+      <div id={`interface-commandbar-${sessionId}`} data-active-tab={active} className={`interface-lifecycle-commandbar${active === "debug" || active === "definition" ? "" : " is-hidden"}`} />
       <div
         id={`interface-lifecycle-${sessionId}-debug`}
         className={`interface-lifecycle-content interface-lifecycle-debug${active === "debug" ? "" : " is-hidden"}`}
@@ -279,12 +347,118 @@ export function InterfaceLifecycleShell({
           <DefinitionPanel client={client} projectId={projectId} requestId={requestId} workbenchId={workbenchId} title={title} />
         ) : active === "docs" && client && projectId && requestId ? (
           <DocumentPreviewPanel client={client} projectId={projectId} requestId={requestId} workbenchId={workbenchId} title={title} onOpenDesign={() => setActiveTab("definition")} />
+        ) : active === "examples" ? (
+          <InterfaceCasesPanel requestId={requestId} cases={cases} onOpenCase={onOpenCase} onSaveCase={onSaveCase} onDeleteCase={onDeleteCase} onDuplicateCase={onDuplicateCase} onRunCases={onRunCases} onRunRequest={onRunRequest} onCopyCurl={onCopyCurl} onLoadCase={onLoadCase} />
         ) : (
           <LifecycleEmptyState tab={active} workbenchId={workbenchId} sessionId={sessionId} />
         )}
       </div> : null}
     </section>
   );
+}
+
+function InterfaceCasesPanel({ requestId, cases, onOpenCase, onSaveCase, onDeleteCase, onDuplicateCase, onRunCases, onRunRequest, onCopyCurl, onLoadCase }: Pick<InterfaceLifecycleShellProps, "requestId" | "cases" | "onOpenCase" | "onSaveCase" | "onDeleteCase" | "onDuplicateCase" | "onRunCases" | "onRunRequest" | "onCopyCurl" | "onLoadCase">) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<"all" | "positive" | "negative" | "boundary" | "security" | "other">("all");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [drawer, setDrawer] = useState<InterfaceCaseSummary | "new" | null>(null);
+  const [draft, setDraft] = useState({ name: "", group: "未分组", tags: "" });
+  const [results, setResults] = useState<Record<string, "running" | "passed" | "failed">>({});
+  const [runDetails, setRunDetails] = useState<Record<string, InterfaceCaseRunOutcome>>({});
+  const [previewTab, setPreviewTab] = useState<"params" | "body" | "headers" | "auth" | "pre" | "post" | "settings">("body");
+  const [busy, setBusy] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [previewRequest, setPreviewRequest] = useState<HttpWorkbenchRequest | null>(null);
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [inlineName, setInlineName] = useState("");
+  const previewLoadId = useRef(0);
+  useEffect(() => {
+    if (!drawer || drawer === "new") return;
+    setDraft({ name: drawer.name, group: String(drawer.metadata?.__apivoyCaseGroup ?? "未分组"), tags: Array.isArray(drawer.metadata?.__apivoyCaseTags) ? drawer.metadata.__apivoyCaseTags.join(", ") : "" });
+  }, [drawer]);
+  useEffect(() => {
+    const updateTags = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string; tags?: string[] }>).detail;
+      const item = (cases ?? []).find((candidate) => candidate.id === detail?.id);
+      if (item && Array.isArray(detail.tags)) void saveInline(item, { tags: detail.tags });
+    };
+    window.addEventListener("apivoy-update-test-case-tags", updateTags);
+    return () => window.removeEventListener("apivoy-update-test-case-tags", updateTags);
+  }, [cases, onSaveCase]);
+  const normalized = query.trim().toLocaleLowerCase();
+  const items = cases ?? [];
+  const categoryOf = (item: InterfaceCaseSummary) => {
+    const value = String(item.metadata?.__apivoyCaseGroup ?? "other");
+    return ["positive", "negative", "boundary", "security"].includes(value) ? value : "other";
+  };
+  const categories = [["all", "全部"], ["positive", "正向"], ["negative", "负向"], ["boundary", "边界值"], ["security", "安全性"], ["other", "其他"]] as const;
+  const visibleCases = items.filter((item) => (category === "all" || categoryOf(item) === category) && (!normalized || `${item.name} ${item.metadata?.__apivoyCaseGroup ?? ""} ${(item.metadata?.__apivoyCaseTags as string[] | undefined)?.join(" ") ?? ""}`.toLocaleLowerCase().includes(normalized)));
+  function edit(item: InterfaceCaseSummary | "new") { setDrawer(item); setDraft(item === "new" ? { name: "", group: "未分组", tags: "" } : { name: item.name, group: String(item.metadata?.__apivoyCaseGroup ?? "未分组"), tags: Array.isArray(item.metadata?.__apivoyCaseTags) ? item.metadata.__apivoyCaseTags.join(", ") : "" }); }
+  async function run(ids: string[]) { if (!ids.length || busy) return; setBusy(true); setResults((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, "running"])) })); try { const next = await onRunCases?.(ids) ?? Object.fromEntries(ids.map((id) => [id, { passed: false, error: "当前执行端不可用" }])); setRunDetails((current) => ({ ...current, ...next })); setResults((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, next[id]?.passed ? "passed" : "failed"])) })); } finally { setBusy(false); } }
+  async function saveInline(item: InterfaceCaseSummary, patch: Partial<{ name: string; group: string; tags: string[] }>) { await onSaveCase?.(item.id, { name: patch.name ?? item.name, group: patch.group ?? String(item.metadata?.__apivoyCaseGroup ?? "未分组"), tags: patch.tags ?? (Array.isArray(item.metadata?.__apivoyCaseTags) ? item.metadata.__apivoyCaseTags.filter((tag): tag is string => typeof tag === "string") : []) }); }
+  async function togglePreview(item: InterfaceCaseSummary) { const loadId = ++previewLoadId.current; if (expandedId === item.id) { setExpandedId(null); setPreviewRequest(null); return; } setExpandedId(item.id); setPreviewRequest(null); const request = await onLoadCase?.(item.id) ?? null; if (previewLoadId.current === loadId) setPreviewRequest(request); }
+  function caseForRow(row: HTMLElement | null): InterfaceCaseSummary | undefined { if (!row) return undefined; const rows = Array.from(row.parentElement?.parentElement?.querySelectorAll<HTMLElement>(".interface-case-table-row") ?? []); return visibleCases[rows.indexOf(row)]; }
+  return <section className="interface-cases-panel" aria-label="测试用例">
+    <nav className="interface-case-categories" aria-label="测试用例分类">{categories.map(([id, label]) => { const count = id === "all" ? items.length : items.filter((item) => categoryOf(item) === id).length; return <button key={id} type="button" className={category === id ? "is-active" : ""} aria-pressed={category === id} onClick={() => setCategory(id)}>{label} <span>({count})</span></button>; })}</nav>
+    <header className="interface-cases-toolbar">
+      <div className="interface-cases-actions">
+        {items.length ? <label className="interface-cases-search"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、分组或标签" aria-label="搜索测试用例"/></label> : null}
+        {items.length ? selected.length ? <button type="button" className="ui-button secondary" disabled={busy} onClick={() => void run(selected)}><Icon name="bolt"/>运行选中</button> : <button type="button" className="ui-button secondary" disabled={busy} onClick={() => void run(items.map((item) => item.id))}><Icon name="send"/>全部运行</button> : null}
+        <button type="button" className="ui-button primary" onClick={() => edit("new")}><Icon name="plus"/>添加测试用例</button>
+      </div>
+    </header>
+    {visibleCases.length ? <div className="interface-case-table" role="table" aria-label="测试用例列表" onClick={(event) => { const target = event.target as HTMLElement; if (target.closest("button,input,select")) return; const item = caseForRow(target.closest<HTMLElement>(".interface-case-table-row")); if (item) void togglePreview(item); }}>
+      <div className="interface-case-table-head" role="row"><span><input type="checkbox" aria-label="选择全部用例" checked={visibleCases.length > 0 && visibleCases.every((item) => selected.includes(item.id))} onChange={(event) => setSelected(event.target.checked ? visibleCases.map((item) => item.id) : [])}/></span><span>名称</span><span>分组</span><span className="interface-case-inline-tags">标签</span><span>运行结果</span><span>操作</span></div>
+      {visibleCases.map((item) => {
+        const tags = Array.isArray(item.metadata?.__apivoyCaseTags) ? item.metadata.__apivoyCaseTags.filter((tag): tag is string => typeof tag === "string") : [];
+        const result = results[item.id];
+        const expanded = expandedId === item.id;
+        return <div key={item.id} className={`interface-case-record${expanded ? " is-expanded" : ""}`}><div role="row" className="interface-case-table-row"><span><input type="checkbox" aria-label={`选择 ${item.name}`} checked={selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))}/></span><span className="interface-case-name-cell">{editingNameId === item.id ? <input autoFocus value={inlineName} onChange={(event) => setInlineName(event.target.value)} onBlur={() => { if (inlineName.trim() && inlineName.trim() !== item.name) void saveInline(item, { name: inlineName.trim() }); setEditingNameId(null); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") setEditingNameId(null); }}/> : <><button type="button" className="interface-case-name" aria-expanded={expanded} onClick={() => void togglePreview(item)}>{item.name}</button><button type="button" className="interface-case-inline-edit" aria-label={`修改 ${item.name} 名称`} onClick={() => { setInlineName(item.name); setEditingNameId(item.id); }}><Icon name="edit"/></button></>}</span><span><select aria-label={`${item.name} 分组`} value={String(item.metadata?.__apivoyCaseGroup ?? "positive")} onChange={(event) => void saveInline(item, { group: event.target.value })}><option value="positive">正向</option><option value="negative">负向</option><option value="boundary">边界值</option><option value="security">安全性</option><option value="other">其他</option></select></span><span className="interface-case-inline-tags"><input aria-label={`${item.name} 标签`} defaultValue={tags.join(", ")} placeholder="添加标签" onBlur={(event) => void saveInline(item, { tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })}/></span><span><i className={`interface-case-result${result ? ` is-${result}` : ""}`}>{result === "running" ? "运行中" : result === "passed" ? "通过" : result === "failed" ? "失败" : "未运行"}</i></span><span className="interface-case-row-actions"><button type="button" title="运行" onClick={() => void run([item.id])}><Icon name="send"/></button><button type="button" title="在新页签打开" onClick={() => onOpenCase?.(item.id)}><Icon name="external"/></button><button type="button" title="复制用例" onClick={() => void onDuplicateCase?.(item.id)}><Icon name="copy"/></button><button type="button" title="复制 cURL" onClick={async () => { const value = await onCopyCurl?.(item.id); if (value) await navigator.clipboard.writeText(value); }}><Icon name="command"/></button><button type="button" title="删除" className="is-danger" onClick={() => void onDeleteCase?.(item.id)}><Icon name="trash"/></button></span></div>{expanded ? <InterfaceCasePreview request={previewRequest} outcome={runDetails[item.id]} activeTab={previewTab} onTabChange={setPreviewTab}/> : null}</div>;
+      })}
+    </div> : items.length ? <div className="interface-cases-no-results"><Icon name="search"/><strong>没有匹配的测试用例</strong><span>请尝试其他关键词。</span></div> : <div className="interface-cases-empty"><span><Icon name="archive"/></span><strong>还没有测试用例</strong><p>在右侧抽屉中创建第一条测试用例。</p><button type="button" className="ui-button primary" onClick={() => edit("new")}><Icon name="plus"/>添加测试用例</button></div>}
+    {drawer === "new" ? <TestCaseCreateDrawer requestId={requestId} draft={draft} onDraftChange={setDraft} onClose={() => setDrawer(null)} onLoadCase={onLoadCase} onRunRequest={onRunRequest} onSaveCase={onSaveCase}/> : drawer ? <div className="interface-case-drawer-backdrop" onMouseDown={() => setDrawer(null)}><aside className="interface-case-drawer" role="dialog" aria-modal="true" aria-label="测试用例预览" onMouseDown={(event) => event.stopPropagation()}><header><div><strong>测试用例预览</strong><small>可直接修改当前用例信息</small></div><button type="button" className="ui-icon-button" aria-label="关闭" onClick={() => setDrawer(null)}><Icon name="close"/></button></header><div className="interface-case-drawer-body"><label><span>名称</span><input autoFocus value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}/></label><label><span>分组</span><input value={draft.group} onChange={(event) => setDraft((current) => ({ ...current, group: event.target.value }))}/></label><label><span>标签</span><input value={draft.tags} onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))}/></label><button type="button" className="ui-button secondary" onClick={() => onOpenCase?.(drawer.id)}>打开完整配置</button></div><footer><button type="button" className="ui-button secondary" onClick={() => setDrawer(null)}>取消</button><button type="button" className="ui-button primary" disabled={!draft.name.trim()} onClick={async () => { await onSaveCase?.(drawer.id, { name: draft.name.trim(), group: draft.group.trim() || "未分组", tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean) }); setDrawer(null); }}>保存</button></footer></aside></div> : null}
+  </section>;
+}
+
+function TestCaseCreateDrawer({ requestId, draft, onDraftChange, onClose, onLoadCase, onRunRequest, onSaveCase }: {
+  requestId?: string;
+  draft: { name: string; group: string; tags: string };
+  onDraftChange: (updater: (current: { name: string; group: string; tags: string }) => { name: string; group: string; tags: string }) => void;
+  onClose: () => void;
+  onLoadCase?: (id: string) => Promise<HttpWorkbenchRequest | null>;
+  onRunRequest?: InterfaceLifecycleShellProps["onRunRequest"];
+  onSaveCase?: InterfaceLifecycleShellProps["onSaveCase"];
+}) {
+  const [request, setRequest] = useState<HttpWorkbenchRequest | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { let active = true; if (requestId && onLoadCase) void onLoadCase(requestId).then((value) => { if (active) setRequest(value); }); return () => { active = false; }; }, [requestId, onLoadCase]);
+  const save = async (edited: HttpWorkbenchRequest) => {
+    if (!draft.name.trim() || saving) return;
+    setSaving(true);
+    try { await onSaveCase?.(null, { name: draft.name.trim(), group: draft.group || "positive", tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean), request: edited }); onClose(); }
+    finally { setSaving(false); }
+  };
+  const editorSessionId = `create-test-case-${request?.id ?? "draft"}`;
+  return <div className="interface-case-drawer-backdrop" onMouseDown={onClose}><aside className="interface-case-drawer interface-case-create-workbench" role="dialog" aria-modal="true" aria-label="添加测试用例" onMouseDown={(event) => event.stopPropagation()}><div className="interface-case-create-topbar"><button type="button" className="ui-icon-button" aria-label="关闭" onClick={onClose}><Icon name="close"/></button><input autoFocus className="interface-case-create-name" aria-label="用例名称" value={draft.name} onChange={(event) => onDraftChange((current) => ({ ...current, name: event.target.value }))} placeholder="用例名称"/><button type="button" className="ui-button primary interface-case-create-save" disabled={!draft.name.trim() || !request || saving} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-save-interface-draft", { detail: { requestId: request?.id, sessionId: editorSessionId } }))}>{saving ? "保存中…" : "保存"}</button><label><Icon name="archive"/><select aria-label="分类" value={draft.group === "未分组" ? "positive" : draft.group} onChange={(event) => onDraftChange((current) => ({ ...current, group: event.target.value }))}><option value="positive">正向</option><option value="negative">负向</option><option value="boundary">边界值</option><option value="security">安全性</option><option value="other">其他</option></select></label><label><Icon name="tag"/><input aria-label="标签" value={draft.tags} onChange={(event) => onDraftChange((current) => ({ ...current, tags: event.target.value }))} placeholder="添加标签"/></label></div><div className="interface-case-create-editor">{request && onRunRequest ? <HttpWorkbench externalRequest={request} fixedSplitDirection="vertical" workbenchSessionId={editorSessionId} onSend={onRunRequest} onSave={save}/> : <div className="interface-case-preview-loading">正在加载请求配置…</div>}</div></aside></div>;
+}
+
+function InterfaceCasePreview({ request, outcome }: { request: HttpWorkbenchRequest | null; outcome?: InterfaceCaseRunOutcome; activeTab: unknown; onTabChange: unknown }) {
+  if (!request) return <div className="interface-case-preview-loading">正在加载用例…</div>;
+  const tags = Array.isArray(request.metadata?.__apivoyCaseTags) ? request.metadata.__apivoyCaseTags.filter((tag): tag is string => typeof tag === "string") : [];
+  const requestWithResult = outcome ? {
+    ...request,
+    metadata: {
+      ...(request.metadata ?? {}),
+      __apivoySavedResponse: {
+        status: outcome.status ?? null,
+        durationMs: outcome.durationMs ?? 0,
+        body: outcome.body ?? outcome.error ?? "",
+        headers: outcome.headers ?? [],
+        contentType: outcome.headers?.find(([name]) => name.toLowerCase() === "content-type")?.[1] ?? null,
+      },
+    },
+  } : request;
+  return <div className="interface-case-workbench-preview"><div className="interface-case-preview-target"><b className={`is-${request.method.toLowerCase()}`}>{request.method}</b><code title={request.url}>{request.url}</code><label><Icon name="tag"/><input aria-label="测试用例标签" defaultValue={tags.join(", ")} placeholder="添加标签" onBlur={(event) => window.dispatchEvent(new CustomEvent("apivoy-update-test-case-tags", { detail: { id: request.id, tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) } }))}/></label></div><div className="interface-case-preview-workbench"><HttpWorkbench embeddedPreview externalRequest={requestWithResult} workbenchSessionId={`test-case-preview-${request.id ?? "request"}`} onSend={async () => { throw new Error("请使用用例行上的运行操作"); }}/></div></div>;
 }
 
 const FORMAT_BY_PROTOCOL: Record<string, string> = {
@@ -1003,10 +1177,35 @@ export function mergeDesignIntoHttpDraft(
   return next;
 }
 
+export function definitionFieldsFromHttpDraft(draft: HttpDebugDraft): DefinitionField[] {
+  const fields: DefinitionField[] = [];
+  try {
+    const url = new URL(draft.url || "/", "http://apivoy.local");
+    for (const name of new Set(url.searchParams.keys())) fields.push({ id: crypto.randomUUID(), name, scope: "request.params", type: "string", required: false, description: "" });
+  } catch { /* Keep the design usable while the URL is incomplete. */ }
+  const ignored = new Set(["authorization", "cookie", "content-type", "content-length", "host", "connection", "user-agent", "accept", "accept-encoding"]);
+  for (const [name] of draft.headers) if (name.trim() && !ignored.has(name.trim().toLowerCase())) fields.push({ id: crypto.randomUUID(), name: name.trim(), scope: "request.headers", type: "string", required: false, description: "" });
+  const fieldType = (value: unknown): DefinitionField["type"] => value === null ? "string" : Array.isArray(value) ? "array" : typeof value === "number" ? (Number.isInteger(value) ? "integer" : "number") : typeof value === "boolean" ? "boolean" : typeof value === "object" ? "object" : "string";
+  const addBodyField = (name: string, item: unknown, parentId?: string) => {
+    const id = crypto.randomUUID();
+    const type = fieldType(item);
+    fields.push({ id, parentId, name, scope: "request.body", type, required: false, description: "", example: typeof item === "object" ? undefined : String(item ?? "") });
+    if (Array.isArray(item)) {
+      const exampleItem = item[0];
+      addBodyField("items", exampleItem === undefined ? "" : exampleItem, id);
+    } else if (item && typeof item === "object") {
+      for (const [childName, child] of Object.entries(item as Record<string, unknown>)) addBodyField(childName, child, id);
+    }
+  };
+  if (draft.body?.trim()) { try { const parsed = JSON.parse(draft.body) as unknown; if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) for (const [name, item] of Object.entries(parsed as Record<string, unknown>)) addBodyField(name, item); else if (Array.isArray(parsed)) addBodyField("items", parsed); } catch { /* Raw bodies cannot be safely inferred as fields. */ } }
+  return fields;
+}
+
 function syncDesignToDebug(
   workbenchId: string,
   fields: DefinitionField[],
   bodyMode: BodyDesignMode,
+  security?: SecurityDesignConfig,
 ) {
   if (workbenchId !== "http") return;
   const draft = readWorkbenchDraft<HttpDebugDraft>("http") ?? {
@@ -1025,6 +1224,16 @@ function syncDesignToDebug(
     tlsVerify: true,
   };
   const request = mergeDesignIntoHttpDraft(draft, fields, bodyMode);
+  if (security) {
+    const existingAuth = request.auth && typeof request.auth === "object" ? request.auth as Record<string, unknown> : {};
+    request.auth = security.authScheme === "none" ? null : {
+      ...existingAuth,
+      kind: security.authScheme === "apiKey" ? "api_key" : security.authScheme,
+      ...(security.authScheme === "apiKey" ? { header_name: security.apiKeyName } : {}),
+      token: null,
+      secret_ref: typeof existingAuth.secret_ref === "string" ? existingAuth.secret_ref : null,
+    };
+  }
   const hydrate = { workbenchId: "http", envelope: { request } };
   stashHydrate(hydrate);
   queueMicrotask(() =>
@@ -1041,6 +1250,9 @@ function fieldsToDefinition(
   bodyMode: BodyDesignMode = "none",
   security: SecurityDesignConfig = DEFAULT_SECURITY_DESIGN,
 ): string {
+  const liveHttpDraft = protocol === "http" ? readWorkbenchDraft<HttpDebugDraft>("http") : null;
+  const liveMethod = liveHttpDraft?.method?.toLowerCase() || "get";
+  const livePath = (() => { try { return new URL(liveHttpDraft?.url || "/", "http://apivoy.local").pathname || "/"; } catch { return "/"; } })();
   if (protocol === "grpc")
     return `message Request {\n${fields.map((field, index) => `  ${field.type === "boolean" ? "bool" : field.type === "integer" ? "int64" : field.type === "number" ? "double" : field.type === "array" ? "repeated string" : field.type} ${field.name || `field_${index + 1}`} = ${index + 1};`).join("\n")}\n}`;
   if (protocol === "graphql")
@@ -1106,7 +1318,7 @@ function fieldsToDefinition(
     const cookieParams = params.filter(
       (field) => field.scope === "request.cookies",
     );
-    return `swagger: '2.0'\n${visualFieldsExtension}${securityExtension}info:\n  title: Current API\n  version: 1.0.0\nproduces: [application/json]\npaths:\n  /current:\n    get:\n      parameters:\n${regularParams.map((field) => `        - name: ${field.name}\n          in: ${field.scope === "request.headers" ? "header" : "query"}\n          required: ${field.required}\n          type: ${field.type}`).join("\n")}${requestBody.length ? `${regularParams.length ? "\n" : ""}        - name: body\n          in: body\n          required: true\n          schema:\n            type: object\n${yamlSchema(requestBody, "            ")}` : ""}${cookieParams.length ? `\n      x-cookie-parameters:\n${cookieParams.map((field) => `        - name: ${field.name}\n          required: ${field.required}\n          type: ${field.type}`).join("\n")}` : ""}\n      responses:\n${(statuses.length
+    return `swagger: '2.0'\n${visualFieldsExtension}${securityExtension}info:\n  title: Current API\n  version: 1.0.0\nproduces: [application/json]\npaths:\n  ${livePath}:\n    ${liveMethod}:\n      parameters:\n${regularParams.map((field) => `        - name: ${field.name}\n          in: ${field.scope === "request.headers" ? "header" : "query"}\n          required: ${field.required}\n          type: ${field.type}`).join("\n")}${requestBody.length ? `${regularParams.length ? "\n" : ""}        - name: body\n          in: body\n          required: true\n          schema:\n            type: object\n${yamlSchema(requestBody, "            ")}` : ""}${cookieParams.length ? `\n      x-cookie-parameters:\n${cookieParams.map((field) => `        - name: ${field.name}\n          required: ${field.required}\n          type: ${field.type}`).join("\n")}` : ""}\n      responses:\n${(statuses.length
       ? statuses
       : ["200"]
     )
@@ -1142,7 +1354,7 @@ function fieldsToDefinition(
       : bodyMode === "binary"
         ? `      requestBody:\n        content:\n          application/octet-stream:\n            schema:\n              type: string\n              format: binary\n`
         : `      requestBody:\n        content:\n          ${bodyContentType ?? "application/json"}:\n            schema:\n              type: object\n${yamlSchema(requestBody, "              ")}\n`;
-  return `openapi: ${versionLiteral}\nx-apivoy-body-mode: ${bodyMode}\n${visualFieldsExtension}${securityExtension}info:\n  title: Current API\n  version: 1.0.0\npaths:\n  /current:\n    get:\n${params.length ? `      parameters:\n${params.map((field) => `        - name: ${field.name}\n          in: ${field.scope.split(".")[1] === "params" ? "query" : field.scope.split(".")[1] === "headers" ? "header" : "cookie"}\n          required: ${field.required}\n          schema:\n            type: ${field.type}`).join("\n")}\n` : ""}${requestBodyYaml}      responses:\n${(statuses.length
+  return `openapi: ${versionLiteral}\nx-apivoy-body-mode: ${bodyMode}\n${visualFieldsExtension}${securityExtension}info:\n  title: Current API\n  version: 1.0.0\npaths:\n  ${livePath}:\n    ${liveMethod}:\n${params.length ? `      parameters:\n${params.map((field) => `        - name: ${field.name}\n          in: ${field.scope.split(".")[1] === "params" ? "query" : field.scope.split(".")[1] === "headers" ? "header" : "cookie"}\n          required: ${field.required}\n          schema:\n            type: ${field.type}`).join("\n")}\n` : ""}${requestBodyYaml}      responses:\n${(statuses.length
     ? statuses
     : ["200"]
   )
@@ -1185,10 +1397,12 @@ function DefinitionPanel({
   const [security, setSecurity] = useState<SecurityDesignConfig>({ ...DEFAULT_SECURITY_DESIGN });
   const [mode, setMode] = useState<"visual" | "source">("visual");
   const [structureOpen, setStructureOpen] = useState(true);
+  const [structureWidth, setStructureWidth] = useState(300);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const lastVisualContent = useRef("");
   const lastValidFields = useRef<DefinitionField[]>([]);
   const sourceBaseline = useRef("");
@@ -1205,15 +1419,18 @@ function DefinitionPanel({
       client.binding(requestId),
     ]);
     const current = items.find((item) => item.id === linked?.definitionId);
-    const nextContent = current?.content ?? "";
+    const liveDraft = workbenchId === "http" ? readWorkbenchDraft<HttpDebugDraft>("http") : null;
+    const inferredFields = !current && liveDraft ? definitionFieldsFromHttpDraft(liveDraft) : [];
+    const inferredBodyMode: BodyDesignMode = liveDraft?.body?.trim() ? "json" : "none";
+    const nextContent = current?.content ?? (inferredFields.length ? fieldsToDefinition(inferredFields, workbenchId, "3.1", inferredBodyMode) : "");
     setDefinitionId(current?.id ?? "");
     setContent(nextContent);
-    setFields(parseDefinitionFields(nextContent, workbenchId));
+    setFields(inferredFields.length ? inferredFields : parseDefinitionFields(nextContent, workbenchId));
     setSecurity(parseSecurityDesign(nextContent));
     setBodyMode(
       (nextContent.match(/^\s*x-apivoy-body-mode:\s*([\w-]+)/m)?.[1] as
         | BodyDesignMode
-        | undefined) ?? (/requestBody\s*:/.test(nextContent) ? "json" : "none"),
+        | undefined) ?? (inferredFields.length ? inferredBodyMode : /requestBody\s*:/.test(nextContent) ? "json" : "none"),
     );
     lastVisualContent.current = nextContent;
     if (workbenchId === "http")
@@ -1283,6 +1500,7 @@ function DefinitionPanel({
           ? "接口定义已保存，同时保留了未完全可视化的高级结构"
           : "接口定义已保存，文档、Mock 和校验可以直接复用",
       );
+      if (workbenchId === "http") window.dispatchEvent(new CustomEvent("apivoy-save-interface-draft", { detail: { requestId } }));
     } catch (error) {
       const detail = readableDefinitionError(error, "关联服务未返回错误详情");
       setMessage(
@@ -1294,6 +1512,14 @@ function DefinitionPanel({
       setBusy(false);
     }
   }
+  useEffect(() => {
+    const save = (event: Event) => {
+      const detail = (event as CustomEvent<{ requestId?: string }>).detail;
+      if (detail?.requestId === requestId && !busy && content.trim()) void saveDefinition();
+    };
+    window.addEventListener("apivoy-save-interface-definition", save);
+    return () => window.removeEventListener("apivoy-save-interface-definition", save);
+  }, [requestId, content, fields, bodyMode, security, definitionId, busy]);
   function updateFields(next: DefinitionField[]) {
     const generated = fieldsToDefinition(
       next,
@@ -1309,6 +1535,7 @@ function DefinitionPanel({
     setFields(next);
     setContent(generated);
     lastVisualContent.current = generated;
+    syncDesignToDebug(workbenchId, next, bodyMode);
   }
   function changeOpenApiVersion(next: OpenApiVersion) {
     setOpenApiVersion(next);
@@ -1342,6 +1569,7 @@ function DefinitionPanel({
     );
     setContent(generated);
     lastVisualContent.current = generated;
+    syncDesignToDebug(workbenchId, fields, next);
     setMessage(
       `请求 Body 已切换为 ${BODY_DESIGN_MODES.find((item) => item.id === next)?.label ?? next}`,
     );
@@ -1352,6 +1580,7 @@ function DefinitionPanel({
     visualFieldCache.set(generated, fields.map((field) => ({ ...field })));
     setContent(generated);
     lastVisualContent.current = generated;
+    syncDesignToDebug(workbenchId, fields, bodyMode, next);
   }
   function validateSource(showSuccess = true): DefinitionParseIssue[] {
     const issues = validateDefinitionSource(content, workbenchId);
@@ -1401,6 +1630,12 @@ function DefinitionPanel({
     setParseIssues(validateDefinitionSource(next, workbenchId));
   }
   const structureFields = mode === "visual" ? fields : parsedFields;
+  function resizeStructure(clientX: number) {
+    const bounds = workspaceRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const maxWidth = Math.max(240, bounds.width - 320);
+    setStructureWidth(Math.min(maxWidth, Math.max(240, bounds.right - clientX)));
+  }
   return (
     <section
       className={`interface-definition-panel${structureOpen ? " has-structure" : ""}`}
@@ -1469,14 +1704,6 @@ function DefinitionPanel({
           >
             导入
           </button>
-          <button
-            type="button"
-            className="ui-button primary"
-            disabled={busy || !content.trim()}
-            onClick={() => void saveDefinition()}
-          >
-            {busy ? "保存中。" : "保存定义"}
-          </button>
         </div>
         <input
           ref={fileRef}
@@ -1499,7 +1726,7 @@ function DefinitionPanel({
           }}
         />
       </header>
-      <div className="interface-definition-workspace">
+      <div ref={workspaceRef} className="interface-definition-workspace" style={{ "--interface-structure-width": `${structureWidth}px` } as CSSProperties}>
         <div className="interface-definition-main">
           {mode === "source" ? (
             <div className="interface-source-workspace">
@@ -1567,7 +1794,13 @@ function DefinitionPanel({
             />
           )}
         </div>
-        {structureOpen ? <StructurePanel fields={structureFields} /> : null}
+        {structureOpen ? <>
+          <button type="button" className="interface-structure-resizer" aria-label="调整接口结构面板宽度" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={Math.max(240, (workspaceRef.current?.clientWidth ?? 560) - 320)} aria-valuenow={Math.round(structureWidth)} role="separator"
+            onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
+            onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeStructure(event.clientX); }}
+            onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); const step = event.shiftKey ? 40 : 12; const max = Math.max(240, (workspaceRef.current?.clientWidth ?? 560) - 320); setStructureWidth((width) => Math.min(max, Math.max(240, width + (event.key === "ArrowLeft" ? step : -step)))); }} />
+          <StructurePanel fields={structureFields} />
+        </> : null}
       </div>
       <div className="interface-definition-feedback">
         {message ? (
@@ -1621,6 +1854,7 @@ function VisualDefinitionEditor({
   >("body");
   const [status, setStatus] = useState("200");
   const [newStatus, setNewStatus] = useState("");
+  const [responseStatuses, setResponseStatuses] = useState<string[]>(["200"]);
   const [draftFieldId, setDraftFieldId] = useState(() => crypto.randomUUID());
   function update(id: string, patch: Partial<DefinitionField>) {
     if (id === draftFieldId) {
@@ -1709,14 +1943,14 @@ function VisualDefinitionEditor({
         appendBranch(field.id, depth + 1);
       });
   appendBranch(undefined, 0);
-  const responseStatuses = [
-    ...new Set([
-      "200",
-      ...fields
-        .filter((field) => field.scope.startsWith("response."))
-        .map((field) => field.status || "200"),
-    ]),
-  ];
+  const fieldResponseStatuses = fields
+    .filter((field) => field.scope.startsWith("response."))
+    .map((field) => field.status || "200");
+  useEffect(() => {
+    setResponseStatuses((current) => [...new Set([...current, "200", ...fieldResponseStatuses])]);
+  }, [fieldResponseStatuses.join("\u0000")]);
+  const normalizedNewStatus = newStatus.trim();
+  const validNewStatus = /^(?:[1-5]\d{2}|default)$/i.test(normalizedNewStatus);
   const requestTabs = [
     ["params", "参数"],
     ["headers", "Headers"],
@@ -1804,15 +2038,27 @@ function VisualDefinitionEditor({
             <input
               aria-label="新增响应状态码"
               value={newStatus}
-              onChange={(event) => setNewStatus(event.target.value)}
-              placeholder="状态码"
+              onChange={(event) => setNewStatus(event.target.value.replace(/\s/g, ""))}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !validNewStatus) return;
+                event.preventDefault();
+                const next = normalizedNewStatus.toLowerCase() === "default" ? "default" : normalizedNewStatus;
+                setResponseStatuses((items) => items.includes(next) ? items : [...items, next]);
+                setStatus(next);
+                setNewStatus("");
+              }}
+              aria-invalid={Boolean(normalizedNewStatus) && !validNewStatus}
+              title={normalizedNewStatus && !validNewStatus ? "请输入 100–599，或 default" : "支持 100–599 和 default"}
+              placeholder="如 201、400"
               inputMode="numeric"
             />
             <button
               type="button"
-              disabled={!newStatus.trim()}
+              disabled={!validNewStatus}
               onClick={() => {
-                setStatus(newStatus.trim());
+                const next = normalizedNewStatus.toLowerCase() === "default" ? "default" : normalizedNewStatus;
+                setResponseStatuses((items) => items.includes(next) ? items : [...items, next]);
+                setStatus(next);
                 setNewStatus("");
               }}
             >
@@ -1980,6 +2226,36 @@ function VisualDefinitionEditor({
 }
 
 function StructurePanel({ fields }: { fields: DefinitionField[] }) {
+  const renderFields = (items: DefinitionField[], parentId?: string, depth = 0): ReactNode => items
+    .filter((field) => field.parentId === parentId)
+    .map((field) => {
+      const children = items.filter((item) => item.parentId === field.id);
+      return <div key={field.id} className="interface-structure-field">
+        <div role="treeitem" aria-level={depth + 3} className="interface-structure-node" style={{ "--structure-depth": depth } as CSSProperties}>
+          <span className="interface-structure-branch" />
+          <Icon name={children.length || field.type === "object" || field.type === "array" ? "folder" : "code"} />
+          <span title={field.name || "未命名字段"}>{field.name || "未命名字段"}</span>
+          {field.required ? <em>必填</em> : null}<small>{field.type}</small>
+        </div>
+        {children.length ? <div role="group">{renderFields(items, field.id, depth + 1)}</div> : null}
+      </div>;
+    });
+  const renderScope = (scope: DefinitionScope, label: string, status?: string) => {
+    const scoped = fields.filter((field) => field.scope === scope && (!status || (field.status || "200") === status));
+    if (!scoped.length) return null;
+    return <details className="interface-structure-group" open key={`${scope}-${status ?? ""}`}><summary><span>{label}</span><small>{scoped.length}</small></summary><div role="group">{renderFields(scoped)}</div></details>;
+  };
+  const requestCount = fields.filter((field) => field.scope.startsWith("request.")).length;
+  const responseCount = fields.filter((field) => field.scope.startsWith("response.")).length;
+  const responseStatuses = [...new Set(fields.filter((field) => field.scope.startsWith("response.")).map((field) => field.status || "200"))];
+  const responseStatusMeta = (value: string) => {
+    if (value === "default") return { tone: "default", label: "默认响应" };
+    if (value.startsWith("2")) return { tone: "success", label: "成功响应" };
+    if (value.startsWith("3")) return { tone: "redirect", label: "重定向" };
+    if (value.startsWith("4")) return { tone: "client-error", label: "客户端错误" };
+    if (value.startsWith("5")) return { tone: "server-error", label: "服务端错误" };
+    return { tone: "info", label: "信息响应" };
+  };
   return (
     <aside className="interface-structure-panel" aria-label="接口结构">
       <header>
@@ -1988,48 +2264,8 @@ function StructurePanel({ fields }: { fields: DefinitionField[] }) {
         <small>{fields.length} 个字段</small>
       </header>
       <div className="interface-structure-tree" role="tree">
-        {SCOPE_LABELS.map(([scope, label]) => {
-          const scoped = fields.filter((field) => field.scope === scope);
-          if (!scoped.length) return null;
-          const statuses = scope.startsWith("response.")
-            ? [...new Set(scoped.map((field) => field.status || "200"))]
-            : [""];
-          return (
-            <section className="interface-structure-group" key={scope}>
-              <strong>{label}</strong>
-              {statuses.map((status) => (
-                <div key={status}>
-                  {status ? <b>{status}</b> : null}
-                  {scoped
-                    .filter(
-                      (field) => !status || (field.status || "200") === status,
-                    )
-                    .map((field) => (
-                      <div
-                        role="treeitem"
-                        className="interface-structure-node"
-                        key={field.id}
-                      >
-                        <span className="interface-structure-branch" />
-                        <Icon
-                          name={
-                            field.type === "object" || field.type === "array"
-                              ? "folder"
-                              : "code"
-                          }
-                        />
-                        <span>{field.name || "未命名字段"}</span>
-                        <small>
-                          {field.type}
-                          {field.required ? " · 必填" : ""}
-                        </small>
-                      </div>
-                    ))}
-                </div>
-              ))}
-            </section>
-          );
-        })}
+        {requestCount ? <details className="interface-structure-section" open><summary><Icon name="send" /><strong>请求</strong><small>{requestCount}</small></summary><div>{renderScope("request.params", "Query / Path 参数")}{renderScope("request.headers", "Headers")}{renderScope("request.cookies", "Cookies")}{renderScope("request.body", "Body")}</div></details> : null}
+        {responseCount ? <details className="interface-structure-section" open><summary><Icon name="archive" /><strong>响应</strong><small>{responseCount}</small></summary><div>{responseStatuses.map((status) => { const meta = responseStatusMeta(status); return <details className={`interface-structure-status is-${meta.tone}`} open key={status}><summary><b>{status}</b><span>{meta.label}</span></summary><div>{renderScope("response.headers", "Headers", status)}{renderScope("response.cookies", "Cookies", status)}{renderScope("response.body", "Body", status)}</div></details>; })}</div></details> : null}
         {!fields.length ? (
           <p>保存或导入定义后，这里会展示请求、响应和错误结构。</p>
         ) : null}
@@ -2095,6 +2331,46 @@ function fieldExample(field: DefinitionField) {
   if (field.type === "array") return "[]";
   if (field.type === "object") return "{}";
   return '"string"';
+}
+
+function documentExampleValue(field: DefinitionField): unknown {
+  const raw = field.example?.trim();
+  if (raw) {
+    try { return JSON.parse(raw); } catch { return raw.replace(/^['"]|['"]$/g, ""); }
+  }
+  if (field.type === "boolean") return true;
+  if (field.type === "integer" || field.type === "number") return 0;
+  if (field.type === "array") return [];
+  if (field.type === "object") return {};
+  return "string";
+}
+
+export function buildDocumentObjectExample(fields: DefinitionField[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const objects = new Map<string, Record<string, unknown>>();
+  for (const field of fields) {
+    if (!field.name) continue;
+    const parent = field.parentId ? objects.get(field.parentId) : result;
+    if (!parent) continue;
+    const value = documentExampleValue(field);
+    parent[field.name] = value;
+    if (field.type === "object" && value && typeof value === "object" && !Array.isArray(value))
+      objects.set(field.id, value as Record<string, unknown>);
+  }
+  return result;
+}
+
+function DocumentCodeExample({ title, language, value }: { title: string; language: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+  return <div className="interface-document-code">
+    <header><div><strong>{title}</strong><span>{language}</span></div><button type="button" onClick={() => void copy()} aria-label={`复制${title}`}><Icon name="copy" />{copied ? "已复制" : "复制"}</button></header>
+    <pre><code>{value}</code></pre>
+  </div>;
 }
 
 function DocumentPreviewPanel({
@@ -2168,8 +2444,11 @@ function DocumentPreviewPanel({
   const auth = documentAuth(request, security);
   const operation = documentOperation(definition.content, workbenchId, request);
   const requestFields = fields.filter((field) => field.scope.startsWith("request."));
+  const requestParameterFields = requestFields.filter((field) => field.scope !== "request.body");
   const responseFields = fields.filter((field) => field.scope.startsWith("response."));
   const responseStatuses = [...new Set(responseFields.map((field) => field.status || "200"))];
+  const requestBodyFields = requestFields.filter((field) => field.scope === "request.body");
+  const requestBodyExample = buildDocumentObjectExample(requestBodyFields);
   return (
     <article className="interface-document-preview">
       <header className="interface-document-toolbar">
@@ -2209,8 +2488,6 @@ function DocumentPreviewPanel({
           <p className="interface-document-description">{operation.live ? "端点来自当前请求配置。" : "端点来自接口定义。"} 调用此端点以执行“{title}”操作。</p>
         </section>
 
-        <DocumentFieldSection title="请求参数" fields={requestFields} empty="此端点没有定义请求参数。" />
-
         <section className="interface-document-section" aria-labelledby="document-security-title">
           <h2 id="document-security-title">安全策略</h2>
           <div className="interface-document-security">
@@ -2226,27 +2503,36 @@ function DocumentPreviewPanel({
           </div>
         </section>
 
+        <section className="interface-document-section" aria-labelledby="document-request-parameters-title">
+          <h2 id="document-request-parameters-title">请求参数</h2>
+          {requestParameterFields.length ? <DocumentFieldTable fields={requestParameterFields} /> : <p className="interface-document-empty">此端点没有定义 Path、Query、Header 或 Cookie 参数。</p>}
+          <div className="interface-document-subsection">
+            <h3>请求体</h3>
+            {requestBodyFields.length ? <>
+              <DocumentFieldTable fields={requestBodyFields} />
+              <DocumentCodeExample title="请求体示例" language="application/json" value={JSON.stringify(requestBodyExample, null, 2)} />
+            </> : <p className="interface-document-empty">此端点没有定义请求体。</p>}
+            <p className="interface-document-description">字段与示例均来自 OpenAPI <code>requestBody</code>；优先使用 <code>example</code>，未提供时根据 Schema 生成占位值。</p>
+          </div>
+        </section>
+
         <section className="interface-document-section" aria-labelledby="document-responses-title">
           <h2 id="document-responses-title">响应</h2>
           {responseStatuses.length ? responseStatuses.map((status) => {
             const statusFields = responseFields.filter((field) => (field.status || "200") === status);
             return <div className="interface-document-response" key={status}>
               <header><code>{status}</code><span>{status.startsWith("2") ? "成功响应" : "响应"}</span></header>
-              <DocumentFieldTable fields={statusFields} />
+              <div className="interface-document-response-content">
+                <DocumentFieldTable fields={statusFields} />
+                <DocumentCodeExample title="响应体" language="application/json" value={JSON.stringify(buildDocumentObjectExample(statusFields.filter((field) => field.scope === "response.body")), null, 2)} />
+              </div>
             </div>;
           }) : <p className="interface-document-empty">此端点尚未定义响应模型。</p>}
         </section>
+
       </div>
     </article>
   );
-}
-
-function DocumentFieldSection({ title, fields, empty }: { title: string; fields: DefinitionField[]; empty: string }) {
-  const id = `document-${title}`;
-  return <section className="interface-document-section" aria-labelledby={id}>
-    <h2 id={id}>{title}</h2>
-    {fields.length ? <DocumentFieldTable fields={fields} /> : <p className="interface-document-empty">{empty}</p>}
-  </section>;
 }
 
 function DocumentFieldTable({ fields }: { fields: DefinitionField[] }) {
