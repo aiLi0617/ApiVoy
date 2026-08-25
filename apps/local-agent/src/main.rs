@@ -43,8 +43,9 @@ use execution_engine::{
 use futures::stream::{self, Stream};
 use futures::{SinkExt, StreamExt};
 use local_store::{
-    CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore, ScriptRecord,
-    ModuleRecord, ProjectRecord, StoredRequest, WorkspaceRecord,
+    ApiDefinitionRecord, CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord,
+    LocalStore, ModuleRecord, ProjectRecord, RequestDefinitionBinding, ScriptRecord, StoredRequest,
+    WorkspaceRecord,
 };
 use plugin_runtime::{InstalledPlugin, PluginManager, PluginManifest, PluginPermission};
 use secret_store::{SecretBackendKind, SecretStore};
@@ -299,6 +300,21 @@ struct MoveRequestBody {
     collection_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiDefinitionQuery { project_id: String }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveApiDefinitionBody {
+    id: Option<String>, project_id: String, module_id: Option<String>, name: String,
+    format: String, file_name: String, content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BindRequestDefinitionBody { definition_id: String, operation_ref: Option<String> }
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceTree {
@@ -439,6 +455,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/v1/requests/{id}",
             get(get_request).patch(move_request).delete(delete_request),
+        )
+        .route("/v1/api-definitions", get(list_api_definitions).post(save_api_definition))
+        .route("/v1/api-definitions/{id}", get(get_api_definition).put(save_api_definition_at_id).delete(delete_api_definition))
+        .route(
+            "/v1/requests/{id}/definition-binding",
+            get(get_request_definition_binding).put(bind_request_definition).delete(unbind_request_definition),
         )
         .route("/v1/workspace-tree", get(get_workspace_tree))
         .route("/v1/workspaces", post(create_workspace))
@@ -1427,6 +1449,57 @@ async fn move_request(
         .move_request(&id, &body.project_id, &body.collection_id)
         .map(|_| StatusCode::NO_CONTENT)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+}
+
+async fn list_api_definitions(State(state): State<AppState>, headers: HeaderMap, Query(query): Query<ApiDefinitionQuery>) -> Result<Json<Vec<ApiDefinitionRecord>>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.list_api_definitions(&query.project_id).map(Json).map_err(internal_store_error)
+}
+
+async fn save_api_definition(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<SaveApiDefinitionBody>) -> Result<(StatusCode, Json<ApiDefinitionRecord>), (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    save_api_definition_record(state, body, None).await.map(|item| (StatusCode::CREATED, Json(item)))
+}
+
+async fn save_api_definition_at_id(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<SaveApiDefinitionBody>) -> Result<Json<ApiDefinitionRecord>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    save_api_definition_record(state, body, Some(id)).await.map(Json)
+}
+
+async fn save_api_definition_record(state: AppState, body: SaveApiDefinitionBody, path_id: Option<String>) -> Result<ApiDefinitionRecord, (StatusCode, String)> {
+    let id = path_id.or(body.id).unwrap_or_else(|| Uuid::new_v4().to_string());
+    let existing = state.store.lock().await.get_api_definition(&id).map_err(internal_store_error)?;
+    let now = Utc::now();
+    let record = ApiDefinitionRecord { id, project_id: body.project_id, module_id: body.module_id, name: body.name, format: body.format, file_name: body.file_name, content: body.content, created_at: existing.map(|item| item.created_at).unwrap_or(now), updated_at: now };
+    state.store.lock().await.save_api_definition(&record).map_err(internal_store_error)?;
+    Ok(record)
+}
+
+async fn get_api_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<ApiDefinitionRecord>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.get_api_definition(&id).map_err(internal_store_error)?.map(Json).ok_or_else(|| (StatusCode::NOT_FOUND, "API definition not found".into()))
+}
+
+async fn delete_api_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.delete_api_definition(&id).map(|_| StatusCode::NO_CONTENT).map_err(internal_store_error)
+}
+
+async fn get_request_definition_binding(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<Option<RequestDefinitionBinding>>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.get_request_definition_binding(&id).map(Json).map_err(internal_store_error)
+}
+
+async fn bind_request_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<BindRequestDefinitionBody>) -> Result<Json<RequestDefinitionBinding>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    let binding = RequestDefinitionBinding { request_id: id, definition_id: body.definition_id, operation_ref: body.operation_ref, updated_at: Utc::now() };
+    state.store.lock().await.bind_request_definition(&binding).map_err(internal_store_error)?;
+    Ok(Json(binding))
+}
+
+async fn unbind_request_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state.store.lock().await.unbind_request_definition(&id).map(|_| StatusCode::NO_CONTENT).map_err(internal_store_error)
 }
 
 async fn get_workspace_tree(

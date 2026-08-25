@@ -25,8 +25,9 @@ use execution_engine::{
     VariableScope,
 };
 use local_store::{
-    CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore,
-    ModuleRecord, ProjectRecord, StoredRequest, WorkspaceRecord,
+    ApiDefinitionRecord, CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord,
+    LocalStore, ModuleRecord, ProjectRecord, RequestDefinitionBinding, StoredRequest,
+    WorkspaceRecord,
 };
 use plugin_runtime::{InstalledPlugin, PluginManager, PluginManifest, PluginPermission};
 use secret_store::{SecretBackendKind, SecretStore};
@@ -175,6 +176,8 @@ struct HttpExecuteRequest {
     #[serde(default)]
     multipart: Vec<MultipartPart>,
     timeout_ms: u64,
+    #[serde(default)]
+    metadata: serde_json::Value,
     #[serde(default)]
     variables: HashMap<String, String>,
     #[serde(default)]
@@ -730,6 +733,45 @@ struct HistoryFilterDto {
     status: Option<u16>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveApiDefinitionRequest {
+    id: Option<String>, project_id: String, name: String, format: String,
+    file_name: String, content: String,
+}
+
+#[tauri::command]
+async fn list_api_definitions(project_id: String, state: State<'_, AppState>) -> Result<Vec<ApiDefinitionRecord>, String> {
+    state.store.lock().await.list_api_definitions(&project_id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn save_api_definition(request: SaveApiDefinitionRequest, state: State<'_, AppState>) -> Result<ApiDefinitionRecord, String> {
+    let id = request.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let existing = state.store.lock().await.get_api_definition(&id).map_err(|error| error.to_string())?;
+    let now = chrono::Utc::now();
+    let record = ApiDefinitionRecord { id, project_id: request.project_id, module_id: None, name: request.name, format: request.format, file_name: request.file_name, content: request.content, created_at: existing.map(|item| item.created_at).unwrap_or(now), updated_at: now };
+    state.store.lock().await.save_api_definition(&record).map_err(|error| error.to_string())?;
+    Ok(record)
+}
+
+#[tauri::command]
+async fn get_request_definition_binding(request_id: String, state: State<'_, AppState>) -> Result<Option<RequestDefinitionBinding>, String> {
+    state.store.lock().await.get_request_definition_binding(&request_id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn bind_request_definition(request_id: String, definition_id: String, operation_ref: Option<String>, state: State<'_, AppState>) -> Result<RequestDefinitionBinding, String> {
+    let binding = RequestDefinitionBinding { request_id, definition_id, operation_ref, updated_at: chrono::Utc::now() };
+    state.store.lock().await.bind_request_definition(&binding).map_err(|error| error.to_string())?;
+    Ok(binding)
+}
+
+#[tauri::command]
+async fn unbind_request_definition(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.store.lock().await.unbind_request_definition(&request_id).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn list_history(
     limit: Option<usize>,
@@ -1275,6 +1317,7 @@ fn build_envelope(request: &HttpExecuteRequest) -> RequestEnvelope {
         envelope.id = core_domain::RequestId(id);
     }
     envelope.timeout_ms = request.timeout_ms.max(1);
+    envelope.metadata = request.metadata.clone();
     envelope.payload = ProtocolPayload::Http(HttpPayload {
         method: request.method.clone(),
         headers: request.headers.clone(),
@@ -1388,6 +1431,11 @@ pub fn run() {
             load_latest_request,
             list_history,
             get_history_item,
+            list_api_definitions,
+            save_api_definition,
+            get_request_definition_binding,
+            bind_request_definition,
+            unbind_request_definition,
             get_environment,
             save_environment,
             put_secret,

@@ -39,6 +39,24 @@ test("registers and removes plugin code templates", () => {
   removeHttp();
 });
 
+test("compacts formatted JSON bodies in generated HTTP code", () => {
+  const code = generateHttpCode({
+    method: "POST", url: "https://example.com/messages", headers: [["Content-Type", "application/json"]],
+    body: "{\n  \"model\": \"qwen-plus\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"hello\" }\n  ]\n}",
+    timeoutMs: 30000, variables: {}, assertions: [], followRedirects: true, retryMax: 0, retryBackoffMs: 0, tlsVerify: true,
+  }, "curl");
+  assert.doesNotMatch(code, /\\n/);
+  assert.match(code, /--data-raw "{\\"model\\":\\"qwen-plus\\",\\"messages\\":\[/);
+});
+
+test("keeps non-JSON request body formatting unchanged", () => {
+  const code = generateHttpCode({
+    method: "POST", url: "https://example.com/text", headers: [["Content-Type", "text/plain"]], body: "first line\nsecond line",
+    timeoutMs: 30000, variables: {}, assertions: [], followRedirects: true, retryMax: 0, retryBackoffMs: 0, tlsVerify: true,
+  }, "curl");
+  assert.match(code, /first line\\nsecond line/);
+});
+
 test("switches complete locale resources deterministically", () => {
   setLocale("en-US");
   assert.equal(translate("nav.collections"), "Collections");

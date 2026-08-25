@@ -1,23 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseCurl } from "./curlImport";
+import { parseCurl, parseCurlWithWarnings } from "./curlImport";
 
-test("parses a cURL command into a complete HTTP request", () => {
-  const request = parseCurl("curl -X POST 'https://api.example.com/users' -H 'Content-Type: application/json' --data-raw '{\"name\":\"Ada\"}'");
-  assert.equal(request.method, "POST");
-  assert.equal(request.url, "https://api.example.com/users");
-  assert.deepEqual(request.headers, [["Content-Type", "application/json"]]);
-  assert.equal(request.body, '{"name":"Ada"}');
-  assert.equal(request.name, "/users");
-});
-
-test("infers POST for cURL data and accepts curl.exe", () => {
-  const request = parseCurl("curl.exe https://api.example.com/items --data value");
-  assert.equal(request.method, "POST");
-  assert.equal(request.body, "value");
-});
-
-test("rejects input without a cURL command or URL", () => {
-  assert.throws(() => parseCurl("wget https://example.com"), /curl/i);
-  assert.throws(() => parseCurl("curl -X GET"), /URL/);
-});
+test("parses a complete HTTP request", () => { const r = parseCurl("curl -X POST 'https://api.example.com/users' -H 'Content-Type: application/json' --data-raw '{\"name\":\"Ada\"}'"); assert.equal(r.method, "POST"); assert.equal(r.url, "https://api.example.com/users"); assert.deepEqual(r.headers, [["Content-Type", "application/json"]]); assert.equal(r.body, '{"name":"Ada"}'); assert.equal(r.name, "/users"); });
+test("infers POST and accepts curl.exe", () => { const r = parseCurl("curl.exe https://api.example.com/items --data value"); assert.equal(r.method, "POST"); assert.equal(r.body, "value"); });
+test("rejects invalid input", () => { assert.throws(() => parseCurl("wget https://example.com"), /curl/i); assert.throws(() => parseCurl("curl -X GET"), /URL/); });
+test("imports common transport, auth and cookie options", () => { const r = parseCurl("curl --url https://api.example.com/private -u ada:secret -b 'sid=123' -L -k -x http://proxy.test:8080 --max-time 2"); assert.equal(r.url, "https://api.example.com/private"); assert.deepEqual(r.auth, { kind: "basic", username: "ada", secret_ref: null }); assert.deepEqual(r.headers, [["Cookie", "sid=123"]]); assert.equal(r.followRedirects, true); assert.equal(r.tlsVerify, false); assert.equal(r.proxy, "http://proxy.test:8080"); assert.equal(r.timeoutMs, 2000); });
+test("moves data to query string for --get", () => { const r = parseCurl("curl https://api.example.com/search --get --data-urlencode 'q=hello world'"); assert.equal(r.method, "GET"); assert.equal(r.url, "https://api.example.com/search?q=hello%20world"); assert.equal(r.body, undefined); });
+test("reports unsupported and file-backed options", () => { const r = parseCurlWithWarnings("curl https://api.example.com/upload --data-binary @payload.json --cert client.pem"); assert.match(r.warnings.join("\n"), /\u6587\u4ef6\u5f15\u7528/); assert.match(r.warnings.join("\n"), /--cert/); });

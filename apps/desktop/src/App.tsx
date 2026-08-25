@@ -149,6 +149,7 @@ function toInvokeRequest(request: HttpWorkbenchRequest) {
     bodySource: request.bodySource ?? null,
     multipart: request.multipart ?? [],
     timeoutMs: request.timeoutMs,
+    metadata: request.metadata ?? {},
     variables: request.variables,
     assertions: request.assertions,
     auth,
@@ -166,7 +167,7 @@ function toInvokeRequest(request: HttpWorkbenchRequest) {
 function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpWorkbenchRequest {
   const payload = envelope.payload;
   if (payload.type !== "http") {
-    throw new Error("仅支持 HTTP 请求重放");
+    throw new Error("仅支挄1�7 HTTP 请求重放");
   }
   return {
     id: envelope.id,
@@ -179,6 +180,7 @@ function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpW
     bodySource: payload.bodySource ?? undefined,
     multipart: payload.multipart ?? [],
     timeoutMs: envelope.timeoutMs,
+    metadata: (envelope.metadata ?? {}) as Record<string, unknown>,
     variables: envelope.variables ?? {},
     assertions: envelope.assertions ?? [],
     auth: envelope.authRef ?? null,
@@ -218,13 +220,13 @@ export function App() {
   async function cloneProject(projectId: string, name: string) {
     if (!tree) throw new Error("项目数据尚未加载完成");
     const source = tree.projects.find((project) => project.id === projectId);
-    if (!source) throw new Error("未找到要克隆的项目");
+    if (!source) throw new Error("未找到要克隆的项盄1�7");
     const created = await invoke<WorkspaceTree["projects"][number]>("create_project", { workspaceId: source.workspaceId, name });
     const collectionIds = new Map<string, string>();
     const pending = tree.collections.filter((collection) => collection.projectId === projectId);
     while (pending.length) {
       const index = pending.findIndex((collection) => !collection.parentId || collectionIds.has(collection.parentId));
-      if (index < 0) throw new Error("项目集合层级存在循环，无法克隆");
+      if (index < 0) throw new Error("项目集合层级存在循环，无法克隄1�7");
       const collection = pending.splice(index, 1)[0];
       const copy = await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId: created.id, parentId: collection.parentId ? collectionIds.get(collection.parentId) ?? null : null, name: collection.name });
       collectionIds.set(collection.id, copy.id);
@@ -254,7 +256,7 @@ export function App() {
 
   return (
     <AppShell
-      channelLabel="Desktop → Rust Core"
+      channelLabel="Desktop ↄ1�7 Rust Core"
       projectContext={{ projects: tree?.projects ?? [], selectedProjectId, onSelectProject: (projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); } }}
       connectionStatus={null}
       environment={{
@@ -269,7 +271,7 @@ export function App() {
       }}
       explorer={<WorkspaceExplorer tree={tree} selectedProjectId={selectedProjectId} selectedCollectionId={selectedCollectionId} selectedRequestId={selectedRequestId}
       onSelectCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
-      onOpenRequest={async (id) => { const stored = await invoke<StoredRequest | null>("get_request", { id }); setSelectedRequestId(id); if (stored) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: stored.envelope })); }}
+      onOpenRequest={async (id) => { const stored = await invoke<StoredRequest | null>("get_request", { id }); setSelectedRequestId(id); if (!stored) return; const parentId = stored.envelope.variables?.__apivoyCaseOf; const parent = parentId ? await invoke<StoredRequest | null>("get_request", { id: parentId }) : null; const detail = parent ? { ...stored.envelope, metadata: { ...(stored.envelope.metadata ?? {}), __apivoyCaseInterfaceName: parent.envelope.name } } : stored.envelope; window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail })); }}
       onCreateWorkspace={async (name) => { await invoke("create_workspace", { name, rootPath: null }); await refreshTree(); }}
       onRenameWorkspace={async (id, name) => { await invoke("rename_workspace", { id, name }); await refreshTree(); }}
       onArchiveWorkspace={async (id, archived) => { await invoke("archive_workspace", { id, archived }); await refreshTree(); }}
@@ -283,7 +285,7 @@ export function App() {
       onRenameCollection={async (collection, name) => { await invoke("update_collection", { id: collection.id, name, parentId: collection.parentId ?? null, sortOrder: collection.sortOrder }); await refreshTree(); }}
       onUpdateCollectionTags={async (collection, tags) => { await invoke("update_collection_tags", { id: collection.id, tags }); await refreshTree(); }}
       onDeleteCollection={async (id) => { await invoke("delete_collection", { id }); await refreshTree(); }}
-      onMoveCollection={async (collection, projectId, parentId) => { if (projectId !== collection.projectId) throw new Error("暂不支持跨项目移动集合"); await invoke("update_collection", { id: collection.id, name: collection.name, parentId, sortOrder: collection.sortOrder }); await refreshTree(); }}
+      onMoveCollection={async (collection, projectId, parentId) => { if (projectId !== collection.projectId) throw new Error("暂不支持跨项目移动集各1�7"); await invoke("update_collection", { id: collection.id, name: collection.name, parentId, sortOrder: collection.sortOrder }); await refreshTree(); }}
       onSwapCollections={async (first, second) => { await invoke("update_collection", { id: first.id, name: first.name, parentId: first.parentId ?? null, sortOrder: second.sortOrder }); await invoke("update_collection", { id: second.id, name: second.name, parentId: second.parentId ?? null, sortOrder: first.sortOrder }); await refreshTree(); }}
       onMoveRequest={async (id, projectId, collectionId) => { await invoke("move_request", { id, projectId, collectionId }); await refreshTree(); }}
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId, parentId, name: segment }); id = created.id; paths.set(key, id); } parentId = id; } await invoke("save_request", { request: toInvokeRequest({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }), projectId, collectionId: parentId }); } await refreshTree(); }}
@@ -291,7 +293,7 @@ export function App() {
       onDeleteRequest={async (id) => { await invoke("delete_request", { id }); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }}
       onRunCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
     />}>
-      <WorkbenchDeck tabs={buildWorkbenchTabs({ runner: true })} projects={(tree?.projects ?? []).map((project) => { const requests = tree?.requests.filter((request) => request.projectId === project.id) ?? []; return { id: project.id, name: project.name, resourceCount: requests.length, protocols: Array.from(new Set(requests.map((request) => request.protocolId ?? request.method ?? "http"))) }; })} selectedProjectId={selectedProjectId} onSelectProject={(projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); }} onCreateProject={async (name) => { const created = await invoke<WorkspaceTree["projects"][number]>("create_project", { workspaceId: tree?.workspaces[0]?.id ?? "default-workspace", name }); setSelectedProjectId(created.id); setSelectedCollectionId(""); await refreshTree(); }} onRenameProject={async (id, name) => { await invoke("rename_project", { id, name }); await refreshTree(); }} onCloneProject={cloneProject} onDeleteProject={async (id) => { await invoke("delete_project", { id }); if (selectedProjectId === id) { const fallback = tree?.projects.find((project) => project.id !== id); setSelectedProjectId(fallback?.id ?? ""); setSelectedCollectionId(fallback ? tree?.collections.find((item) => item.projectId === fallback.id)?.id ?? "" : ""); setSelectedRequestId(null); } await refreshTree(); }} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
+      <WorkbenchDeck definitionClient={{ list: (projectId) => invoke("list_api_definitions", { projectId }), save: (input) => invoke("save_api_definition", { request: input }), binding: (requestId) => invoke("get_request_definition_binding", { requestId }), bind: (requestId, definitionId, operationRef) => invoke("bind_request_definition", { requestId, definitionId, operationRef }), unbind: (requestId) => invoke("unbind_request_definition", { requestId }) }} tabs={buildWorkbenchTabs({ runner: true })} projects={(tree?.projects ?? []).map((project) => { const requests = tree?.requests.filter((request) => request.projectId === project.id) ?? []; return { id: project.id, name: project.name, resourceCount: requests.length, protocols: Array.from(new Set(requests.map((request) => request.protocolId ?? request.method ?? "http"))) }; })} selectedProjectId={selectedProjectId} onSelectProject={(projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); }} onCreateProject={async (name) => { const created = await invoke<WorkspaceTree["projects"][number]>("create_project", { workspaceId: tree?.workspaces[0]?.id ?? "default-workspace", name }); setSelectedProjectId(created.id); setSelectedCollectionId(""); await refreshTree(); }} onRenameProject={async (id, name) => { await invoke("rename_project", { id, name }); await refreshTree(); }} onCloneProject={cloneProject} onDeleteProject={async (id) => { await invoke("delete_project", { id }); if (selectedProjectId === id) { const fallback = tree?.projects.find((project) => project.id !== id); setSelectedProjectId(fallback?.id ?? ""); setSelectedCollectionId(fallback ? tree?.collections.find((item) => item.projectId === fallback.id)?.id ?? "" : ""); setSelectedRequestId(null); } await refreshTree(); }} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
       <HttpWorkbench
         onSend={async (request, hooks) => {
           const version = await invoke<{
@@ -300,7 +302,7 @@ export function App() {
           }>("version_info");
           if (version.protocolApiVersion !== "1") {
             throw new Error(
-              `协议版本不兼容：Desktop 期望 1，当前 ${version.protocolApiVersion}`,
+              `协议版本不兼容：Desktop 期望 1，当剄1�7 ${version.protocolApiVersion}`,
             );
           }
 

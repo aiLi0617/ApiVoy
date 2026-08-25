@@ -17,13 +17,25 @@ export function listHttpCodeTemplates(): HttpCodeTemplate[] { return [...pluginT
 
 function quoted(value: string): string { return JSON.stringify(value); }
 function headerObject(headers: Array<[string, string]>): string { return JSON.stringify(Object.fromEntries(headers), null, 2); }
+function normalizeGeneratedBody(body: string, headers: Array<[string, string]>): string {
+  const trimmed = body.trim();
+  if (!trimmed) return body;
+  const contentType = headers.find(([name]) => name.trim().toLowerCase() === "content-type")?.[1].toLowerCase() ?? "";
+  const mayBeJson = contentType.includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[");
+  if (!mayBeJson) return body;
+  try {
+    return JSON.stringify(JSON.parse(trimmed));
+  } catch {
+    return body;
+  }
+}
 
 export function generateHttpCode(request: HttpWorkbenchRequest, language: CodeLanguage | string): string {
   const plugin = pluginTemplates.get(language);
   if (plugin) return plugin.generate(request);
   const method = request.method.toUpperCase();
-  const body = request.body ?? "";
   const headers = request.headers;
+  const body = normalizeGeneratedBody(request.body ?? "", headers);
   if (language === "curl") {
     const lines = [`curl --location --request ${method} ${quoted(request.url)}`];
     for (const [name, value] of headers) lines.push(`  --header ${quoted(`${name}: ${value}`)}`);

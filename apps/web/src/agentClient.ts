@@ -82,12 +82,20 @@ interface StoredRequest {
   target: string;
   envelope: RequestEnvelope;
 }
+export interface ApiDefinitionRecord { id: string; projectId: string; moduleId?: string | null; name: string; format: string; fileName: string; content: string; createdAt: string; updatedAt: string }
+export interface RequestDefinitionBindingRecord { requestId: string; definitionId: string; operationRef?: string | null; updatedAt: string }
 export async function loadEnvelopeViaAgent(id: string): Promise<RequestEnvelope | null> {
   await checkAgentHandshake();
   const response = await fetch(`${agentBase()}/v1/requests/${id}`, { headers: agentHeaders() });
   if (!response.ok) throw new Error(await response.text());
   return ((await response.json()) as StoredRequest | null)?.envelope ?? null;
 }
+
+export async function listApiDefinitionsViaAgent(projectId: string): Promise<ApiDefinitionRecord[]> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/api-definitions?projectId=${encodeURIComponent(projectId)}`, { headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function saveApiDefinitionViaAgent(input: { projectId: string; name: string; format: string; fileName: string; content: string }): Promise<ApiDefinitionRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/api-definitions`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(input) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function getRequestDefinitionBindingViaAgent(requestId: string): Promise<RequestDefinitionBindingRecord | null> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function bindRequestDefinitionViaAgent(requestId: string, definitionId: string, operationRef?: string): Promise<RequestDefinitionBindingRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { method: "PUT", headers: agentHeaders(), body: JSON.stringify({ definitionId, operationRef }) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function unbindRequestDefinitionViaAgent(requestId: string): Promise<void> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { method: "DELETE", headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); }
 
 function agentHeaders(extra?: HeadersInit): Headers {
   const headers = new Headers(extra);
@@ -146,6 +154,7 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
     preScripts: request.preScripts,
     postScripts: request.postScripts,
   });
+  envelope.metadata = { ...(envelope.metadata ?? {}), ...(request.metadata ?? {}) };
   if (request.id) envelope.id = request.id;
   return envelope;
 }
@@ -153,7 +162,7 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
 export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpWorkbenchRequest {
   const payload = envelope.payload;
   if (payload.type !== "http") {
-    throw new Error("仅支持 HTTP 请求重放");
+    throw new Error("仅支挄1�7 HTTP 请求重放");
   }
   return {
     id: envelope.id,
@@ -166,6 +175,7 @@ export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string)
     bodySource: payload.bodySource ?? undefined,
     multipart: payload.multipart ?? [],
     timeoutMs: envelope.timeoutMs,
+    metadata: (envelope.metadata ?? {}) as Record<string, unknown>,
     variables: envelope.variables ?? {},
     assertions: envelope.assertions ?? [],
     auth: envelope.authRef ?? null,
@@ -327,7 +337,7 @@ export async function runCollectionViaAgent(collectionId: string, failFast: bool
     try {
       const envelope = await loadEnvelopeViaAgent(item.id);
       if (!envelope) {
-        cases.push({ requestId: item.id, name: item.name, protocolId: "unknown", passed: false, status: null, durationMs: 0, error: "请求不存在", failedAssertions: [] });
+        cases.push({ requestId: item.id, name: item.name, protocolId: "unknown", passed: false, status: null, durationMs: 0, error: "请求不存圄1�7", failedAssertions: [] });
         if (failFast) break;
         continue;
       }

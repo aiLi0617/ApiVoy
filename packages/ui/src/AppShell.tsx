@@ -31,6 +31,10 @@ export interface AppShellProps {
   };
 }
 
+export function calculateExplorerWidth(clientX: number, explorerLeft: number, maximumWidth: number) {
+  return Math.min(maximumWidth, Math.max(0, clientX - explorerLeft));
+}
+
 function EnvironmentVariablesDialog({ open, onClose, environment }: { open: boolean; onClose: () => void; environment?: EnvironmentEditorProps }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -88,6 +92,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
   const paletteRef = useRef<HTMLDivElement>(null);
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const explorerRef = useRef<HTMLElement>(null);
   const resizingExplorerRef = useRef(false);
   const [explorerWidth, setExplorerWidth] = useState(() => {
     if (typeof window === "undefined") return 232;
@@ -110,8 +115,8 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
   }
 
   function resizeExplorer(clientX: number) {
-    const left = workspaceRef.current?.getBoundingClientRect().left ?? 0;
-    const next = Math.min(maxExplorerWidth(), Math.max(0, clientX - left));
+    const left = explorerRef.current?.getBoundingClientRect().left ?? workspaceRef.current?.getBoundingClientRect().left ?? 0;
+    const next = calculateExplorerWidth(clientX, left, maxExplorerWidth());
     explorerWidthRef.current = next;
     setExplorerWidth(next);
   }
@@ -304,7 +309,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
         <div className="project-rail-brand" aria-label={title}><span className="brand-mark"><BrandMark /></span><strong>{title}</strong></div>
       </nav> : null}
       {explorer && showExplorer ? <button type="button" className="explorer-backdrop" aria-label={t("shell.explorer.close")} onClick={toggleExplorer} /> : null}
-      {explorer ? <aside id="apivoy-explorer" className="resource-explorer" aria-label={t("shell.explorer")}>{explorer}</aside> : null}
+      {explorer ? <aside ref={explorerRef} id="apivoy-explorer" className="resource-explorer" aria-label={t("shell.explorer")}>{explorer}</aside> : null}
       {explorer && showExplorer ? <div className="explorer-resize-handle" role="separator" aria-label="调整资源管理器宽度" aria-orientation="vertical" aria-valuemin={0} aria-valuemax={Math.round(maxExplorerWidth())} aria-valuenow={Math.round(explorerWidth)} tabIndex={0} onPointerDown={(event) => { if (window.matchMedia("(max-width: 768px)").matches) return; explorerDragStartWidthRef.current = explorerWidthRef.current; resizingExplorerRef.current = true; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (resizingExplorerRef.current) resizeExplorer(event.clientX); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); finishExplorerResize(); }} onPointerCancel={finishExplorerResize} onDoubleClick={() => { explorerWidthRef.current = 232; expandedExplorerWidthRef.current = 232; setExplorerWidth(232); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); const next = Math.min(maxExplorerWidth(), Math.max(190, explorerWidth + (event.key === "ArrowRight" ? 10 : -10))); explorerWidthRef.current = next; expandedExplorerWidthRef.current = next; setExplorerWidth(next); }}/>: null}
       {explorer && projectModule !== "home" && !explorerOpen ? <button type="button" className="explorer-edge-toggle" aria-label={t("shell.explorer")} aria-expanded={false} aria-controls="apivoy-explorer" title={t("shell.explorer")} onClick={toggleExplorer}><Icon name="chevron"/></button> : null}
       <main id="apivoy-main" tabIndex={-1} className="app-main">{children}</main>

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
-void createPortal;
 import type {
   Assertion,
   AssertionResultEvent,
@@ -50,6 +49,7 @@ export interface HttpWorkbenchRequest {
   environmentRef?: string | null;
   preScripts?: string[];
   postScripts?: string[];
+  metadata?: Record<string, unknown>;
 }
 
 export function requestNameFromUrl(value: string): string {
@@ -60,6 +60,12 @@ export function requestNameFromUrl(value: string): string {
   } catch {
     return target.split(/[?#]/, 1)[0] || "未命名接口";
   }
+}
+
+export const CASE_NAME_PRESETS = ["成功", "失败", "记录不存在", "数据为空", "缺少参数", "参数有误", "已登录", "未登录"] as const;
+
+export function caseNameFromRequestName(_value: string): string {
+  return CASE_NAME_PRESETS[0];
 }
 
 export interface HttpRunResult {
@@ -120,6 +126,13 @@ export interface HeaderRow {
   required: boolean;
 }
 
+function httpRequestFromHydration(value: unknown): HttpWorkbenchRequest | null {
+  const wrapped = value as { request?: HttpWorkbenchRequest } | null;
+  if (wrapped?.request && typeof wrapped.request.url === "string" && typeof wrapped.request.method === "string" && Array.isArray(wrapped.request.headers))
+    return wrapped.request;
+  return httpRequestFromEnvelope(value);
+}
+
 function httpRequestFromEnvelope(value: unknown): HttpWorkbenchRequest | null {
   const envelope = value as RequestEnvelope | null;
   if (!envelope || envelope.payload?.type !== "http") return null;
@@ -135,6 +148,7 @@ function httpRequestFromEnvelope(value: unknown): HttpWorkbenchRequest | null {
     bodySource: payload.bodySource ?? undefined,
     multipart: payload.multipart ?? [],
     timeoutMs: envelope.timeoutMs,
+    metadata: (envelope.metadata ?? {}) as Record<string, unknown>,
     variables: envelope.variables ?? {},
     assertions: envelope.assertions ?? [],
     auth: envelope.authRef ?? null,
@@ -175,6 +189,11 @@ const BODY_MODES: Array<{ id: BodyMode; label: string; contentType?: string }> =
   { id: "binary", label: "Binary", contentType: "application/octet-stream" },
   { id: "msgpack", label: "MessagePack", contentType: "application/msgpack" },
 ];
+
+export function formatJsonBody(value: string): string {
+  if (!value.trim()) return value;
+  return JSON.stringify(JSON.parse(value), null, 2);
+}
 
 function resolveAssets(ids:string[]):string[]{ let assets:ScriptAsset[]=[];try{assets=JSON.parse(localStorage.getItem("apivoy-project-scripts-v1")??"[]") as ScriptAsset[]}catch{return []}return ids.map((id)=>assets.find((item)=>item.id===id)).filter((item):item is ScriptAsset=>!!item).map((item)=>{const source=item.language==="typescript"?ts.transpileModule(item.source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None}}).outputText:item.source;return `// @apivoy-script:${item.id}\n${source}`})}
 function assetIdsFromScripts(scripts:string[]|undefined):string[]{return Array.from(new Set((scripts??[]).map((script)=>script.match(/^\/\/ @apivoy-script:([^\s]+)/m)?.[1]).filter((id):id is string=>Boolean(id))))}
@@ -325,6 +344,7 @@ export interface HttpWorkbenchProps {
   onTitleChange?: (title: string) => void;
   onCancel?: (executionId: string) => Promise<void>;
   onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
+  onSaveAsCase?: (request: HttpWorkbenchRequest) => Promise<void>;
   onPutSecret?: (name: string, value: string) => Promise<void>;
   onListCookies?: (url: string) => Promise<Array<{ name: string; value: string }>>;
   onSetCookie?: (url: string, name: string, value: string) => Promise<void>;
@@ -335,6 +355,7 @@ export interface HttpWorkbenchProps {
   environments?: Array<{ id: string; name: string }>;
   defaultEnvironmentId?: string;
   toolbarTargetId?: string;
+  commandbarTargetId?: string;
   workbenchSessionId?: string;
 }
 
@@ -533,6 +554,7 @@ export function HttpWorkbench({
   onTitleChange,
   onCancel,
   onSave,
+  onSaveAsCase,
   onPutSecret,
   onListHistory,
   onReplayHistory,
@@ -540,6 +562,7 @@ export function HttpWorkbench({
   environments = DEFAULT_ENVIRONMENTS,
   defaultEnvironmentId = "default-env",
   toolbarTargetId,
+  commandbarTargetId,
   workbenchSessionId,
 }: HttpWorkbenchProps) {
   const { t } = useI18n();
@@ -562,8 +585,10 @@ export function HttpWorkbench({
   const [tlsClientCertRef, setTlsClientCertRef] = useState("");
   const [environmentRef,setEnvironmentRef]=useState<string>(defaultEnvironmentId);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
+  const [commandbarTarget, setCommandbarTarget] = useState<HTMLElement | null>(null);
   void toolbarTarget;
   useEffect(() => { setToolbarTarget(toolbarTargetId ? document.getElementById(toolbarTargetId) : null); }, [toolbarTargetId]);
+  useEffect(() => { setCommandbarTarget(commandbarTargetId ? document.getElementById(commandbarTargetId) : null); }, [commandbarTargetId]);
   const [environmentOptions,setEnvironmentOptions]=useState(environments);
   useEffect(()=>{listEnvironmentResources().then((items)=>setEnvironmentOptions(items.map(({id,name})=>({id,name})))).catch(()=>setEnvironmentOptions(environments))},[environments]);
   const [preScriptAssetIds,setPreScriptAssetIds]=useState<string[]>([]);
@@ -593,6 +618,20 @@ export function HttpWorkbench({
   const [result, setResult] = useState<HttpRunResult | null>(null);
   const [livePreview, setLivePreview] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+  const [caseName, setCaseName] = useState("");
+  const [caseType, setCaseType] = useState<"debug" | "test">("debug");
+  const [caseSaveResponse, setCaseSaveResponse] = useState(true);
+  const [caseCategory, setCaseCategory] = useState<"positive" | "negative" | "boundary" | "security" | "other">("positive");
+  const [caseTags, setCaseTags] = useState("");
+  const [caseSaving, setCaseSaving] = useState(false);
+  const [requestMetadata, setRequestMetadata] = useState<Record<string, unknown>>({});
+  const [openedCaseParentId, setOpenedCaseParentId] = useState<string | null>(null);
+  const [openedCaseInterfaceName, setOpenedCaseInterfaceName] = useState("");
+  const [syncCaseResponse, setSyncCaseResponse] = useState(false);
+  const saveMenuRef = useRef<HTMLDivElement>(null);
+  const hasResponseResult = Boolean(result && (result.summary.status != null || result.responseMeta || result.preview != null));
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyStateFilter, setHistoryStateFilter] = useState("");
@@ -631,6 +670,15 @@ export function HttpWorkbench({
   const [binaryFileName, setBinaryFileName] = useState("");
   const [binarySize, setBinarySize] = useState(0);
   const [messagePackJson, setMessagePackJson] = useState("{}" );
+
+  function formatBodyJson() {
+    try {
+      setBody(formatJsonBody(body));
+      setStatusMsg(body.trim() ? "JSON 已格式化" : "JSON Body 为空");
+    } catch (error) {
+      setStatusMsg(`JSON 格式错误：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   function resizeGraphqlEditors(event: ReactPointerEvent<HTMLDivElement>) {
     const root = graphqlSplitRef.current;
@@ -787,6 +835,7 @@ export function HttpWorkbench({
       bodySource: bodyMode === "msgpack" ? messagePackJson : bodyMode === "graphql" ? JSON.stringify({ type: "graphql", query: graphqlQuery, variables: JSON.parse(graphqlVariables || "{}"), operationName: graphqlOperationName.trim() || null }) : bodyMode === "jsonrpc" ? JSON.stringify({ type: "jsonrpc", method: rpcMethod, params: JSON.parse(rpcParams || "{}"), id: rpcId }) : undefined,
       multipart: bodyMode === "multipart" ? multipart.filter((part) => part.enabled && part.name.trim()).map(({ id: _id, enabled: _enabled, description: _description, kind: _kind, valueType: _valueType, typeSelected: _typeSelected, required: _required, ...part }) => part) : [],
       timeoutMs,
+      metadata: requestMetadata,
       variables: parseKv(variablesText),
       assertions: assertionsEnabled ? parseAssertions(assertionsText) : [],
       auth: buildAuth(authKind, bearerTokenSource, bearerToken, authSecretRef, authUsername, authHeaderName, oauthTokenUrl, oauthScope, oauthAudience, oauthAuthorizationUrl, oauthRedirectUri, oauthCodeRef, oauthVerifierRef),
@@ -838,6 +887,10 @@ export function HttpWorkbench({
 
   function applyRequest(loaded: HttpWorkbenchRequest) {
     setRequestId(loaded.id);
+    setRequestMetadata(loaded.metadata ?? {});
+    setOpenedCaseParentId(loaded.variables?.__apivoyCaseOf ?? null);
+    setOpenedCaseInterfaceName(typeof loaded.metadata?.__apivoyCaseInterfaceName === "string" ? loaded.metadata.__apivoyCaseInterfaceName : loaded.variables?.__apivoyCaseInterfaceName ?? "");
+    setSyncCaseResponse(Boolean(loaded.metadata?.__apivoySavedResponse));
     setName(loaded.name ?? "");
     setMethod(loaded.method);
     setUrl(loaded.url);
@@ -928,11 +981,11 @@ export function HttpWorkbench({
   }, [externalRequest]);
 
   useWorkbenchHydration("http", (raw) => {
-    const savedRequest = httpRequestFromEnvelope(raw);
+    const savedRequest = httpRequestFromHydration(raw);
     if (savedRequest) {
       applyRequest(savedRequest);
       setResult(null);
-      setStatusMsg("已打开资源树中的请求");
+      setStatusMsg((raw as { request?: unknown } | null)?.request ? "接口定义已同步到调试请求" : "已打开资源树中的请求");
       return;
     }
     const envelope = raw as { target?: string; payload?: { type?: string; query?: string; variables?: unknown; operationName?: string | null; headers?: Array<[string, string]> } };
@@ -1083,12 +1136,20 @@ export function HttpWorkbench({
   }
 
   async function handleSave() {
-    if (!onSave) {
-      return;
-    }
-    if (!validateParameterNames()) return;
+    if (!onSave || !validateParameterNames()) return;
     try {
       const request = buildRequest();
+      const responseSnapshot = syncCaseResponse && openedCaseParentId && result && hasResponseResult ? {
+        status: result.summary.status ?? null,
+        durationMs: result.summary.durationMs,
+        body: result.preview ?? null,
+        headers: result.responseMeta?.headers ?? [],
+        contentType: result.responseMeta?.contentType ?? null,
+      } : null;
+      if (responseSnapshot) {
+        request.metadata = { ...(request.metadata ?? {}), __apivoySavedResponse: responseSnapshot };
+        setRequestMetadata(request.metadata);
+      }
       await onSave(request);
       if (!name.trim()) setName(request.name ?? "");
       setStatusMsg("请求已保存到本地库");
@@ -1096,6 +1157,66 @@ export function HttpWorkbench({
       setStatusMsg(err instanceof Error ? err.message : String(err));
     }
   }
+
+  function openCaseDialog() {
+    if (!onSaveAsCase || !validateParameterNames()) return;
+    const request = buildRequest();
+    setCaseName(caseNameFromRequestName(request.name ?? requestNameFromUrl(request.url)));
+    setCaseType("debug");
+    setCaseSaveResponse(hasResponseResult);
+    setCaseCategory("positive");
+    setCaseTags("");
+    setSaveMenuOpen(false);
+    setCaseDialogOpen(true);
+  }
+
+  async function saveAsCase() {
+    const nextName = caseName.trim();
+    if (!onSaveAsCase || !nextName || caseSaving) return;
+    setCaseSaving(true);
+    try {
+      const responseSnapshot = caseSaveResponse && result && hasResponseResult ? {
+        status: result.summary.status ?? null,
+        durationMs: result.summary.durationMs,
+        body: result.preview ?? null,
+        headers: result.responseMeta?.headers ?? [],
+        contentType: result.responseMeta?.contentType ?? null,
+      } : null;
+      const request = buildRequest();
+      await onSaveAsCase({
+        ...request,
+        name: nextName,
+        metadata: {
+          ...(request.metadata ?? {}),
+          __apivoyCaseType: caseType,
+          ...(caseType === "test" ? { __apivoyCaseCategory: caseCategory, __apivoyCaseTags: caseTags.split(",").map((tag) => tag.trim()).filter(Boolean) } : {}),
+          ...(responseSnapshot ? { __apivoySavedResponse: responseSnapshot } : {}),
+        },
+      });
+      setCaseDialogOpen(false);
+      setStatusMsg("用例“" + nextName + "”已保存到当前接口");
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCaseSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!saveMenuOpen) return;
+    const closeSaveMenu = (event: MouseEvent) => {
+      if (!saveMenuRef.current?.contains(event.target as Node)) setSaveMenuOpen(false);
+    };
+    const closeSaveMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSaveMenuOpen(false);
+    };
+    document.addEventListener("mousedown", closeSaveMenu);
+    document.addEventListener("keydown", closeSaveMenuOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeSaveMenu);
+      document.removeEventListener("keydown", closeSaveMenuOnEscape);
+    };
+  }, [saveMenuOpen]);
 
   function currentHistoryFilter(): HistoryFilter | undefined {
     const status = historyStatusFilter.trim()
@@ -1221,7 +1342,7 @@ export function HttpWorkbench({
   const environmentControl = <div className="http-environment-select"><select aria-label="请求环境" value={environmentRef} onChange={(event)=>setEnvironmentRef(event.target.value)} disabled={loading}>{environmentOptions.map((environment)=><option key={environment.id} value={environment.id}>{environment.name}{environment.id===defaultEnvironmentId?" · 默认":""}</option>)}</select><button type="button" className="http-environment-manage" aria-label="编辑环境变量" title="编辑环境变量" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-environment"))}><Icon name="menu"/></button></div>;
 
   const requestCommandbar = <div className="http-request-commandbar">
-    <label className="http-request-name-field"><input aria-label="接口名称" style={styles.input} value={name} onChange={(event) => setName(event.target.value)} placeholder="接口名称" disabled={loading} /></label>
+    <label className="http-request-name-field"><input aria-label={openedCaseParentId ? "接口及用例名称" : "接口名称"} style={styles.input} value={openedCaseParentId && openedCaseInterfaceName ? `${openedCaseInterfaceName}（${name}）` : name} onChange={(event) => { const value = event.target.value; if (openedCaseParentId && openedCaseInterfaceName) { const prefix = `${openedCaseInterfaceName}（`; setName(value.startsWith(prefix) ? value.slice(prefix.length).replace(/）$/, "") : value); } else setName(value); }} placeholder="接口名称" disabled={loading} /></label>
     <div className="http-request-primary-actions">
       <select aria-label="HTTP 方法" style={styles.select} value={method} onChange={(e) => setMethod(e.target.value)} disabled={loading}>
         {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -1230,14 +1351,44 @@ export function HttpWorkbench({
       <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
         <Icon name={loading ? "close" : "send"}/>{loading ? t("action.cancel") : t("action.send")}
       </button>
-      {onSave && <button className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={handleSave}><Icon name="archive"/>{t("action.save")}</button>}
+      {onSave && <div className="http-save-split" ref={saveMenuRef}>
+        <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => void handleSave()}><Icon name="archive"/>{t("action.save")}</button>
+        {openedCaseParentId ? <label className="http-save-response-sync" title="勾选后，点击保存时同步当前响应">
+          <input type="checkbox" aria-label="同步保存响应" checked={syncCaseResponse} disabled={loading} onChange={(event) => setSyncCaseResponse(event.target.checked)}/>
+        </label> : onSaveAsCase ? <>
+          <button type="button" className="http-save-menu-trigger" aria-label="更多保存方式" aria-haspopup="menu" aria-expanded={saveMenuOpen} disabled={loading || !url.trim()} onClick={() => setSaveMenuOpen((open) => !open)}><Icon name="chevron"/></button>
+          {saveMenuOpen ? <div className="http-save-menu" role="menu" aria-label="保存方式">
+            <button type="button" role="menuitem" onClick={openCaseDialog}><Icon name="copy"/><span>保存为用例</span></button>
+          </div> : null}
+        </> : null}
+      </div>}
     </div>
   </div>;
 
   return (
-    <>{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
-      <div className="http-workbench-layout">
-      {requestCommandbar}
+    <>{caseDialogOpen ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !caseSaving && setCaseDialogOpen(false)}>
+      <form className="case-save-dialog" role="dialog" aria-modal="true" aria-labelledby="case-save-title" onSubmit={(event) => { event.preventDefault(); void saveAsCase(); }} onMouseDown={(event) => event.stopPropagation()}>
+        <header><div><h2 id="case-save-title">保存为用例</h2></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={caseSaving} onClick={() => setCaseDialogOpen(false)}><Icon name="close"/></button></header>
+        <div className="case-save-fields">
+          <label><span>用例名称 <i>*</i></span><div className="case-name-composer"><input autoFocus list="case-name-presets" aria-label="用例场景名称" value={caseName} onChange={(event) => setCaseName(event.target.value)} placeholder="选择预设或输入自定义名称" /><datalist id="case-name-presets">{CASE_NAME_PRESETS.map((preset) => <option key={preset} value={preset}/>)}</datalist></div></label>
+          <fieldset className="case-type-options"><legend>用例类型</legend>
+            <label><input type="radio" name="case-type" value="debug" checked={caseType === "debug"} onChange={() => setCaseType("debug")}/><span>调试用例</span></label>
+            <label><input type="radio" name="case-type" value="test" checked={caseType === "test"} onChange={() => setCaseType("test")}/><span>测试用例</span></label>
+          </fieldset>
+          {caseType === "test" ? <>
+            <label><span>目标分类</span><select value={caseCategory} onChange={(event) => setCaseCategory(event.target.value as typeof caseCategory)}><option value="positive">正向</option><option value="negative">负向</option><option value="boundary">边界值</option><option value="security">安全性</option><option value="other">其他</option></select></label>
+            <label><span>单接口用例标签</span><div className="case-tag-input"><Icon name="tag"/><input value={caseTags} onChange={(event) => setCaseTags(event.target.value)} placeholder="添加标签，多个标签用逗号分隔"/></div></label>
+          </> : null}
+        </div>
+        <label className={"case-save-response" + (hasResponseResult ? "" : " is-disabled")}>
+          <input type="checkbox" checked={caseSaveResponse} disabled={!hasResponseResult} onChange={(event) => setCaseSaveResponse(event.target.checked)}/>
+          <span><strong>同时保存响应</strong>{!hasResponseResult ? <small>当前没有响应，仅保存请求配置</small> : null}</span>
+        </label>
+        <footer><button type="button" className="ui-button secondary" disabled={caseSaving} onClick={() => setCaseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={caseSaving || !caseName.trim()}>{caseSaving ? "保存中…" : "保存"}</button></footer>
+      </form>
+    </div>, document.body) : null}{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}{commandbarTarget ? createPortal(requestCommandbar, commandbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
+      <div className={`http-workbench-layout${commandbarTarget ? " has-external-commandbar" : ""}`}>
+      {commandbarTarget ? null : requestCommandbar}
       <div className="http-workbench-split">
       <SplitPane id="http-workbench" direction="vertical" minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
       {(() => {
@@ -1278,9 +1429,13 @@ export function HttpWorkbench({
                 {BODY_MODES.map((mode) => <button key={mode.id} type="button" role="tab" aria-selected={bodyMode === mode.id} className={bodyMode === mode.id ? "is-active" : ""} onClick={() => selectBodyMode(mode.id)} disabled={loading}>{mode.label}</button>)}
               </div>
               {bodyMode === "none" && <div className="http-body-empty">当前请求不发送 Body。选择上方类型开始编辑。</div>}
-              {bodyMode !== "none" && bodyMode !== "multipart" && bodyMode !== "urlencoded" && !["graphql", "jsonrpc", "soap", "binary", "msgpack"].includes(bodyMode) && <>
+              {bodyMode === "json" && <>
+                <div className="http-body-editor-heading"><span className="http-body-editor-label">请求内容</span><span className="http-body-editor-actions"><button type="button" className="http-body-icon-action" onClick={formatBodyJson} disabled={loading || !body.trim()} title="格式化 JSON" aria-label="格式化 JSON Body"><Icon name="code"/></button><button type="button" className="http-body-icon-action" onClick={() => setBody("")} disabled={loading || !body} title="清除 JSON" aria-label="清除 JSON Body"><Icon name="broom"/></button></span></div>
+                <CodeEditor value={body} onChange={setBody} language="json" height={260} readOnly={loading} />
+              </>}
+              {bodyMode !== "none" && bodyMode !== "multipart" && bodyMode !== "urlencoded" && bodyMode !== "json" && !["graphql", "jsonrpc", "soap", "binary", "msgpack"].includes(bodyMode) && <>
                 <div className="http-body-editor-label">请求内容</div>
-                <CodeEditor value={body} onChange={setBody} language={bodyMode === "json" ? "json" : bodyMode === "xml" ? "xml" : "plaintext"} height={260} readOnly={loading} />
+                <CodeEditor value={body} onChange={setBody} language={bodyMode === "xml" ? "xml" : "plaintext"} height={260} readOnly={loading} />
               </>}
               {bodyMode === "graphql" && <div className="http-graphql-editor">
                 <div ref={graphqlSplitRef} className="http-graphql-split" style={{ "--graphql-split-ratio": `${graphqlSplitRatio * 100}%` } as CSSProperties}>

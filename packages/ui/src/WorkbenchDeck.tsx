@@ -8,11 +8,12 @@ import { clearWorkbenchDraft } from "./draftRecovery";
 import { ScriptLibraryWorkbench } from "./ScriptLibraryWorkbench";
 import { CurlImportDialog } from "./CurlImportDialog";
 import type { HttpWorkbenchRequest } from "./HttpWorkbench";
+import { InterfaceLifecycleShell, type InterfaceDefinitionClient } from "./InterfaceLifecycle";
 
 export interface WorkbenchDefinition { id: string; label: string; protocol?: string; protocols?: string[]; group?: string; icon?: IconName }
 export type WorkbenchTab = WorkbenchDefinition;
 export interface WorkbenchGroup { id: string; label: string; icon: IconName; workbenchIds: string[] }
-interface WorkbenchSession { id: string; workbenchId: string; title: string; requestId?: string }
+interface WorkbenchSession { id: string; workbenchId: string; title: string; requestId?: string; icon?: IconName; caseInterfaceName?: string }
 export interface WorkbenchDeckProps {
   tabs: WorkbenchTab[];
   children: ReactNode;
@@ -26,6 +27,7 @@ export interface WorkbenchDeckProps {
   onCloneProject?: (projectId: string, name: string) => Promise<void>;
   onDeleteProject?: (projectId: string) => Promise<void>;
   onOpenProjectInNewWindow?: (projectId: string) => void;
+  definitionClient?: InterfaceDefinitionClient;
 }
 export const WORKBENCH_LABELS: Record<string, string> = { http:"HTTP", graphql:"GraphQL", grpc:"gRPC", rpc:"SOAP / RPC", websocket:"WebSocket", sse:"SSE", tcp:"TCP", udp:"UDP", mqtt:"MQTT", amqp:"AMQP", kafka:"Kafka", redis:"Redis", sql:"SQL", mock:"Mock", runner:"Runner", gateway:"Gateway", capture:"Capture", plugins:"Plugins", ai:"AI" };
 export const WORKBENCH_ICONS: Record<string, IconName> = {
@@ -72,6 +74,15 @@ function initialWorkbenchSessions(tabs: WorkbenchTab[], sessionId: string): Work
   return [{ id: sessionId, workbenchId: routeId, title: translateWorkbench(routeId, tab?.label ?? routeId) }];
 }
 
+function resolveCasePresentation(detail: unknown): { title: string; interfaceName: string; icon: IconName } | null {
+  if (!detail || typeof detail !== "object") return null;
+  const value = detail as { name?: unknown; variables?: Record<string, string>; metadata?: Record<string, unknown> };
+  if (!value.variables?.__apivoyCaseOf) return null;
+  const interfaceName = typeof value.metadata?.__apivoyCaseInterfaceName === "string" ? value.metadata.__apivoyCaseInterfaceName.trim() : "";
+  const status = typeof value.name === "string" ? value.name.trim() : "";
+  return { title: interfaceName && status ? `${interfaceName}（${status}）` : interfaceName || status || "接口用例", interfaceName, icon: "bolt" };
+}
+
 function resolveOpenProtocol(detail: unknown): string | undefined {
   if (!detail || typeof detail !== "object") return undefined;
   const value = detail as Record<string, unknown>;
@@ -84,7 +95,7 @@ function resolveOpenProtocol(detail: unknown): string | undefined {
   return undefined;
 }
 
-export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow }: WorkbenchDeckProps) {
+export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow, definitionClient }: WorkbenchDeckProps) {
   const items = Children.toArray(children); const { t } = useI18n();
   const active = useAppStore((state) => state.activeWorkbench); const setActive = useAppStore((state) => state.setActiveWorkbench);
   const favorites = useAppStore((state) => state.favoriteWorkbenches); const recent = useAppStore((state) => state.recentWorkbenches);
@@ -127,7 +138,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   function activate(id: string, writeHash = true, resetDraft = true) { if (!tabMap.has(id)) return; const existing = [...sessions].reverse().find((session) => session.workbenchId === id); if (existing) activateSession(existing, writeHash); else createWorkbench(id, writeHash, resetDraft); }
   const activateRef = useRef(activate);
   activateRef.current = activate;
-  function createWorkbench(id: string, writeHash = true, resetDraft = true, openedRequest?: { id?: string; name?: string }): WorkbenchSession | null {
+  function createWorkbench(id: string, writeHash = true, resetDraft = true, openedRequest?: { id?: string; name?: string; title?: string; icon?: IconName; caseInterfaceName?: string }): WorkbenchSession | null {
     if (!tabMap.has(id)) return null;
     if (resetDraft) {
       clearWorkbenchDraft(id);
@@ -135,7 +146,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     }
     const sameTypeCount = sessions.filter((session) => session.workbenchId === id).length;
     const label = translateWorkbench(id, tabMap.get(id)?.label ?? id);
-    const session = { id: crypto.randomUUID(), workbenchId: id, title: openedRequest?.name?.trim() || (sameTypeCount ? `${label} ${sameTypeCount + 1}` : label), requestId: openedRequest?.id };
+    const session = { id: crypto.randomUUID(), workbenchId: id, title: openedRequest?.title?.trim() || openedRequest?.name?.trim() || (sameTypeCount ? `${label} ${sameTypeCount + 1}` : label), requestId: openedRequest?.id, icon: openedRequest?.icon, caseInterfaceName: openedRequest?.caseInterfaceName };
     setSessions((current) => activeSession?.workbenchId === "__new" || activeSession?.workbenchId === "__project" ? current.map((item) => item.id === activeSession.id ? session : item) : [...current, session]);
     activateSession(session, writeHash);
     return session;
@@ -172,20 +183,21 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
       const match = tabs.find((tab) => tab.protocol === protocol || tab.protocols?.includes(protocol ?? "") || tab.id === protocol);
       if (!match) return;
       const opened = detail as { id?: string; name?: string } | null;
+      const casePresentation = resolveCasePresentation(detail);
       const existing = opened?.id ? sessions.find((item) => item.requestId === opened.id || item.id === opened.id) : undefined;
       if (existing) {
         activateSession(existing);
         return;
       }
       if (activeSession?.workbenchId === match.id && !activeSession.requestId) {
-        const restored = { ...activeSession, requestId: opened?.id, title: opened?.name?.trim() || activeSession.title };
+        const restored = { ...activeSession, requestId: opened?.id, title: casePresentation?.title || opened?.name?.trim() || activeSession.title, icon: casePresentation?.icon, caseInterfaceName: casePresentation?.interfaceName };
         setSessions((current) => current.map((item) => item.id === activeSession.id ? restored : item));
         const hydrate = { workbenchId: match.id, sessionId: match.id === "http" ? restored.id : undefined, protocolId: protocol, envelope: detail };
         stashHydrate(hydrate);
         queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
         return;
       }
-      const session = createWorkbench(match.id, true, false, { id: opened?.id, name: opened?.name });
+      const session = createWorkbench(match.id, true, false, { id: opened?.id, name: opened?.name, title: casePresentation?.title, icon: casePresentation?.icon, caseInterfaceName: casePresentation?.interfaceName });
       if (!session) return;
       const hydrate = { workbenchId: match.id, sessionId: match.id === "http" ? session.id : undefined, protocolId: protocol, envelope: detail };
       stashHydrate(hydrate);
@@ -377,23 +389,24 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     if(session.workbenchId==="__scripts") return <ScriptLibraryWorkbench projectId={saveTargetLabel?.split(" / ")[0] || "default-project"}/>;
     const index = tabs.findIndex((tab) => tab.id === session.workbenchId); if (index < 0) return null;
     const tab = tabs[index]; const source = items[index];
+    const lifecycle = (content: ReactNode) => <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} definitionClient={definitionClient}>{content}</InterfaceLifecycleShell>;
     const sourceWithSaveIdentity = isValidElement(source) ? (() => {
-      const element = source as ReactElement<{ onSave?: (request: Record<string, unknown>) => Promise<void> }>;
+      const element = source as ReactElement<{ onSave?: (request: Record<string, unknown>) => Promise<void>; onSaveAsCase?: (request: Record<string, unknown>) => Promise<void> }>;
       const onSave = element.props.onSave;
       if (!onSave) return element;
       const requestId = session.requestId ?? session.id;
-      return cloneElement(element, { onSave: (request) => onSave({ ...request, id: requestId }) });
+      return cloneElement(element, { onSave: (request) => onSave({ ...request, id: requestId }), onSaveAsCase: (request) => onSave({ ...request, id: crypto.randomUUID(), name: String(request.name || session.title + " - 成功用例"), variables: { ...((request.variables as Record<string, string> | undefined) ?? {}), __apivoyCaseOf: requestId, __apivoyCaseInterfaceName: session.title.replace(/^[A-Z]+\s+/, "") } }) });
     })() : source;
     if (session.workbenchId === "http" && isValidElement(source)) {
-      const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
-      return item;
+      const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; commandbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, commandbarTargetId: `interface-commandbar-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, session.caseInterfaceName ? `${session.caseInterfaceName}（${title.replace(/^[A-Z]+\s+/, "")}）` : title) });
+      return lifecycle(item);
     }
     if ((session.workbenchId === "websocket" || session.workbenchId === "sse" || session.workbenchId === "tcp" || session.workbenchId === "udp" || session.workbenchId === "grpc") && isValidElement(source)) {
       const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void }>, { key: session.id, onTitleChange: (title: string) => updateSessionTitle(session.id, title) });
-      return <WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} hideHeader toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
+      return lifecycle(<WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} hideHeader toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>);
     }
     const item = isValidElement(sourceWithSaveIdentity) ? cloneElement(sourceWithSaveIdentity, { key: session.id }) : sourceWithSaveIdentity;
-    return <WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} description={GROUP_BY_WORKBENCH.get(session.workbenchId)} badge={<span className="protocol-badge">{tab.protocol ?? tab.id.toUpperCase()}</span>} toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>;
+    return lifecycle(<WorkbenchFrame title={translateWorkbench(tab.id, tab.label)} description={GROUP_BY_WORKBENCH.get(session.workbenchId)} badge={<span className="protocol-badge">{tab.protocol ?? tab.id.toUpperCase()}</span>} toolbar={session.id === activeSessionId ? toolbar : null} status={frameStatus}><div className={`standardized-workbench layout-${LAYOUT_BY_WORKBENCH[session.workbenchId] ?? "request"}${codeOpen && session.id === activeSessionId ? " codegen-open" : ""}`}>{item}</div></WorkbenchFrame>);
   }
 
   return (
@@ -415,7 +428,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
       </aside>
       <CurlImportDialog open={curlImportOpen} onClose={() => setCurlImportOpen(false)} onCreate={createCurlRequest}/>
       <div className="workbench-content" data-workbench-label={selectedTab ? translateWorkbench(selectedTab.id, selectedTab.label) : selected === "__scripts" ? "脚本库" : ""}>
-        {selected !== "__new" ? <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button></div></div> : null}
+        {selected !== "__new" ? <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={session.icon ?? WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button></div></div> : null}
         {selected !== "__new" && sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}
         <div className="workbench-session-stack">{sessions.map((session) => <div key={session.id} role="tabpanel" aria-label={session.title} hidden={session.id !== activeSessionId} className="workbench-panel">{renderSession(session)}</div>)}</div>
         {items.slice(tabs.length)}

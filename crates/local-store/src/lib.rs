@@ -161,6 +161,31 @@ pub struct EnvironmentRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ScriptRecord { pub id:String, pub project_id:String, pub name:String, pub language:String, pub source:String, pub created_at:DateTime<Utc>, pub updated_at:DateTime<Utc> }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiDefinitionRecord {
+    pub id: String,
+    pub project_id: String,
+    pub module_id: Option<String>,
+    pub name: String,
+    /// OpenAPI, AsyncAPI, Protobuf, GraphQL SDL, WSDL, SQL DDL, or another future adapter id.
+    pub format: String,
+    pub file_name: String,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestDefinitionBinding {
+    pub request_id: String,
+    pub definition_id: String,
+    /// Adapter-specific operation locator, for example `GET /users` or `UserService.GetUser`.
+    pub operation_ref: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
 pub struct LocalStore {
     conn: Connection,
     blob_dir: PathBuf,
@@ -280,6 +305,27 @@ impl LocalStore {
               language TEXT NOT NULL CHECK(language IN ('javascript','typescript')),
               source TEXT NOT NULL,
               created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS api_definitions (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              module_id TEXT REFERENCES modules(id) ON DELETE SET NULL,
+              name TEXT NOT NULL,
+              format TEXT NOT NULL,
+              file_name TEXT NOT NULL,
+              content TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS api_definitions_project_idx
+              ON api_definitions(project_id, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS request_definition_bindings (
+              request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+              definition_id TEXT NOT NULL REFERENCES api_definitions(id) ON DELETE CASCADE,
+              operation_ref TEXT,
               updated_at TEXT NOT NULL
             );
 
@@ -904,6 +950,93 @@ impl LocalStore {
         if changed == 0 {
             return Err(StoreError::NotFound(id.0.to_string()));
         }
+        Ok(())
+    }
+
+    pub fn save_api_definition(&self, definition: &ApiDefinitionRecord) -> StoreResult<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO api_definitions
+              (id, project_id, module_id, name, format, file_name, content, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(id) DO UPDATE SET
+              project_id = excluded.project_id,
+              module_id = excluded.module_id,
+              name = excluded.name,
+              format = excluded.format,
+              file_name = excluded.file_name,
+              content = excluded.content,
+              updated_at = excluded.updated_at
+            "#,
+            params![
+                definition.id,
+                definition.project_id,
+                definition.module_id,
+                definition.name,
+                definition.format,
+                definition.file_name,
+                definition.content,
+                definition.created_at.to_rfc3339(),
+                definition.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_api_definitions(&self, project_id: &str) -> StoreResult<Vec<ApiDefinitionRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_id, module_id, name, format, file_name, content, created_at, updated_at FROM api_definitions WHERE project_id = ?1 ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map(params![project_id], |row| {
+            Ok(ApiDefinitionRecord {
+                id: row.get(0)?, project_id: row.get(1)?, module_id: row.get(2)?,
+                name: row.get(3)?, format: row.get(4)?, file_name: row.get(5)?, content: row.get(6)?,
+                created_at: parse_time(&row.get::<_, String>(7)?),
+                updated_at: parse_time(&row.get::<_, String>(8)?),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+    }
+
+    pub fn get_api_definition(&self, id: &str) -> StoreResult<Option<ApiDefinitionRecord>> {
+        self.conn.query_row(
+            "SELECT id, project_id, module_id, name, format, file_name, content, created_at, updated_at FROM api_definitions WHERE id = ?1",
+            params![id],
+            |row| Ok(ApiDefinitionRecord {
+                id: row.get(0)?, project_id: row.get(1)?, module_id: row.get(2)?,
+                name: row.get(3)?, format: row.get(4)?, file_name: row.get(5)?, content: row.get(6)?,
+                created_at: parse_time(&row.get::<_, String>(7)?),
+                updated_at: parse_time(&row.get::<_, String>(8)?),
+            }),
+        ).optional().map_err(StoreError::from)
+    }
+
+    pub fn delete_api_definition(&self, id: &str) -> StoreResult<()> {
+        let changed = self.conn.execute("DELETE FROM api_definitions WHERE id = ?1", params![id])?;
+        if changed == 0 { return Err(StoreError::NotFound(id.into())); }
+        Ok(())
+    }
+
+    pub fn bind_request_definition(&self, binding: &RequestDefinitionBinding) -> StoreResult<()> {
+        self.conn.execute(
+            r#"INSERT INTO request_definition_bindings (request_id, definition_id, operation_ref, updated_at)
+               VALUES (?1, ?2, ?3, ?4)
+               ON CONFLICT(request_id) DO UPDATE SET definition_id = excluded.definition_id, operation_ref = excluded.operation_ref, updated_at = excluded.updated_at"#,
+            params![binding.request_id, binding.definition_id, binding.operation_ref, binding.updated_at.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_request_definition_binding(&self, request_id: &str) -> StoreResult<Option<RequestDefinitionBinding>> {
+        self.conn.query_row(
+            "SELECT request_id, definition_id, operation_ref, updated_at FROM request_definition_bindings WHERE request_id = ?1",
+            params![request_id],
+            |row| Ok(RequestDefinitionBinding { request_id: row.get(0)?, definition_id: row.get(1)?, operation_ref: row.get(2)?, updated_at: parse_time(&row.get::<_, String>(3)?) }),
+        ).optional().map_err(StoreError::from)
+    }
+
+    pub fn unbind_request_definition(&self, request_id: &str) -> StoreResult<()> {
+        self.conn.execute("DELETE FROM request_definition_bindings WHERE request_id = ?1", params![request_id])?;
         Ok(())
     }
 
@@ -1576,6 +1709,29 @@ fn hex_sha256(data: &[u8]) -> String {
 mod tests {
     use super::*;
     use core_domain::RequestEnvelope;
+
+    #[test]
+    fn api_definition_and_request_binding_roundtrip() {
+        let store = LocalStore::open_in_memory().expect("open");
+        let request = RequestEnvelope::http_get("users", "https://example.com/users");
+        store.save_request(&request, "default-project", "default-collection").expect("save request");
+        let now = Utc::now();
+        let definition = ApiDefinitionRecord {
+            id: "definition-openapi".into(), project_id: "default-project".into(), module_id: None,
+            name: "Users API".into(), format: "openapi".into(), file_name: "openapi.yaml".into(),
+            content: "openapi: 3.1.0".into(), created_at: now, updated_at: now,
+        };
+        store.save_api_definition(&definition).expect("save definition");
+        assert_eq!(store.list_api_definitions("default-project").unwrap().len(), 1);
+        let binding = RequestDefinitionBinding {
+            request_id: request.id.0.to_string(), definition_id: definition.id.clone(),
+            operation_ref: Some("GET /users".into()), updated_at: now,
+        };
+        store.bind_request_definition(&binding).expect("bind");
+        assert_eq!(store.get_request_definition_binding(&binding.request_id).unwrap().unwrap().operation_ref, binding.operation_ref);
+        store.delete_api_definition(&definition.id).expect("delete definition");
+        assert!(store.get_request_definition_binding(&binding.request_id).unwrap().is_none());
+    }
 
     #[test]
     fn environment_and_script_resources_support_crud() {
