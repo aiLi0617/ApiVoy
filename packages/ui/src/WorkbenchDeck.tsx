@@ -122,6 +122,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   const selected = activeSession?.workbenchId ?? ""; const selectedIndex = tabs.findIndex((tab) => tab.id === selected);
   const [codeOpen, setCodeOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [tabsMoreOpen, setTabsMoreOpen] = useState(false);
   const [homeMoreOpen, setHomeMoreOpen] = useState(false);
   const [curlImportOpen, setCurlImportOpen] = useState(false);
   const [curlImportTarget, setCurlImportTarget] = useState<{ projectId?: string; collectionId?: string }>({});
@@ -136,7 +137,13 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [projectActionError, setProjectActionError] = useState("");
   const pickerRef = useRef<HTMLDivElement>(null);
+  const tabScrollRef = useRef<HTMLDivElement>(null);
   const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
+
+  useEffect(() => {
+    const activeTab = tabScrollRef.current?.querySelector<HTMLElement>(".workbench-tab.is-active");
+    activeTab?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [activeSessionId, sessions.length]);
 
   function activateSession(session: WorkbenchSession, writeHash = true) {
     setActiveSessionId(session.id);
@@ -181,13 +188,20 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     const index = sessions.findIndex((session) => session.id === id); if (index < 0) return;
     const remaining = sessions.filter((session) => session.id !== id);
     if (!remaining.length) {
-      const replacement = createNewPageSession(crypto.randomUUID());
-      setSessions([replacement]); setActiveSessionId(replacement.id); setPickerOpen(false);
+      setSessions([]); setActiveSessionId(""); setPickerOpen(false); setTabsMoreOpen(false);
       if (typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.delete("workbench"); history.pushState(null, "", `#${params}`); }
       return;
     }
     setSessions(remaining);
     if (id === activeSessionId) activateSession(remaining[Math.min(index, remaining.length - 1)]);
+  }
+  function closeAllSessions() {
+    setSessions([]); setActiveSessionId(""); setTabsMoreOpen(false);
+    if (typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.delete("workbench"); history.pushState(null, "", `#${params}`); }
+  }
+  function closeOtherSessions() {
+    if (!activeSession) return;
+    setSessions([activeSession]); setTabsMoreOpen(false);
   }
   useEffect(() => {
     const openRequest = async (event: Event) => {
@@ -482,9 +496,8 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
       </aside>
       <CurlImportDialog open={curlImportOpen} onClose={() => setCurlImportOpen(false)} onCreate={createCurlRequest}/>
       <div className="workbench-content" data-workbench-label={selectedTab ? translateWorkbench(selectedTab.id, selectedTab.label) : selected === "__scripts" ? "脚本库" : ""}>
-        {selected !== "__new" ? <div className="workbench-tabs" role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={session.icon ?? WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}<div className="workbench-tab-add"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button></div></div> : null}
-        {selected !== "__new" && sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}
-        <div className="workbench-session-stack">{sessions.map((session) => <div key={session.id} role="tabpanel" aria-label={session.title} hidden={session.id !== activeSessionId} className="workbench-panel">{renderSession(session)}</div>)}</div>
+        {selected !== "__new" ? <div className="workbench-tabs"><div className="workbench-tab-scroll" ref={tabScrollRef} role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={session.icon ?? WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}</div><div className="workbench-tab-tools"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button><div className="workbench-tabs-more" onMouseEnter={() => setTabsMoreOpen(true)} onMouseLeave={() => setTabsMoreOpen(false)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setTabsMoreOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") setTabsMoreOpen(false); }}><button type="button" className="ui-icon-button compact" aria-label="更多页签操作" title="更多" aria-haspopup="menu" aria-expanded={tabsMoreOpen} onFocus={() => setTabsMoreOpen(true)}><Icon name="more"/></button>{tabsMoreOpen ? <div className="workbench-tabs-menu" role="menu" aria-label="页签列表与操作"><div className="workbench-tabs-menu-list">{sessions.length ? sessions.map((session) => <button type="button" role="menuitem" className={session.id === activeSessionId ? "is-active" : undefined} key={session.id} onClick={() => { activateSession(session); setTabsMoreOpen(false); }}><Icon name={session.icon ?? WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button>) : <span className="workbench-tabs-empty">暂无打开的页签</span>}</div><div className="workbench-tabs-menu-actions"><button type="button" role="menuitem" disabled={!sessions.length} onClick={closeAllSessions}>关闭全部标签页</button><button type="button" role="menuitem" disabled={!activeSession} onClick={() => activeSession && closeSession(activeSession.id)}>关闭当前标签页</button><button type="button" role="menuitem" disabled={!activeSession || sessions.length < 2} onClick={closeOtherSessions}>关闭其他标签页</button></div></div> : null}</div></div>{sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}</div> : null}
+        <div className="workbench-session-stack">{sessions.length ? sessions.map((session) => <div key={session.id} role="tabpanel" aria-label={session.title} hidden={session.id !== activeSessionId} className="workbench-panel">{renderSession(session)}</div>) : <div className="workbench-panel workbench-empty-session">{renderProjectHomePage("empty")}</div>}</div>
         {items.slice(tabs.length)}
       </div>
     </div>

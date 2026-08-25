@@ -92,6 +92,83 @@ impl RequestEnvelope {
             created_at: Utc::now(),
         }
     }
+
+    /// Returns a copy that is safe to write to the local database or history.
+    /// Literal credentials remain available on the in-memory request used for
+    /// execution, but are never part of a persisted envelope.
+    pub fn sanitized_for_persistence(&self) -> Self {
+        let mut sanitized = self.clone();
+        if let Some(auth) = sanitized.auth_ref.as_mut() {
+            auth.token = None;
+        }
+        if let ProtocolPayload::Http(payload) = &mut sanitized.payload {
+            payload
+                .headers
+                .retain(|(name, _)| !is_sensitive_header_name(name));
+        }
+        scrub_sensitive_json(&mut sanitized.metadata);
+        sanitized.runtime_secrets.clear();
+        sanitized
+    }
+}
+
+fn normalized_credential_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn is_sensitive_header_name(name: &str) -> bool {
+    let normalized = normalized_credential_name(name);
+    matches!(
+        normalized.as_str(),
+        "authorization"
+            | "proxyauthorization"
+            | "cookie"
+            | "setcookie"
+            | "apikey"
+            | "xapikey"
+            | "authtoken"
+            | "xauthtoken"
+            | "accesstoken"
+            | "xaccesstoken"
+    ) || ["token", "secret", "password", "passwd", "apikey"]
+        .iter()
+        .any(|suffix| normalized.ends_with(suffix))
+}
+
+fn is_sensitive_json_key(name: &str) -> bool {
+    is_sensitive_header_name(name)
+        || matches!(
+            normalized_credential_name(name).as_str(),
+            "authorizationcode" | "codeverifier"
+        )
+}
+
+fn scrub_sensitive_json(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.retain(|key, _| !is_sensitive_json_key(key));
+            for (key, nested) in object.iter_mut() {
+                if normalized_credential_name(key) == "headers" {
+                    if let Value::Array(headers) = nested {
+                        headers.retain(|header| {
+                            header
+                                .as_array()
+                                .and_then(|pair| pair.first())
+                                .and_then(Value::as_str)
+                                .is_none_or(|name| !is_sensitive_header_name(name))
+                        });
+                    }
+                }
+                scrub_sensitive_json(nested);
+            }
+        }
+        Value::Array(values) => values.iter_mut().for_each(scrub_sensitive_json),
+        _ => {}
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,7 +334,7 @@ pub struct MultipartPart {
 }
 
 /// Request authentication configuration. Credentials may be referenced from
-/// `secret-store`; bearer auth can also explicitly carry a request-local token.
+/// `secret-store`; bearer auth can also carry an execution-only token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRef {
     /// `none` | `bearer` | `basic` | `api_key` | `oauth2_client_credentials`
@@ -265,8 +342,8 @@ pub struct AuthRef {
     /// Secret store ref for bearer token, basic password, or API key value.
     #[serde(default)]
     pub secret_ref: Option<String>,
-    /// Literal bearer token saved with the request when explicitly selected.
-    #[serde(default)]
+    /// Literal bearer token supplied only to the execution transport.
+    #[serde(default, skip_serializing)]
     pub token: Option<String>,
     /// Basic auth username (may contain `{{var}}` templates).
     #[serde(default)]
@@ -387,5 +464,55 @@ impl Default for TlsOptions {
             verify: true,
             client_cert_ref: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persistence_copy_removes_literal_credentials() {
+        let mut request = RequestEnvelope::http_get("private", "https://example.test");
+        request.auth_ref = Some(AuthRef {
+            kind: "bearer".into(),
+            secret_ref: None,
+            token: Some("top-secret".into()),
+            username: None,
+            header_name: None,
+            token_url: None,
+            scope: None,
+            audience: None,
+            authorization_url: None,
+            redirect_uri: None,
+            authorization_code_ref: None,
+            code_verifier_ref: None,
+        });
+        if let ProtocolPayload::Http(payload) = &mut request.payload {
+            payload
+                .headers
+                .push(("Authorization".into(), "Bearer top-secret".into()));
+            payload
+                .headers
+                .push(("X-Csrf-Token".into(), "top-secret".into()));
+            payload
+                .headers
+                .push(("Accept".into(), "application/json".into()));
+        }
+        request.metadata = serde_json::json!({
+            "request": { "auth": { "token": "top-secret" }, "headers": [["Cookie", "sid=top-secret"], ["Accept", "application/json"]] }
+        });
+
+        let saved = request.sanitized_for_persistence();
+        let json = serde_json::to_string(&saved).expect("serialize persistence copy");
+        assert!(!json.contains("top-secret"));
+        assert!(json.contains("application/json"));
+        assert_eq!(
+            request
+                .auth_ref
+                .as_ref()
+                .and_then(|auth| auth.token.as_deref()),
+            Some("top-secret")
+        );
     }
 }

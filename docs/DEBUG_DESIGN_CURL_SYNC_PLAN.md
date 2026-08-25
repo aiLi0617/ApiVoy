@@ -1,7 +1,7 @@
 # ApiVoy 调试、接口设计与 cURL 导入联动方案
 
-> 状态：Proposed  
-> 适用范围：HTTP 接口生命周期，后续扩展至 GraphQL、gRPC  
+> 状态：Proposed
+> 适用范围：HTTP 接口生命周期，后续扩展至 GraphQL、gRPC
 > 本文中的“同步”特指调试请求与接口设计之间的创建、关联和字段联动，不是云端协作同步。
 
 ## 1. 产品结论

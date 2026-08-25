@@ -28,6 +28,115 @@ test("opens the grouped protocol workspace without horizontal overflow", async (
   await expect(separator).toHaveAttribute("aria-valuenow", String(initialRatio + 5));
 });
 
+test("tab overflow tools expose every tab and allow closing the final tab", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 760 });
+  const sparseGeometry = await page.locator(".workbench-tabs").evaluate((bar) => {
+    const scroll = bar.querySelector(".workbench-tab-scroll")!.getBoundingClientRect();
+    const tools = bar.querySelector(".workbench-tab-tools")!.getBoundingClientRect();
+    const context = bar.querySelector(".workbench-context-actions")!.getBoundingClientRect();
+    return { tabRight: scroll.right, toolsLeft: tools.left, toolsRight: tools.right, contextLeft: context.left };
+  });
+  expect(Math.abs(sparseGeometry.toolsLeft - sparseGeometry.tabRight)).toBeLessThanOrEqual(1);
+  expect(sparseGeometry.contextLeft - sparseGeometry.toolsRight).toBeGreaterThan(1);
+
+  await page.setViewportSize({ width: 720, height: 760 });
+  for (const id of ["grpc", "redis", "mqtt", "websocket", "sql"]) {
+    await page.evaluate((workbenchId) => window.dispatchEvent(new CustomEvent("apivoy-create-workbench", { detail: workbenchId })), id);
+  }
+
+  const tabs = page.locator(".workbench-tab-scroll");
+  const tools = page.locator(".workbench-tab-tools");
+  const context = page.locator(".workbench-context-actions");
+  await expect(tabs.locator(".workbench-tab")).toHaveCount(6);
+  const geometry = await page.locator(".workbench-tabs").evaluate((bar) => {
+    const scroll = bar.querySelector(".workbench-tab-scroll")!;
+    const tools = bar.querySelector(".workbench-tab-tools")!.getBoundingClientRect();
+    return { scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth, toolsRight: tools.right };
+  });
+  expect(geometry.scrollWidth).toBeGreaterThan(geometry.clientWidth);
+  expect(geometry.toolsRight).toBeLessThanOrEqual((await context.boundingBox())!.x + 1);
+  await expect.poll(() => tabs.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+
+  const more = page.getByRole("button", { name: "更多页签操作" });
+  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
+  const menu = page.getByRole("menu", { name: "页签列表与操作" });
+  await expect(menu).toBeVisible();
+  await more.focus();
+  await more.press("Escape");
+  await expect(menu).toBeHidden();
+  await more.evaluate((button) => (button as HTMLElement).blur());
+  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
+  await expect(menu.getByRole("menuitem")).toHaveCount(9);
+  await menu.getByRole("menuitem", { name: "关闭其他标签页" }).click();
+  await expect(tabs.locator(".workbench-tab")).toHaveCount(1);
+
+  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
+  await page.getByRole("menuitem", { name: "关闭当前标签页" }).click();
+  await expect(tabs.locator(".workbench-tab")).toHaveCount(0);
+  await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(0);
+  await expect(page.locator(".workbench-home")).toBeVisible();
+  await expect(page.getByRole("button", { name: "新建", exact: true }).last()).toBeVisible();
+
+  await page.getByRole("button", { name: "新建", exact: true }).last().dispatchEvent("click");
+  await expect(tabs.locator(".workbench-tab")).toHaveCount(1);
+  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
+  await page.getByRole("menuitem", { name: "关闭全部标签页" }).click();
+  await expect(tabs.locator(".workbench-tab")).toHaveCount(0);
+  await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(0);
+  await expect(page.locator(".workbench-home")).toBeVisible();
+});
+
+test("gRPC response stays bottom-aligned and uses the HTTP split drag bounds", async ({ page }, testInfo) => {
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "grpc" })));
+  await expectActiveWorkbench(page, "grpc");
+
+  const layout = page.locator(".grpc-workbench-layout");
+  const response = page.locator(".grpc-response");
+  const separator = page.getByRole("separator", { name: /gRPC 请求配置和响应检查器/ });
+  const [layoutBox, responseBox, separatorBox] = await Promise.all([
+    layout.boundingBox(),
+    response.boundingBox(),
+    separator.boundingBox(),
+  ]);
+  expect(layoutBox).not.toBeNull();
+  expect(responseBox).not.toBeNull();
+  expect(separatorBox).not.toBeNull();
+  expect(Math.abs((layoutBox!.y + layoutBox!.height) - (responseBox!.y + responseBox!.height))).toBeLessThanOrEqual(1);
+
+  const orientation = await separator.getAttribute("aria-orientation");
+  if (testInfo.project.name === "desktop-chromium") {
+    await page.mouse.move(separatorBox!.x + separatorBox!.width / 2, separatorBox!.y + separatorBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(orientation === "vertical" ? layoutBox!.x : separatorBox!.x + separatorBox!.width / 2, orientation === "horizontal" ? layoutBox!.y : separatorBox!.y + separatorBox!.height / 2, { steps: 4 });
+    await page.mouse.up();
+  } else {
+    await separator.press("Home");
+  }
+
+  const requestSize = await page.locator('.grpc-workbench-split .split-pane > .split-panel[aria-label="gRPC 请求配置"]').evaluate((element, splitOrientation) => {
+    const bounds = element.getBoundingClientRect();
+    return splitOrientation === "vertical" ? bounds.width : bounds.height;
+  }, orientation);
+  expect(requestSize).toBeCloseTo(160, 0);
+});
+
+test("non-HTTP protocol response workbenches fill tall lifecycle panels", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1200 });
+  for (const id of ["grpc", "websocket", "sse", "tcp", "udp", "mqtt", "amqp", "kafka", "redis", "sql"]) {
+    await page.evaluate((workbenchId) => window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: workbenchId })), id);
+    await expectActiveWorkbench(page, id);
+    const panel = page.locator(".workbench-panel:not([hidden])");
+    const geometry = await panel.evaluate((element) => {
+      const lifecycle = element.querySelector(".interface-lifecycle")?.getBoundingClientRect();
+      const debug = element.querySelector(".interface-lifecycle-debug")?.getBoundingClientRect();
+      return lifecycle && debug ? { lifecycleHeight: lifecycle.height, debugHeight: debug.height, lifecycleBottom: lifecycle.bottom, debugBottom: debug.bottom } : null;
+    });
+    expect(geometry, `${id} should render inside the lifecycle panel`).not.toBeNull();
+    expect(Math.abs(geometry!.lifecycleBottom - geometry!.debugBottom), `${id} should reach the lifecycle bottom`).toBeLessThanOrEqual(1);
+    expect(geometry!.debugHeight / geometry!.lifecycleHeight, `${id} should not collapse into the empty commandbar row`).toBeGreaterThan(.85);
+  }
+});
+
 test("switches workbenches and preserves URL and stored state", async ({ page }) => {
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "redis" })));
   await expectActiveWorkbench(page, "redis");
@@ -69,6 +178,32 @@ test("HTTP target URL has an accessible label and neutral empty state", async ({
   await expect(input).toHaveAttribute("placeholder");
   await expect(input).toHaveValue("");
   await expect(input).not.toHaveAttribute("aria-invalid", "true");
+});
+
+test("HTTP save action renders as one control with its dropdown arrow inside", async ({ page }) => {
+  const control = page.locator(".workbench-panel:not([hidden]) .http-save-split");
+  const save = control.locator(".http-save-button");
+  const menuTrigger = control.locator(".http-save-menu-trigger");
+  await expect(control).toBeVisible();
+  await expect(save).toBeVisible();
+  await expect(menuTrigger).toBeVisible();
+
+  const geometry = await control.evaluate((element) => {
+    const wrapper = element.getBoundingClientRect();
+    const children = Array.from(element.querySelectorAll("button")).map((button) => {
+      const bounds = button.getBoundingClientRect();
+      const style = getComputedStyle(button);
+      return { left: bounds.left, right: bounds.right, borderLeft: style.borderLeftWidth, borderRight: style.borderRightWidth };
+    });
+    return { left: wrapper.left, right: wrapper.right, border: getComputedStyle(element).borderLeftWidth, children };
+  });
+
+  expect(geometry.border).not.toBe("0px");
+  expect(geometry.children).toHaveLength(2);
+  expect(geometry.children.every((child) => child.left >= geometry.left && child.right <= geometry.right)).toBe(true);
+  expect(geometry.children[0]).toMatchObject({ borderLeft: "0px", borderRight: "0px" });
+  expect(geometry.children[1].borderLeft).toBe("1px");
+  expect(geometry.children[1].borderRight).toBe("0px");
 });
 
 test("all protocol workbenches keep semantic frame and viewport bounds", async ({ page }) => {

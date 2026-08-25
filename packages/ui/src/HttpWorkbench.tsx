@@ -53,6 +53,68 @@ export interface HttpWorkbenchRequest {
   metadata?: Record<string, unknown>;
 }
 
+const SENSITIVE_HEADER_NAMES = new Set([
+  "authorization",
+  "proxyauthorization",
+  "cookie",
+  "setcookie",
+  "apikey",
+  "xapikey",
+  "authtoken",
+  "xauthtoken",
+  "accesstoken",
+  "xaccesstoken",
+]);
+const SENSITIVE_CREDENTIAL_SUFFIXES = ["token", "secret", "password", "passwd", "apikey"];
+const SENSITIVE_JSON_KEYS = new Set(["authorizationcode", "codeverifier"]);
+
+function normalizedCredentialName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export function isSensitiveHeaderName(name: string): boolean {
+  const normalized = normalizedCredentialName(name);
+  return SENSITIVE_HEADER_NAMES.has(normalized)
+    || SENSITIVE_CREDENTIAL_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+function isSensitiveJsonKey(name: string): boolean {
+  return SENSITIVE_JSON_KEYS.has(normalizedCredentialName(name)) || isSensitiveHeaderName(name);
+}
+
+function sanitizeMetadataValue(value: unknown, parentKey?: string): unknown {
+  if (Array.isArray(value)) {
+    const items = normalizedCredentialName(parentKey ?? "") === "headers"
+      ? value.filter((item) => !(
+          Array.isArray(item)
+          && typeof item[0] === "string"
+          && isSensitiveHeaderName(item[0])
+        ))
+      : value;
+    return items.map((item) => sanitizeMetadataValue(item));
+  }
+  if (value && typeof value === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (!isSensitiveJsonKey(key)) sanitized[key] = sanitizeMetadataValue(nested, key);
+    }
+    return sanitized;
+  }
+  return value;
+}
+
+/** Removes execution-only credentials before drafts, requests, or cases are persisted. */
+export function sanitizeHttpRequestForPersistence(request: HttpWorkbenchRequest): HttpWorkbenchRequest {
+  return {
+    ...request,
+    headers: request.headers.filter(([name]) => !isSensitiveHeaderName(name)),
+    auth: request.auth ? { ...request.auth, token: null } : request.auth,
+    metadata: request.metadata
+      ? sanitizeMetadataValue(request.metadata) as Record<string, unknown>
+      : request.metadata,
+  };
+}
+
 export function requestNameFromUrl(value: string): string {
   const target = value.trim();
   if (!target) return "未命名接口";
@@ -197,7 +259,7 @@ export function formatJsonBody(value: string): string {
 }
 
 function snapshotActualRequest(request: HttpWorkbenchRequest): HttpWorkbenchRequest {
-  return { ...request, metadata: {} };
+  return sanitizeHttpRequestForPersistence({ ...request, metadata: {} });
 }
 
 function resolveAssets(ids:string[]):string[]{ let assets:ScriptAsset[]=[];try{assets=JSON.parse(localStorage.getItem("apivoy-project-scripts-v1")??"[]") as ScriptAsset[]}catch{return []}return ids.map((id)=>assets.find((item)=>item.id===id)).filter((item):item is ScriptAsset=>!!item).map((item)=>{const source=item.language==="typescript"?ts.transpileModule(item.source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None}}).outputText:item.source;return `// @apivoy-script:${item.id}\n${source}`})}
@@ -1061,7 +1123,7 @@ export function HttpWorkbench({
     setStatusMsg(detail.request.metadata?.__apivoySavedResponse ? "已载入用例及其保存的响应" : "已载入请求，请检查后再发送");
   }, workbenchSessionId);
 
-  useAutosaveDraft("http", buildRequest);
+  useAutosaveDraft("http", () => sanitizeHttpRequestForPersistence(buildRequest()));
   async function startPkceAuthorization() {
     if (!oauthAuthorizationUrl.trim() || !authUsername.trim() || !oauthRedirectUri.trim()) {
       setStatusMsg("请先填写 Authorization Endpoint、Client ID 和 Redirect URI");
@@ -1201,7 +1263,7 @@ export function HttpWorkbench({
         request.metadata = { ...(request.metadata ?? {}), __apivoySavedResponse: responseSnapshot, ...(lastRequest ? { __apivoySavedActualRequest: snapshotActualRequest(lastRequest) } : {}) };
         setRequestMetadata(request.metadata);
       }
-      await onSave(request);
+      await onSave(sanitizeHttpRequestForPersistence(request));
       if (!name.trim()) setName(request.name ?? "");
       setStatusMsg("请求已保存到本地库");
     } catch (err) {
@@ -1257,7 +1319,7 @@ export function HttpWorkbench({
       } : null;
       const request = buildRequest();
       const interfaceStructure = captureHttpInterfaceStructure(request);
-      await onSaveAsCase({
+      await onSaveAsCase(sanitizeHttpRequestForPersistence({
         ...request,
         name: nextName,
         metadata: {
@@ -1268,7 +1330,7 @@ export function HttpWorkbench({
           ...(responseSnapshot ? { __apivoySavedResponse: responseSnapshot } : {}),
           ...(lastRequest ? { __apivoySavedActualRequest: snapshotActualRequest(lastRequest) } : {}),
         },
-      });
+      }));
       setCaseDialogOpen(false);
       setStatusMsg("用例“" + nextName + "”已保存到当前接口");
     } catch (err) {
@@ -1308,7 +1370,7 @@ export function HttpWorkbench({
       const variables = { ...request.variables };
       delete variables.__apivoyCaseOf;
       delete variables.__apivoyCaseInterfaceName;
-      await onUpdateInterface({ ...request, id: openedCaseParentId ?? undefined, name: openedCaseInterfaceName || request.name, variables, metadata: { [INTERFACE_STRUCTURE_METADATA_KEY]: structure } });
+      await onUpdateInterface(sanitizeHttpRequestForPersistence({ ...request, id: openedCaseParentId ?? undefined, name: openedCaseInterfaceName || request.name, variables, metadata: { [INTERFACE_STRUCTURE_METADATA_KEY]: structure } }));
       setRequestMetadata((current) => ({ ...current, [INTERFACE_STRUCTURE_METADATA_KEY]: structure }));
       setStatusMsg("接口已更新；保存当前用例后将记录新的接口基线");
     } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); }

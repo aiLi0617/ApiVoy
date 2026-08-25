@@ -92,6 +92,17 @@ async function agentJson<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function tcpSessionConnection(target: string) {
+  const { ticket } = await agentJson<{ ticket: string }>("/v1/tcp-session-ticket", {
+    method: "POST",
+    body: JSON.stringify({ target }),
+  });
+  return {
+    url: `${agentBaseUrl().replace(/^http/, "ws")}/v1/tcp-session`,
+    protocols: ["apivoy", `apivoy-ticket.${ticket}`],
+  };
+}
+
 interface ExecuteResponse {
   executionId: string;
   summary: ExecutionSummary;
@@ -127,6 +138,7 @@ function toInvokeRequest(request: HttpWorkbenchRequest) {
     ? {
         kind: request.auth.kind,
         secretRef: request.auth.secret_ref ?? null,
+        token: request.auth.token ?? null,
         username: request.auth.username ?? null,
         headerName: request.auth.header_name ?? null,
         tokenUrl: request.auth.token_url ?? null,
@@ -167,7 +179,7 @@ function toInvokeRequest(request: HttpWorkbenchRequest) {
 function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpWorkbenchRequest {
   const payload = envelope.payload;
   if (payload.type !== "http") {
-    throw new Error("仅支挄1�7 HTTP 请求重放");
+    throw new Error("仅支持 HTTP 请求重放");
   }
   return {
     id: envelope.id,
@@ -220,13 +232,13 @@ export function App() {
   async function cloneProject(projectId: string, name: string) {
     if (!tree) throw new Error("项目数据尚未加载完成");
     const source = tree.projects.find((project) => project.id === projectId);
-    if (!source) throw new Error("未找到要克隆的项盄1�7");
+    if (!source) throw new Error("未找到要克隆的项目");
     const created = await invoke<WorkspaceTree["projects"][number]>("create_project", { workspaceId: source.workspaceId, name });
     const collectionIds = new Map<string, string>();
     const pending = tree.collections.filter((collection) => collection.projectId === projectId);
     while (pending.length) {
       const index = pending.findIndex((collection) => !collection.parentId || collectionIds.has(collection.parentId));
-      if (index < 0) throw new Error("项目集合层级存在循环，无法克隄1�7");
+      if (index < 0) throw new Error("项目集合层级存在循环，无法克隆");
       const collection = pending.splice(index, 1)[0];
       const copy = await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId: created.id, parentId: collection.parentId ? collectionIds.get(collection.parentId) ?? null : null, name: collection.name });
       collectionIds.set(collection.id, copy.id);
@@ -256,7 +268,7 @@ export function App() {
 
   return (
     <AppShell
-      channelLabel="Desktop ↄ1�7 Rust Core"
+      channelLabel="Desktop ↔ Rust Core"
       projectContext={{ projects: tree?.projects ?? [], selectedProjectId, onSelectProject: (projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); } }}
       connectionStatus={null}
       environment={{
@@ -285,7 +297,7 @@ export function App() {
       onRenameCollection={async (collection, name) => { await invoke("update_collection", { id: collection.id, name, parentId: collection.parentId ?? null, sortOrder: collection.sortOrder }); await refreshTree(); }}
       onUpdateCollectionTags={async (collection, tags) => { await invoke("update_collection_tags", { id: collection.id, tags }); await refreshTree(); }}
       onDeleteCollection={async (id) => { await invoke("delete_collection", { id }); await refreshTree(); }}
-      onMoveCollection={async (collection, projectId, parentId) => { if (projectId !== collection.projectId) throw new Error("暂不支持跨项目移动集各1�7"); await invoke("update_collection", { id: collection.id, name: collection.name, parentId, sortOrder: collection.sortOrder }); await refreshTree(); }}
+      onMoveCollection={async (collection, projectId, parentId) => { if (projectId !== collection.projectId) throw new Error("暂不支持跨项目移动集合"); await invoke("update_collection", { id: collection.id, name: collection.name, parentId, sortOrder: collection.sortOrder }); await refreshTree(); }}
       onSwapCollections={async (first, second) => { await invoke("update_collection", { id: first.id, name: first.name, parentId: first.parentId ?? null, sortOrder: second.sortOrder }); await invoke("update_collection", { id: second.id, name: second.name, parentId: second.parentId ?? null, sortOrder: first.sortOrder }); await refreshTree(); }}
       onMoveRequest={async (id, projectId, collectionId) => { await invoke("move_request", { id, projectId, collectionId }); await refreshTree(); }}
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId, parentId, name: segment }); id = created.id; paths.set(key, id); } parentId = id; } await invoke("save_request", { request: toInvokeRequest({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }), projectId, collectionId: parentId }); } await refreshTree(); }}
@@ -302,7 +314,7 @@ export function App() {
           }>("version_info");
           if (version.protocolApiVersion !== "1") {
             throw new Error(
-              `协议版本不兼容：Desktop 期望 1，当剄1�7 ${version.protocolApiVersion}`,
+              `协议版本不兼容：Desktop 期望 1，当前 ${version.protocolApiVersion}`,
             );
           }
 
@@ -392,6 +404,7 @@ export function App() {
         onSave={async (request) => { const envelope: RequestEnvelope = { id: requestIdentity(request), protocolId: "sse", name: request.name, target: request.url, environmentRef: "default-env", authRef: null, timeoutMs: request.timeoutMs, retryPolicy: { max_retries: 0, backoff_ms: 0 }, proxy: null, tls: { verify: true, client_cert_ref: null }, metadata: {}, payload: { type: "sse", headers: request.headers, lastEventId: request.lastEventId ?? null, reconnectMax: request.reconnectMax, reconnectDelayMs: request.reconnectDelayMs }, preScripts: [], postScripts: [], assertions: [], variables: {}, createdAt: new Date().toISOString() }; await invoke("save_envelope", { request: envelope, projectId: selectedProjectId, collectionId: selectedCollectionId }); await refreshTree(); }}
       />
       <TcpWorkbench
+        tcpSessionConnection={tcpSessionConnection}
         onSend={async (request, hooks) => {
           const stop = await listen<string>("execution-started", (event) => hooks?.onStarted?.(event.payload));
           try {

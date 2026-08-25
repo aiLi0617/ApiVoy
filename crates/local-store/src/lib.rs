@@ -159,7 +159,15 @@ pub struct EnvironmentRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ScriptRecord { pub id:String, pub project_id:String, pub name:String, pub language:String, pub source:String, pub created_at:DateTime<Utc>, pub updated_at:DateTime<Utc> }
+pub struct ScriptRecord {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub language: String,
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -374,7 +382,9 @@ impl LocalStore {
             "ALTER TABLE collections ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
             [],
         );
-        let _ = self.conn.execute("ALTER TABLE collections ADD COLUMN module_id TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE collections ADD COLUMN module_id TEXT", []);
 
         Ok(())
     }
@@ -425,10 +435,15 @@ impl LocalStore {
 
     fn ensure_project_modules(&self, now: &str) -> StoreResult<()> {
         let mut stmt = self.conn.prepare("SELECT id FROM projects")?;
-        let project_ids = stmt.query_map([], |row| row.get::<_, String>(0))?
+        let project_ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         for project_id in project_ids {
-            let module_id = if project_id == "default-project" { "default-module".to_string() } else { format!("default-module-{project_id}") };
+            let module_id = if project_id == "default-project" {
+                "default-module".to_string()
+            } else {
+                format!("default-module-{project_id}")
+            };
             self.conn.execute(
                 "INSERT OR IGNORE INTO modules (id, project_id, name, is_default, created_at) VALUES (?1, ?2, '默认模块', 1, ?3)",
                 params![module_id, project_id, now],
@@ -680,11 +695,15 @@ impl LocalStore {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, name, is_default, created_at FROM modules WHERE project_id = ?1 ORDER BY is_default DESC, created_at, name",
         )?;
-        let rows = stmt.query_map(params![project_id], |row| Ok(ModuleRecord {
-            id: row.get(0)?, project_id: row.get(1)?, name: row.get(2)?,
-            is_default: row.get::<_, i64>(3)? != 0,
-            created_at: parse_time(&row.get::<_, String>(4)?),
-        }))?;
+        let rows = stmt.query_map(params![project_id], |row| {
+            Ok(ModuleRecord {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                name: row.get(2)?,
+                is_default: row.get::<_, i64>(3)? != 0,
+                created_at: parse_time(&row.get::<_, String>(4)?),
+            })
+        })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
@@ -723,11 +742,15 @@ impl LocalStore {
                 "default project cannot be deleted".into(),
             ));
         }
+        let blob_ids = self.request_blob_ids_for_project(id)?;
         let changed = self
             .conn
             .execute("DELETE FROM projects WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(StoreError::NotFound(id.into()));
+        }
+        for blob_id in blob_ids {
+            self.release_blob(&blob_id)?;
         }
         Ok(())
     }
@@ -771,17 +794,23 @@ impl LocalStore {
         let module_id: String = if let Some(parent_id) = parent_id {
             self.conn.query_row(
                 "SELECT module_id FROM collections WHERE id = ?1 AND project_id = ?2",
-                params![parent_id, project_id], |row| row.get(0),
+                params![parent_id, project_id],
+                |row| row.get(0),
             )?
         } else if let Some(module_id) = requested_module_id {
-            self.conn.query_row(
-                "SELECT id FROM modules WHERE id = ?1 AND project_id = ?2",
-                params![module_id, project_id], |row| row.get(0),
-            ).optional()?.ok_or_else(|| StoreError::NotFound(module_id.into()))?
+            self.conn
+                .query_row(
+                    "SELECT id FROM modules WHERE id = ?1 AND project_id = ?2",
+                    params![module_id, project_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| StoreError::NotFound(module_id.into()))?
         } else {
             self.conn.query_row(
                 "SELECT id FROM modules WHERE project_id = ?1 AND is_default = 1",
-                params![project_id], |row| row.get(0),
+                params![project_id],
+                |row| row.get(0),
             )?
         };
         let record = CollectionRecord {
@@ -832,32 +861,34 @@ impl LocalStore {
                 "invalid collection name or parent".into(),
             ));
         }
+        let (project_id, source_module_id): (String, String) = self
+            .conn
+            .query_row(
+                "SELECT project_id, module_id FROM collections WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(id.into()))?;
+        let mut target_module_id = source_module_id.clone();
         if let Some(parent_id) = parent_id {
             let mut cursor = parent_id.to_string();
-            let project_id: String = self
-                .conn
-                .query_row(
-                    "SELECT project_id FROM collections WHERE id = ?1",
-                    params![id],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .ok_or_else(|| StoreError::NotFound(id.into()))?;
+            let mut immediate_parent = true;
             loop {
                 if cursor == id {
                     return Err(StoreError::InvalidId(
                         "collection cycle is not allowed".into(),
                     ));
                 }
-                let parent: Option<(String, Option<String>)> = self
+                let parent: Option<(String, String, Option<String>)> = self
                     .conn
                     .query_row(
-                        "SELECT project_id, parent_id FROM collections WHERE id = ?1",
+                        "SELECT project_id, module_id, parent_id FROM collections WHERE id = ?1",
                         params![&cursor],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                     )
                     .optional()?;
-                let Some((parent_project, next)) = parent else {
+                let Some((parent_project, parent_module, next)) = parent else {
                     return Err(StoreError::NotFound(cursor));
                 };
                 if parent_project != project_id {
@@ -865,19 +896,38 @@ impl LocalStore {
                         "parent must belong to the same project".into(),
                     ));
                 }
+                if immediate_parent {
+                    target_module_id = parent_module;
+                    immediate_parent = false;
+                }
                 let Some(next) = next else {
                     break;
                 };
                 cursor = next;
             }
         }
-        let changed = self.conn.execute(
+        let transaction = self.conn.unchecked_transaction()?;
+        let changed = transaction.execute(
             "UPDATE collections SET name = ?2, parent_id = ?3, sort_order = ?4 WHERE id = ?1",
             params![id, name.trim(), parent_id, sort_order.max(0)],
         )?;
         if changed == 0 {
             return Err(StoreError::NotFound(id.into()));
         }
+        if target_module_id != source_module_id {
+            transaction.execute(
+                r#"
+                WITH RECURSIVE subtree(id) AS (
+                  SELECT id FROM collections WHERE id = ?1
+                  UNION ALL
+                  SELECT collections.id FROM collections JOIN subtree ON collections.parent_id = subtree.id
+                )
+                UPDATE collections SET module_id = ?2 WHERE id IN (SELECT id FROM subtree)
+                "#,
+                params![id, target_module_id],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -904,22 +954,38 @@ impl LocalStore {
                 "default collection cannot be deleted".into(),
             ));
         }
+        let blob_ids = self.request_blob_ids_for_collection_subtree(id)?;
         let changed = self
             .conn
             .execute("DELETE FROM collections WHERE id = ?1", params![id])?;
         if changed == 0 {
             return Err(StoreError::NotFound(id.into()));
         }
+        for blob_id in blob_ids {
+            self.release_blob(&blob_id)?;
+        }
         Ok(())
     }
 
     pub fn delete_request(&self, id: &RequestId) -> StoreResult<()> {
+        let blob_id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT body_blob_id FROM requests WHERE id = ?1",
+                params![id.0.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
         let changed = self.conn.execute(
             "DELETE FROM requests WHERE id = ?1",
             params![id.0.to_string()],
         )?;
         if changed == 0 {
             return Err(StoreError::NotFound(id.0.to_string()));
+        }
+        if let Some(blob_id) = blob_id {
+            self.release_blob(&blob_id)?;
         }
         Ok(())
     }
@@ -989,13 +1055,19 @@ impl LocalStore {
         )?;
         let rows = stmt.query_map(params![project_id], |row| {
             Ok(ApiDefinitionRecord {
-                id: row.get(0)?, project_id: row.get(1)?, module_id: row.get(2)?,
-                name: row.get(3)?, format: row.get(4)?, file_name: row.get(5)?, content: row.get(6)?,
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                module_id: row.get(2)?,
+                name: row.get(3)?,
+                format: row.get(4)?,
+                file_name: row.get(5)?,
+                content: row.get(6)?,
                 created_at: parse_time(&row.get::<_, String>(7)?),
                 updated_at: parse_time(&row.get::<_, String>(8)?),
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
     }
 
     pub fn get_api_definition(&self, id: &str) -> StoreResult<Option<ApiDefinitionRecord>> {
@@ -1012,8 +1084,12 @@ impl LocalStore {
     }
 
     pub fn delete_api_definition(&self, id: &str) -> StoreResult<()> {
-        let changed = self.conn.execute("DELETE FROM api_definitions WHERE id = ?1", params![id])?;
-        if changed == 0 { return Err(StoreError::NotFound(id.into())); }
+        let changed = self
+            .conn
+            .execute("DELETE FROM api_definitions WHERE id = ?1", params![id])?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.into()));
+        }
         Ok(())
     }
 
@@ -1027,7 +1103,10 @@ impl LocalStore {
         Ok(())
     }
 
-    pub fn get_request_definition_binding(&self, request_id: &str) -> StoreResult<Option<RequestDefinitionBinding>> {
+    pub fn get_request_definition_binding(
+        &self,
+        request_id: &str,
+    ) -> StoreResult<Option<RequestDefinitionBinding>> {
         self.conn.query_row(
             "SELECT request_id, definition_id, operation_ref, updated_at FROM request_definition_bindings WHERE request_id = ?1",
             params![request_id],
@@ -1036,7 +1115,10 @@ impl LocalStore {
     }
 
     pub fn unbind_request_definition(&self, request_id: &str) -> StoreResult<()> {
-        self.conn.execute("DELETE FROM request_definition_bindings WHERE request_id = ?1", params![request_id])?;
+        self.conn.execute(
+            "DELETE FROM request_definition_bindings WHERE request_id = ?1",
+            params![request_id],
+        )?;
         Ok(())
     }
 
@@ -1063,12 +1145,18 @@ impl LocalStore {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut file = std::fs::File::create(&abs)?;
-        file.write_all(data)?;
-        file.sync_all()?;
+        let write_result = (|| -> std::io::Result<()> {
+            let mut file = std::fs::File::create(&abs)?;
+            file.write_all(data)?;
+            file.sync_all()
+        })();
+        if let Err(error) = write_result {
+            let _ = std::fs::remove_file(&abs);
+            return Err(error.into());
+        }
 
         let created_at = Utc::now();
-        self.conn.execute(
+        let insert_result = self.conn.execute(
             r#"
             INSERT INTO blob_index (id, sha256, size_bytes, content_type, relative_path, ref_count, created_at)
             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
@@ -1081,7 +1169,11 @@ impl LocalStore {
                 relative_path,
                 created_at.to_rfc3339(),
             ],
-        )?;
+        );
+        if let Err(error) = insert_result {
+            let _ = std::fs::remove_file(&abs);
+            return Err(error.into());
+        }
         self.get_blob(&id)?.ok_or_else(|| StoreError::NotFound(id))
     }
 
@@ -1141,6 +1233,54 @@ impl LocalStore {
             .map_err(Into::into)
     }
 
+    fn release_blob(&self, id: &str) -> StoreResult<()> {
+        let Some(blob) = self.get_blob(id)? else {
+            return Ok(());
+        };
+        if blob.ref_count > 1 {
+            self.conn.execute(
+                "UPDATE blob_index SET ref_count = ref_count - 1 WHERE id = ?1",
+                params![id],
+            )?;
+            return Ok(());
+        }
+        self.conn
+            .execute("DELETE FROM blob_index WHERE id = ?1", params![id])?;
+        match std::fs::remove_file(self.blob_dir.join(blob.relative_path)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn request_blob_ids_for_project(&self, project_id: &str) -> StoreResult<Vec<String>> {
+        let mut statement = self.conn.prepare(
+            "SELECT body_blob_id FROM requests WHERE project_id = ?1 AND body_blob_id IS NOT NULL",
+        )?;
+        let rows = statement.query_map(params![project_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(Into::into)
+    }
+
+    fn request_blob_ids_for_collection_subtree(
+        &self,
+        collection_id: &str,
+    ) -> StoreResult<Vec<String>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            WITH RECURSIVE subtree(id) AS (
+              SELECT id FROM collections WHERE id = ?1
+              UNION ALL
+              SELECT collections.id FROM collections JOIN subtree ON collections.parent_id = subtree.id
+            )
+            SELECT requests.body_blob_id
+            FROM requests JOIN subtree ON requests.collection_id = subtree.id
+            WHERE requests.body_blob_id IS NOT NULL
+            "#,
+        )?;
+        let rows = statement.query_map(params![collection_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(Into::into)
+    }
+
     fn externalize_http_body(&self, envelope: &mut RequestEnvelope) -> StoreResult<Option<String>> {
         let ProtocolPayload::Http(HttpPayload {
             body: Some(body), ..
@@ -1193,12 +1333,29 @@ impl LocalStore {
         project_id: &str,
         collection_id: &str,
     ) -> StoreResult<StoredRequest> {
-        let mut envelope = envelope.clone();
+        let previous_blob_id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT body_blob_id FROM requests WHERE id = ?1",
+                params![envelope.id.0.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let mut envelope = envelope.sanitized_for_persistence();
         let body_blob_id = self.externalize_http_body(&mut envelope)?;
         let id = envelope.id.0.to_string();
         let updated_at = Utc::now();
-        let envelope_json = serde_json::to_string(&envelope)?;
-        self.conn.execute(
+        let envelope_json = match serde_json::to_string(&envelope) {
+            Ok(value) => value,
+            Err(error) => {
+                if let Some(blob_id) = body_blob_id.as_deref() {
+                    self.release_blob(blob_id)?;
+                }
+                return Err(error.into());
+            }
+        };
+        let write_result = self.conn.execute(
             r#"
             INSERT INTO requests (id, project_id, collection_id, name, protocol_id, target, envelope_json, updated_at, body_blob_id)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -1223,7 +1380,16 @@ impl LocalStore {
                 updated_at.to_rfc3339(),
                 body_blob_id,
             ],
-        )?;
+        );
+        if let Err(error) = write_result {
+            if let Some(blob_id) = body_blob_id.as_deref() {
+                self.release_blob(blob_id)?;
+            }
+            return Err(error.into());
+        }
+        if let Some(previous_blob_id) = previous_blob_id {
+            self.release_blob(&previous_blob_id)?;
+        }
 
         let mut hydrated = envelope;
         self.hydrate_http_body(&mut hydrated, body_blob_id.as_deref())?;
@@ -1380,29 +1546,45 @@ impl LocalStore {
     }
 
     pub fn record_execution(&self, record: &ExecutionRecord) -> StoreResult<()> {
-        let mut snapshot = record.request_snapshot.clone();
+        let mut snapshot = record
+            .request_snapshot
+            .as_ref()
+            .map(RequestEnvelope::sanitized_for_persistence);
         let mut body_blob_id = None;
         if let Some(ref mut env) = snapshot {
             body_blob_id = self.externalize_http_body(env)?;
         }
-        let snapshot_json = snapshot.as_ref().map(serde_json::to_string).transpose()?;
+        let snapshot_json = match snapshot.as_ref().map(serde_json::to_string).transpose() {
+            Ok(value) => value,
+            Err(error) => {
+                if let Some(blob_id) = body_blob_id.as_deref() {
+                    self.release_blob(blob_id)?;
+                }
+                return Err(error.into());
+            }
+        };
 
         let mut preview = record.preview.clone();
         let mut response_blob_id = record.response_blob_id.clone();
         if response_blob_id.is_none() {
             if let Some(ref p) = preview {
                 if p.len() > BLOB_THRESHOLD_BYTES {
-                    let blob = self.put_blob(p.as_bytes(), Some("text/plain"))?;
+                    let blob = match self.put_blob(p.as_bytes(), Some("text/plain")) {
+                        Ok(blob) => blob,
+                        Err(error) => {
+                            if let Some(blob_id) = body_blob_id.as_deref() {
+                                self.release_blob(blob_id)?;
+                            }
+                            return Err(error);
+                        }
+                    };
                     response_blob_id = Some(blob.id);
                     preview = Some(p.chars().take(4096).collect());
                 }
             }
         }
 
-        // Keep body_blob_id linked via snapshot marker; column reserved for response.
-        let _ = body_blob_id;
-
-        self.conn.execute(
+        let write_result = self.conn.execute(
             r#"
             INSERT INTO executions
               (id, request_id, protocol_id, state, status, duration_ms, bytes_received,
@@ -1423,7 +1605,16 @@ impl LocalStore {
                 preview,
                 response_blob_id,
             ],
-        )?;
+        );
+        if let Err(error) = write_result {
+            if let Some(blob_id) = body_blob_id.as_deref() {
+                self.release_blob(blob_id)?;
+            }
+            if let Some(blob_id) = response_blob_id.as_deref() {
+                self.release_blob(blob_id)?;
+            }
+            return Err(error.into());
+        }
         Ok(())
     }
 
@@ -1666,20 +1857,43 @@ impl LocalStore {
             .transpose()
     }
 
-    pub fn list_environments(&self, project_id: Option<&str>) -> StoreResult<Vec<EnvironmentRecord>> {
+    pub fn list_environments(
+        &self,
+        project_id: Option<&str>,
+    ) -> StoreResult<Vec<EnvironmentRecord>> {
         let mut statement = self.conn.prepare(if project_id.is_some() {
             "SELECT id, project_id, name, variables_json, secret_refs_json, updated_at FROM environments WHERE project_id = ?1 ORDER BY name COLLATE NOCASE"
         } else {
             "SELECT id, project_id, name, variables_json, secret_refs_json, updated_at FROM environments ORDER BY name COLLATE NOCASE"
         })?;
         let read = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String,String,String,String,String,String)> { Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)) };
-        let rows = if let Some(id) = project_id { statement.query_map(params![id], read)? } else { statement.query_map([], read)? };
-        rows.map(|row| { let (id, project_id, name, variables, secrets, updated_at) = row?; Ok(EnvironmentRecord { id, project_id, name, variables: serde_json::from_str(&variables)?, secret_refs: serde_json::from_str(&secrets)?, updated_at: parse_time(&updated_at) }) }).collect()
+        let rows = if let Some(id) = project_id {
+            statement.query_map(params![id], read)?
+        } else {
+            statement.query_map([], read)?
+        };
+        rows.map(|row| {
+            let (id, project_id, name, variables, secrets, updated_at) = row?;
+            Ok(EnvironmentRecord {
+                id,
+                project_id,
+                name,
+                variables: serde_json::from_str(&variables)?,
+                secret_refs: serde_json::from_str(&secrets)?,
+                updated_at: parse_time(&updated_at),
+            })
+        })
+        .collect()
     }
 
     pub fn delete_environment(&self, id: &str) -> StoreResult<()> {
-        if id == "default-env" { return Err(StoreError::InvalidId("default-env cannot be deleted".into())); }
-        self.conn.execute("DELETE FROM environments WHERE id = ?1", params![id])?;
+        if id == "default-env" {
+            return Err(StoreError::InvalidId(
+                "default-env cannot be deleted".into(),
+            ));
+        }
+        self.conn
+            .execute("DELETE FROM environments WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -1688,10 +1902,35 @@ impl LocalStore {
             .ok_or_else(|| StoreError::NotFound("default-env".into()))
     }
 
-    pub fn save_script(&self, item:&ScriptRecord)->StoreResult<()> { self.conn.execute("INSERT INTO scripts(id,project_id,name,language,source,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,name=excluded.name,language=excluded.language,source=excluded.source,updated_at=excluded.updated_at",params![item.id,item.project_id,item.name,item.language,item.source,item.created_at.to_rfc3339(),item.updated_at.to_rfc3339()])?;Ok(()) }
-    pub fn list_scripts(&self,project_id:&str)->StoreResult<Vec<ScriptRecord>> { let mut statement=self.conn.prepare("SELECT id,project_id,name,language,source,created_at,updated_at FROM scripts WHERE project_id=?1 ORDER BY name COLLATE NOCASE")?;let items=statement.query_map(params![project_id],|row|Ok(ScriptRecord{id:row.get(0)?,project_id:row.get(1)?,name:row.get(2)?,language:row.get(3)?,source:row.get(4)?,created_at:parse_time(&row.get::<_,String>(5)?),updated_at:parse_time(&row.get::<_,String>(6)?)}))?.collect::<Result<Vec<_>,_>>()?;Ok(items) }
-    pub fn get_script(&self,id:&str)->StoreResult<Option<ScriptRecord>> { self.conn.query_row("SELECT id,project_id,name,language,source,created_at,updated_at FROM scripts WHERE id=?1",params![id],|row|Ok(ScriptRecord{id:row.get(0)?,project_id:row.get(1)?,name:row.get(2)?,language:row.get(3)?,source:row.get(4)?,created_at:parse_time(&row.get::<_,String>(5)?),updated_at:parse_time(&row.get::<_,String>(6)?)})).optional().map_err(StoreError::from) }
-    pub fn delete_script(&self,id:&str)->StoreResult<()> { self.conn.execute("DELETE FROM scripts WHERE id=?1",params![id])?;Ok(()) }
+    pub fn save_script(&self, item: &ScriptRecord) -> StoreResult<()> {
+        self.conn.execute("INSERT INTO scripts(id,project_id,name,language,source,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,name=excluded.name,language=excluded.language,source=excluded.source,updated_at=excluded.updated_at",params![item.id,item.project_id,item.name,item.language,item.source,item.created_at.to_rfc3339(),item.updated_at.to_rfc3339()])?;
+        Ok(())
+    }
+    pub fn list_scripts(&self, project_id: &str) -> StoreResult<Vec<ScriptRecord>> {
+        let mut statement=self.conn.prepare("SELECT id,project_id,name,language,source,created_at,updated_at FROM scripts WHERE project_id=?1 ORDER BY name COLLATE NOCASE")?;
+        let items = statement
+            .query_map(params![project_id], |row| {
+                Ok(ScriptRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    name: row.get(2)?,
+                    language: row.get(3)?,
+                    source: row.get(4)?,
+                    created_at: parse_time(&row.get::<_, String>(5)?),
+                    updated_at: parse_time(&row.get::<_, String>(6)?),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(items)
+    }
+    pub fn get_script(&self, id: &str) -> StoreResult<Option<ScriptRecord>> {
+        self.conn.query_row("SELECT id,project_id,name,language,source,created_at,updated_at FROM scripts WHERE id=?1",params![id],|row|Ok(ScriptRecord{id:row.get(0)?,project_id:row.get(1)?,name:row.get(2)?,language:row.get(3)?,source:row.get(4)?,created_at:parse_time(&row.get::<_,String>(5)?),updated_at:parse_time(&row.get::<_,String>(6)?)})).optional().map_err(StoreError::from)
+    }
+    pub fn delete_script(&self, id: &str) -> StoreResult<()> {
+        self.conn
+            .execute("DELETE FROM scripts WHERE id=?1", params![id])?;
+        Ok(())
+    }
 }
 
 fn parse_time(value: &str) -> DateTime<Utc> {
@@ -1714,35 +1953,82 @@ mod tests {
     fn api_definition_and_request_binding_roundtrip() {
         let store = LocalStore::open_in_memory().expect("open");
         let request = RequestEnvelope::http_get("users", "https://example.com/users");
-        store.save_request(&request, "default-project", "default-collection").expect("save request");
+        store
+            .save_request(&request, "default-project", "default-collection")
+            .expect("save request");
         let now = Utc::now();
         let definition = ApiDefinitionRecord {
-            id: "definition-openapi".into(), project_id: "default-project".into(), module_id: None,
-            name: "Users API".into(), format: "openapi".into(), file_name: "openapi.yaml".into(),
-            content: "openapi: 3.1.0".into(), created_at: now, updated_at: now,
+            id: "definition-openapi".into(),
+            project_id: "default-project".into(),
+            module_id: None,
+            name: "Users API".into(),
+            format: "openapi".into(),
+            file_name: "openapi.yaml".into(),
+            content: "openapi: 3.1.0".into(),
+            created_at: now,
+            updated_at: now,
         };
-        store.save_api_definition(&definition).expect("save definition");
-        assert_eq!(store.list_api_definitions("default-project").unwrap().len(), 1);
+        store
+            .save_api_definition(&definition)
+            .expect("save definition");
+        assert_eq!(
+            store.list_api_definitions("default-project").unwrap().len(),
+            1
+        );
         let binding = RequestDefinitionBinding {
-            request_id: request.id.0.to_string(), definition_id: definition.id.clone(),
-            operation_ref: Some("GET /users".into()), updated_at: now,
+            request_id: request.id.0.to_string(),
+            definition_id: definition.id.clone(),
+            operation_ref: Some("GET /users".into()),
+            updated_at: now,
         };
         store.bind_request_definition(&binding).expect("bind");
-        assert_eq!(store.get_request_definition_binding(&binding.request_id).unwrap().unwrap().operation_ref, binding.operation_ref);
-        store.delete_api_definition(&definition.id).expect("delete definition");
-        assert!(store.get_request_definition_binding(&binding.request_id).unwrap().is_none());
+        assert_eq!(
+            store
+                .get_request_definition_binding(&binding.request_id)
+                .unwrap()
+                .unwrap()
+                .operation_ref,
+            binding.operation_ref
+        );
+        store
+            .delete_api_definition(&definition.id)
+            .expect("delete definition");
+        assert!(store
+            .get_request_definition_binding(&binding.request_id)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn environment_and_script_resources_support_crud() {
-        let store=LocalStore::open_in_memory().expect("open");
-        let environments=store.list_environments(Some("default-project")).expect("list envs");
-        assert!(environments.iter().any(|item| item.id=="default-env"));
-        let now=Utc::now();let script=ScriptRecord{id:"script-test".into(),project_id:"default-project".into(),name:"Auth".into(),language:"typescript".into(),source:"const token: string = 'x';".into(),created_at:now,updated_at:now};
+        let store = LocalStore::open_in_memory().expect("open");
+        let environments = store
+            .list_environments(Some("default-project"))
+            .expect("list envs");
+        assert!(environments.iter().any(|item| item.id == "default-env"));
+        let now = Utc::now();
+        let script = ScriptRecord {
+            id: "script-test".into(),
+            project_id: "default-project".into(),
+            name: "Auth".into(),
+            language: "typescript".into(),
+            source: "const token: string = 'x';".into(),
+            created_at: now,
+            updated_at: now,
+        };
         store.save_script(&script).expect("save script");
-        assert_eq!(store.list_scripts("default-project").expect("list scripts").len(),1);
+        assert_eq!(
+            store
+                .list_scripts("default-project")
+                .expect("list scripts")
+                .len(),
+            1
+        );
         store.delete_script("script-test").expect("delete script");
-        assert!(store.get_script("script-test").expect("get script").is_none());
+        assert!(store
+            .get_script("script-test")
+            .expect("get script")
+            .is_none());
     }
 
     #[test]
@@ -1881,6 +2167,114 @@ mod tests {
     }
 
     #[test]
+    fn failed_execution_insert_releases_new_blob_references() {
+        let store = LocalStore::open_in_memory().expect("open");
+        let large_body = "b".repeat(BLOB_THRESHOLD_BYTES + 16);
+        let large_response = "r".repeat(BLOB_THRESHOLD_BYTES + 16);
+        let mut request = RequestEnvelope::http_get("large", "https://example.com");
+        if let ProtocolPayload::Http(payload) = &mut request.payload {
+            payload.method = "POST".into();
+            payload.body = Some(large_body.clone());
+        }
+        let record = ExecutionRecord {
+            id: Uuid::new_v4().to_string(),
+            request_id: request.id.0.to_string(),
+            protocol_id: "http".into(),
+            state: "completed".into(),
+            status: Some(200),
+            duration_ms: 2,
+            bytes_received: large_response.len() as u64,
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+            request_snapshot: Some(request),
+            preview: Some(large_response.clone()),
+            response_blob_id: None,
+        };
+
+        store.record_execution(&record).expect("first record");
+        let body_blob = store
+            .get_blob_by_sha(&hex_sha256(large_body.as_bytes()))
+            .unwrap()
+            .unwrap();
+        let response_blob = store
+            .get_blob_by_sha(&hex_sha256(large_response.as_bytes()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(body_blob.ref_count, 1);
+        assert_eq!(response_blob.ref_count, 1);
+
+        assert!(store.record_execution(&record).is_err());
+        assert_eq!(store.get_blob(&body_blob.id).unwrap().unwrap().ref_count, 1);
+        assert_eq!(
+            store
+                .get_blob(&response_blob.id)
+                .unwrap()
+                .unwrap()
+                .ref_count,
+            1
+        );
+    }
+
+    #[test]
+    fn request_blob_references_are_replaced_and_released() {
+        let store = LocalStore::open_in_memory().expect("open");
+        let first_body = "a".repeat(BLOB_THRESHOLD_BYTES + 16);
+        let mut request = RequestEnvelope::http_get("blob lifecycle", "https://example.com");
+        if let ProtocolPayload::Http(payload) = &mut request.payload {
+            payload.method = "POST".into();
+            payload.body = Some(first_body);
+        }
+        let first = store
+            .save_request(&request, "default-project", "default-collection")
+            .expect("first save");
+        let first_blob = first.body_blob_id.expect("first blob");
+        let first_path = store
+            .blob_dir()
+            .join(store.get_blob(&first_blob).unwrap().unwrap().relative_path);
+        store
+            .save_request(&request, "default-project", "default-collection")
+            .expect("same body save");
+        assert_eq!(store.get_blob(&first_blob).unwrap().unwrap().ref_count, 1);
+
+        if let ProtocolPayload::Http(payload) = &mut request.payload {
+            payload.body = Some("b".repeat(BLOB_THRESHOLD_BYTES + 16));
+        }
+        let second = store
+            .save_request(&request, "default-project", "default-collection")
+            .expect("replacement save");
+        let second_blob = second.body_blob_id.expect("second blob");
+        let second_path = store
+            .blob_dir()
+            .join(store.get_blob(&second_blob).unwrap().unwrap().relative_path);
+        assert!(store.get_blob(&first_blob).unwrap().is_none());
+        assert!(!first_path.exists());
+
+        store.delete_request(&request.id).expect("delete request");
+        assert!(store.get_blob(&second_blob).unwrap().is_none());
+        assert!(!second_path.exists());
+    }
+
+    #[test]
+    fn project_cascade_releases_request_blobs() {
+        let store = LocalStore::open_in_memory().expect("open");
+        let project = store
+            .create_project("default-workspace", "Blob project")
+            .unwrap();
+        let collection = store.create_collection(&project.id, None, "API").unwrap();
+        let mut request = RequestEnvelope::http_get("large", "https://example.com");
+        if let ProtocolPayload::Http(payload) = &mut request.payload {
+            payload.body = Some("x".repeat(BLOB_THRESHOLD_BYTES + 1));
+        }
+        let blob_id = store
+            .save_request(&request, &project.id, &collection.id)
+            .unwrap()
+            .body_blob_id
+            .unwrap();
+        store.delete_project(&project.id).unwrap();
+        assert!(store.get_blob(&blob_id).unwrap().is_none());
+    }
+
+    #[test]
     fn workspace_crud_archive_and_recent_order() {
         let store = LocalStore::open_in_memory().unwrap();
         let first = store.create_workspace("First", None).unwrap();
@@ -1933,10 +2327,38 @@ mod tests {
         assert!(modules[0].is_default);
 
         let custom = store.create_module(&project.id, "Fulfillment").unwrap();
-        let root = store.create_collection_in_module(&project.id, Some(&custom.id), None, "API").unwrap();
-        let child = store.create_collection(&project.id, Some(&root.id), "Internal").unwrap();
+        let root = store
+            .create_collection_in_module(&project.id, Some(&custom.id), None, "API")
+            .unwrap();
+        let child = store
+            .create_collection(&project.id, Some(&root.id), "Internal")
+            .unwrap();
         assert_eq!(root.module_id, custom.id);
         assert_eq!(child.module_id, custom.id);
+
+        let default_root = store
+            .create_collection_in_module(&project.id, Some(&modules[0].id), None, "Default API")
+            .unwrap();
+        store
+            .update_collection(&root.id, &root.name, Some(&default_root.id), 0)
+            .unwrap();
+        let moved = store.list_collections(&project.id).unwrap();
+        assert_eq!(
+            moved
+                .iter()
+                .find(|item| item.id == root.id)
+                .unwrap()
+                .module_id,
+            modules[0].id
+        );
+        assert_eq!(
+            moved
+                .iter()
+                .find(|item| item.id == child.id)
+                .unwrap()
+                .module_id,
+            modules[0].id
+        );
     }
 
     #[test]

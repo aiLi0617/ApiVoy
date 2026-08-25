@@ -1,4 +1,4 @@
-import { importDocument, type PortableRequest } from "@apivoy/import-export";
+import { IMPORT_MAX_DOCUMENTS, IMPORT_MAX_FILE_BYTES, IMPORT_MAX_TOTAL_BYTES, importDocument, type PortableRequest } from "@apivoy/import-export";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useFeedback } from "./Feedback";
@@ -197,13 +197,18 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     const collection = tree?.collections.find((item) => item.id === props.selectedCollectionId);
     if (!collection) { notify("请先选择一个目标集合", "warning"); return; }
     try {
+      if (selected.length > IMPORT_MAX_DOCUMENTS) throw new Error(`导入文档数量超过 ${IMPORT_MAX_DOCUMENTS} 个的上限`);
+      const oversized = selected.find((item) => item.size > IMPORT_MAX_FILE_BYTES);
+      if (oversized) throw new Error(`${oversized.name} 超过 ${IMPORT_MAX_FILE_BYTES} 字节的导入上限`);
+      const totalBytes = selected.reduce((total, item) => total + item.size, 0);
+      if (totalBytes > IMPORT_MAX_TOTAL_BYTES) throw new Error(`导入文档总大小超过 ${IMPORT_MAX_TOTAL_BYTES} 字节的上限`);
       const dependencyEntries = await Promise.all(selected.slice(1).map(async (dependency) => {
         const text = await dependency.text();
-        return [[dependency.webkitRelativePath || dependency.name, text], [dependency.name, text]] as const;
+        return [dependency.webkitRelativePath || dependency.name, text] as const;
       }));
       const result = await importDocument(await file.text(), {
         baseUri: file.webkitRelativePath || file.name,
-        documents: Object.fromEntries(dependencyEntries.flat()),
+        documents: Object.fromEntries(dependencyEntries),
       });
       await props.onImportRequests(collection.projectId, collection.id, result.requests);
       notify(`已从 ${result.source} 导入 ${result.requests.length} 个请求${result.warnings.length ? `\\n${result.warnings.join("\\n")}` : ""}`, "success");
@@ -279,7 +284,7 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
     else {
       const source = tree!.collections.find((collection) => collection.id === item.id);
       if (source && source.id !== target.id && source.projectId === target.projectId) {
-        if ((source.parentId ?? null) === (target.parentId ?? null)) void props.onSwapCollections(source, target);
+        if ((source.parentId ?? null) === (target.parentId ?? null) && (source.moduleId ?? null) === (target.moduleId ?? null)) void props.onSwapCollections(source, target);
         else void props.onMoveCollection(source, target.projectId, target.id);
       }
     }

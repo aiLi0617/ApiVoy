@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { exportApiVoyProject, importDocument, importJson, scanSensitiveData } from "./index.js";
+import { IMPORT_MAX_DEPTH, IMPORT_MAX_DOCUMENTS, IMPORT_MAX_FILE_BYTES, IMPORT_MAX_REQUESTS, exportApiVoyProject, importDocument, importJson, scanSensitiveData } from "./index.js";
 
 test("imports OpenAPI operations", () => {
   const result = importJson(JSON.stringify({ openapi: "3.0.0", info: { title: "Pets" }, servers: [{ url: "https://api.example.com" }], paths: { "/pets": { get: { summary: "List pets" } } } }));
@@ -48,4 +48,22 @@ test("detects external OpenAPI ref cycles", async () => {
   const main = "openapi: 3.0.0\ninfo: { title: Cycle }\npaths:\n  $ref: './paths.yaml#/paths'\n";
   const dependency = "paths:\n  $ref: './openapi.yaml#/paths'\n";
   await assert.rejects(() => importDocument(main, { baseUri: "spec/openapi.yaml", documents: { "spec/paths.yaml": dependency } }), /循环|cycle/i);
+});
+
+test("rejects oversized import text before parsing", () => {
+  assert.throws(() => importJson("x".repeat(IMPORT_MAX_FILE_BYTES + 1)), /上限/);
+});
+
+test("rejects deeply nested Postman collections", () => {
+  let item: Record<string, unknown> = { name: "request", request: "https://example.com" };
+  for (let depth = 0; depth <= IMPORT_MAX_DEPTH; depth += 1) item = { name: `folder-${depth}`, item: [item] };
+  const collection = { info: { name: "Deep", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" }, item: [item] };
+  assert.throws(() => importJson(JSON.stringify(collection)), /嵌套深度/);
+});
+
+test("rejects excessive document and request counts", async () => {
+  const documents = Object.fromEntries(Array.from({ length: IMPORT_MAX_DOCUMENTS }, (_, index) => [`part-${index}.yaml`, "value: true"]));
+  await assert.rejects(() => importDocument("openapi: 3.0.0\ninfo: { title: Many }\npaths: {}\n", { documents }), /文档数量/);
+  const requests = Array.from({ length: IMPORT_MAX_REQUESTS + 1 }, (_, index) => ({ name: String(index), method: "GET", url: "https://example.com", headers: {} }));
+  assert.throws(() => importJson(JSON.stringify({ format: "apivoy-project", name: "Many", requests })), /请求数量/);
 });

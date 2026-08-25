@@ -3,7 +3,10 @@ package dev.apivoy.collaboration;
 import com.fasterxml.jackson.databind.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.*;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
@@ -44,6 +47,16 @@ class ApiController {
 @RestControllerAdvice
 class ApiErrors {
     private final ObjectMapper json;
-    ApiErrors(ObjectMapper json){this.json=json;}
+    private final WorkspaceRepository workspaces;
+    ApiErrors(ObjectMapper json,WorkspaceRepository workspaces){this.json=json;this.workspaces=workspaces;}
     @ExceptionHandler(ConflictException.class) ResponseEntity<Map<String,Object>> conflict(ConflictException error){try{return ResponseEntity.status(409).body(Map.of("code","revision_conflict","message",error.getMessage(),"currentRevision",error.revision,"currentDocument",json.readTree(error.document)));}catch(Exception ignored){return ResponseEntity.status(409).body(Map.of("code","revision_conflict","currentRevision",error.revision));}}
+    @ExceptionHandler({ObjectOptimisticLockingFailureException.class,DataIntegrityViolationException.class}) ResponseEntity<Map<String,Object>> concurrentConflict(RuntimeException error,HttpServletRequest request){
+        String[] parts=request.getRequestURI().split("/");
+        if(parts.length>=6&&"organizations".equals(parts[2])&&"workspaces".equals(parts[4])){
+            return workspaces.findByOrganizationIdAndWorkspaceId(parts[3],parts[5])
+                .map(state->conflict(new ConflictException(state.revision,state.documentJson)))
+                .orElseGet(()->ResponseEntity.status(409).body(Map.of("code","revision_conflict","message","workspace revision conflict")));
+        }
+        return ResponseEntity.status(409).body(Map.of("code","data_conflict","message","concurrent update conflict"));
+    }
 }

@@ -10,11 +10,12 @@ import { encodeTcpPayload, formatTcpPayload, tcpPayloadLabel, tcpPayloadLanguage
 import { useMessageDetailResize } from "./useMessageDetailResize";
 
 export interface SocketWorkbenchRequest { id?: string; protocol: "tcp" | "udp"; name: string; target: string; data: string; encoding: "text" | "hex"; format?: TcpPayloadFormat; sourceData?: string; framing?: string | null; delimiter?: string | null; fixedLength?: number | null; sendCount: number; intervalMs: number; timeoutMs: number; tls: boolean; serverName?: string | null; caCertRef?: string | null }
-export interface SocketWorkbenchProps { onSend: (request: SocketWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>; onCancel: (executionId: string) => Promise<void>; onSave?: (request: SocketWorkbenchRequest) => Promise<void>; externalRequest?: SocketWorkbenchRequest | null; tcpSessionUrl?: (target: string) => string; onTitleChange?: (title: string) => void }
+export interface TcpSessionConnection { url: string; protocols: string[] }
+export interface SocketWorkbenchProps { onSend: (request: SocketWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>; onCancel: (executionId: string) => Promise<void>; onSave?: (request: SocketWorkbenchRequest) => Promise<void>; externalRequest?: SocketWorkbenchRequest | null; tcpSessionConnection?: (target: string) => Promise<TcpSessionConnection>; onTitleChange?: (title: string) => void }
 export type TcpWorkbenchProps = SocketWorkbenchProps;
-export type UdpWorkbenchProps = Omit<SocketWorkbenchProps, "tcpSessionUrl">;
+export type UdpWorkbenchProps = Omit<SocketWorkbenchProps, "tcpSessionConnection">;
 
-function SocketWorkbench({ protocol, onSend, onCancel, onSave, externalRequest, tcpSessionUrl, onTitleChange }: SocketWorkbenchProps & { protocol: "tcp" | "udp" }) {
+function SocketWorkbench({ protocol, onSend, onCancel, onSave, externalRequest, tcpSessionConnection, onTitleChange }: SocketWorkbenchProps & { protocol: "tcp" | "udp" }) {
   const requestIdRef = useRef<string>(crypto.randomUUID());
   const [name, setName] = useState("");
   const [target, setTarget] = useState("127.0.0.1:9000");
@@ -118,7 +119,25 @@ function SocketWorkbench({ protocol, onSend, onCancel, onSave, externalRequest, 
     }
     return rows.join("\n");
   }
-  function openSession() { if (protocol !== "tcp" || sessionRef.current) return; setConnecting(true); setHasConnected(true); setFrames([]); setSelectedFrameId(null); closeReportedRef.current = false; appendFrame("•", "状态", "正在建立 TCP 会话…"); const fallback = `ws://127.0.0.1:39217/v1/tcp-session?target=${encodeURIComponent(target)}&token=${encodeURIComponent(localStorage.getItem("apivoy-agent-token") ?? "")}`; const socket = new WebSocket(tcpSessionUrl?.(target) ?? fallback); sessionRef.current = socket; socket.binaryType = "arraybuffer"; socket.onopen = () => { setConnecting(false); setSessionOpen(true); appendFrame("•", "状态", "Local Agent 连接通道已建立，正在等待目标 TCP 确认"); }; socket.onmessage = (event) => { if (typeof event.data === "string") { try { const control = JSON.parse(event.data) as { type?: string; reason?: string }; if (control.type === "connected") { setConnecting(false); setSessionOpen(true); setHasConnected(true); appendFrame("•", "状态", `已连接到 ${target}`); return; } if (control.type === "closed" || control.type === "error") { closeReportedRef.current = true; setConnecting(false); setSessionOpen(false); setHasConnected(true); appendFrame("•", control.type === "error" ? "错误" : "状态", control.reason ?? "TCP 会话已关闭"); return; } } catch { /* target payloads are relayed as binary; ignore unknown control text */ } } const bytes = new Uint8Array(event.data as ArrayBuffer); const detectedFormat = resolveResponseFormat(bytes); let value: string; try { value = formatTcpPayload(bytes, detectedFormat); } catch { value = formatTcpPayload(bytes, "text"); } appendFrame("←", tcpPayloadLabel(detectedFormat), value, bytes); }; socket.onerror = () => { if (!closeReportedRef.current) { closeReportedRef.current = true; appendFrame("•", "错误", "Local Agent 会话连接错误"); } setConnecting(false); }; socket.onclose = () => { sessionRef.current = null; setConnecting(false); setSessionOpen(false); if (!closeReportedRef.current) appendFrame("•", "状态", "TCP 会话已关闭"); }; }
+  async function openSession() {
+    if (protocol !== "tcp" || sessionRef.current) return;
+    if (!tcpSessionConnection) { appendFrame("•", "错误", "当前执行端未提供安全的 TCP 会话连接"); return; }
+    setConnecting(true); setHasConnected(true); setFrames([]); setSelectedFrameId(null); closeReportedRef.current = false;
+    appendFrame("•", "状态", "正在建立 TCP 会话…");
+    try {
+      const connection = await tcpSessionConnection(target);
+      const socket = new WebSocket(connection.url, connection.protocols);
+      sessionRef.current = socket;
+      socket.binaryType = "arraybuffer";
+      socket.onopen = () => { setConnecting(false); setSessionOpen(true); appendFrame("•", "状态", "Local Agent 连接通道已建立，正在等待目标 TCP 确认"); };
+      socket.onmessage = (event) => { if (typeof event.data === "string") { try { const control = JSON.parse(event.data) as { type?: string; reason?: string }; if (control.type === "connected") { setConnecting(false); setSessionOpen(true); setHasConnected(true); appendFrame("•", "状态", `已连接到 ${target}`); return; } if (control.type === "closed" || control.type === "error") { closeReportedRef.current = true; setConnecting(false); setSessionOpen(false); setHasConnected(true); appendFrame("•", control.type === "error" ? "错误" : "状态", control.reason ?? "TCP 会话已关闭"); return; } } catch { /* target payloads are relayed as binary; ignore unknown control text */ } } const bytes = new Uint8Array(event.data as ArrayBuffer); const detectedFormat = resolveResponseFormat(bytes); let value: string; try { value = formatTcpPayload(bytes, detectedFormat); } catch { value = formatTcpPayload(bytes, "text"); } appendFrame("←", tcpPayloadLabel(detectedFormat), value, bytes); };
+      socket.onerror = () => { if (!closeReportedRef.current) { closeReportedRef.current = true; appendFrame("•", "错误", "Local Agent 会话连接错误"); } setConnecting(false); };
+      socket.onclose = () => { sessionRef.current = null; setConnecting(false); setSessionOpen(false); if (!closeReportedRef.current) appendFrame("•", "状态", "TCP 会话已关闭"); };
+    } catch (error) {
+      setConnecting(false); setSessionOpen(false); closeReportedRef.current = true;
+      appendFrame("•", "错误", error instanceof Error ? error.message : String(error));
+    }
+  }
   function sendSession() { const socket = sessionRef.current; if (!socket || socket.readyState !== WebSocket.OPEN) return; try { const bytes = encodeTcpPayload(encoding, data); socket.send(bytes); appendFrame("→", tcpPayloadLabel(encoding), data, bytes); if (clearAfterSend) setData(""); } catch (error) { appendFrame("•", "错误", error instanceof Error ? error.message : "发送内容格式无效"); } }
   function closeSession() { sessionRef.current?.close(1000, "closed by user"); }
   useEffect(() => () => sessionRef.current?.close(1000, "workbench unmounted"), []);

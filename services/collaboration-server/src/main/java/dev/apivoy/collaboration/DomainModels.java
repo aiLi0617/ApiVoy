@@ -66,6 +66,7 @@ class DeviceSession {
 @Entity @Table(name = "workspace_states", uniqueConstraints = @UniqueConstraint(columnNames = {"organizationId", "workspaceId"}))
 class WorkspaceState {
     @Id String id = UUID.randomUUID().toString();
+    @Version long entityVersion;
     @Column(nullable = false) String organizationId;
     @Column(nullable = false) String workspaceId;
     @Column(nullable = false) long revision;
@@ -76,7 +77,9 @@ class WorkspaceState {
     WorkspaceState(String organizationId, String workspaceId, String documentJson, String updatedBy) { this.organizationId = organizationId; this.workspaceId = workspaceId; this.documentJson = documentJson; this.updatedBy = updatedBy; }
 }
 
-@Entity @Table(name = "workspace_changes", indexes = @Index(columnList = "organizationId,workspaceId,revision"))
+@Entity @Table(name = "workspace_changes",
+    indexes = @Index(columnList = "organizationId,workspaceId,revision"),
+    uniqueConstraints = @UniqueConstraint(columnNames = {"organizationId", "workspaceId", "revision"}))
 class WorkspaceChange {
     @Id String id = UUID.randomUUID().toString();
     @Column(nullable = false) String organizationId;

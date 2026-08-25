@@ -23,6 +23,7 @@ import type {
   CaptureStatus,
   CapturedExchange,
   CollectionRunCase,
+  TcpSessionConnection,
 } from "@apivoy/ui";
 
 const runtime = (window as Window & { __APIVOY_CONFIG__?: { agentUrl?: string; agentToken?: string } }).__APIVOY_CONFIG__;
@@ -162,7 +163,7 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
 export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string): HttpWorkbenchRequest {
   const payload = envelope.payload;
   if (payload.type !== "http") {
-    throw new Error("仅支挄1�7 HTTP 请求重放");
+    throw new Error("仅支持 HTTP 请求重放");
   }
   return {
     id: envelope.id,
@@ -337,7 +338,7 @@ export async function runCollectionViaAgent(collectionId: string, failFast: bool
     try {
       const envelope = await loadEnvelopeViaAgent(item.id);
       if (!envelope) {
-        cases.push({ requestId: item.id, name: item.name, protocolId: "unknown", passed: false, status: null, durationMs: 0, error: "请求不存圄1�7", failedAssertions: [] });
+        cases.push({ requestId: item.id, name: item.name, protocolId: "unknown", passed: false, status: null, durationMs: 0, error: "请求不存在", failedAssertions: [] });
         if (failFast) break;
         continue;
       }
@@ -405,7 +406,20 @@ export async function listMockRulesViaAgent(): Promise<MockRule[]> { await check
 export async function createMockRuleViaAgent(rule: Omit<MockRule, "id">): Promise<void> { await mutateWorkspace("/v1/mock-rules", "POST", rule); }
 export async function deleteMockRuleViaAgent(id: string): Promise<void> { await mutateWorkspace(`/v1/mock-rules/${id}`, "DELETE"); }
 export const agentBaseUrl = agentBase();
-export const tcpSessionUrlViaAgent = (target: string) => `${agentBase().replace(/^http/, "ws")}/v1/tcp-session?target=${encodeURIComponent(target)}&token=${encodeURIComponent(bootstrapToken ?? "")}`;
+export async function tcpSessionConnectionViaAgent(target: string): Promise<TcpSessionConnection> {
+  await checkAgentHandshake();
+  const response = await fetch(`${agentBase()}/v1/tcp-session-ticket`, {
+    method: "POST",
+    headers: agentHeaders(),
+    body: JSON.stringify({ target }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const { ticket } = await response.json() as { ticket: string };
+  return {
+    url: `${agentBase().replace(/^http/, "ws")}/v1/tcp-session`,
+    protocols: ["apivoy", `apivoy-ticket.${ticket}`],
+  };
+}
 export async function listPluginsViaAgent(): Promise<InstalledPlugin[]> { await checkAgentHandshake(); const res = await fetch(`${agentBase()}/v1/plugins`, { headers: agentHeaders() }); if (!res.ok) throw new Error(await res.text()); return res.json(); }
 export async function installPluginViaAgent(manifest: PluginManifest, wasmBase64: string): Promise<void> { await mutateWorkspace("/v1/plugins", "POST", { manifest, wasmBase64 }); }
 export async function enablePluginViaAgent(id: string, enabled: boolean): Promise<void> { await mutateWorkspace(`/v1/plugins/${id}`, "PATCH", { enabled }); }

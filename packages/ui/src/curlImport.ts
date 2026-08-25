@@ -1,4 +1,4 @@
-import type { HttpWorkbenchRequest } from "./HttpWorkbench";
+import { isSensitiveHeaderName, type HttpWorkbenchRequest } from "./HttpWorkbench";
 
 export interface CurlImportResult { request: HttpWorkbenchRequest; warnings: string[] }
 
@@ -24,7 +24,7 @@ export function parseCurlWithWarnings(source: string): CurlImportResult {
     const token = tokens[index];
     if (token === "-X" || token === "--request") method = takeValue(index++, token).toUpperCase() || "GET";
     else if (token === "--url") url = takeValue(index++, token);
-    else if (token === "-H" || token === "--header") { const value = takeValue(index++, token); const split = value.indexOf(":"); if (split > 0) headers.push([value.slice(0, split).trim(), value.slice(split + 1).trim()]); else warnings.push(`\u65e0\u6cd5\u8bc6\u522b Header\uff1a${value || "\u7a7a\u503c"}`); }
+    else if (token === "-H" || token === "--header") { const value = takeValue(index++, token); const split = value.indexOf(":"); if (split > 0) { const name = value.slice(0, split).trim(); if (isSensitiveHeaderName(name)) warnings.push(`为避免保存明文凭据，${name} Header 未导入；请在调试页绑定 Secret Ref`); else headers.push([name, value.slice(split + 1).trim()]); } else warnings.push(`\u65e0\u6cd5\u8bc6\u522b Header\uff1a${value || "\u7a7a\u503c"}`); }
     else if (["-d", "--data", "--data-raw", "--data-binary", "--data-ascii"].includes(token)) { const value = takeValue(index++, token); dataParts.push(value); if (value.startsWith("@")) warnings.push(`${token} \u7684\u6587\u4ef6\u5f15\u7528\u4e0d\u4f1a\u8bfb\u53d6\u672c\u5730\u6587\u4ef6\uff0c\u5df2\u4fdd\u7559\u539f\u503c`); if (method === "GET" && !forceGet) method = "POST"; }
     else if (token === "--data-urlencode") { const value = takeValue(index++, token); const split = value.indexOf("="); dataParts.push(split >= 0 ? `${value.slice(0, split)}=${encodeURIComponent(value.slice(split + 1))}` : encodeURIComponent(value)); if (method === "GET" && !forceGet) method = "POST"; }
     else if (token === "-G" || token === "--get") { method = "GET"; forceGet = true; }
@@ -43,7 +43,7 @@ export function parseCurlWithWarnings(source: string): CurlImportResult {
   }
   if (!url) throw new Error("cURL \u547d\u4ee4\u4e2d\u6ca1\u6709\u627e\u5230 URL");
   if (dataParts.length) { const data = dataParts.join("&"); if (method === "GET") url += `${url.includes("?") ? "&" : "?"}${data}`; else body = data; }
-  if (cookie && !headers.some(([name]) => name.toLowerCase() === "cookie")) headers.push(["Cookie", cookie]);
+  if (cookie) warnings.push("为避免保存明文凭据，Cookie 未导入；请在调试页绑定 Secret Ref");
   if (basicUser) warnings.push(basicUser.includes(":") ? "\u4e3a\u907f\u514d\u4fdd\u5b58\u660e\u6587\u5bc6\u7801\uff0cBasic Auth \u5bc6\u7801\u672a\u5bfc\u5165\uff1b\u8bf7\u5728\u8c03\u8bd5\u9875\u7ed1\u5b9a Secret Ref" : "Basic Auth \u672a\u5305\u542b\u5bc6\u7801\uff0c\u8bf7\u5728\u8c03\u8bd5\u9875\u7ed1\u5b9a Secret Ref");
   if (formParts.length) warnings.push(`\u68c0\u6d4b\u5230 ${formParts.length} \u4e2a form-data \u5b57\u6bb5\uff1b\u6587\u4ef6\u5b57\u6bb5\u9700\u5bfc\u5165\u540e\u91cd\u65b0\u9009\u62e9\u6587\u4ef6`);
   const request: HttpWorkbenchRequest = { name: (() => { try { return new URL(url).pathname || "/"; } catch { return "\u672a\u547d\u540d\u63a5\u53e3"; } })(), method, url, headers, body, timeoutMs, variables: {}, assertions: [], auth: basicUser ? { kind: "basic", username: basicUser.split(":", 1)[0], secret_ref: null } : null, followRedirects, retryMax: 0, retryBackoffMs: 250, proxy, tlsVerify };

@@ -12,8 +12,14 @@ use futures::StreamExt;
 use prost::Message as ProstMessage;
 use prost_reflect::{DescriptorPool, DynamicMessage, MethodDescriptor};
 use reqwest::Client;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::time::Instant as TokioInstant;
 use tokio_util::sync::CancellationToken;
+
+const MAX_GRPC_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_GRPC_REQUEST_BYTES: usize = 64 * 1024 * 1024;
+const MAX_GRPC_REFLECTION_BYTES: usize = 4 * 1024 * 1024;
+const MAX_GRPC_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, ProstMessage)]
 struct ReflectionRequest {
@@ -94,7 +100,15 @@ fn take_frame(buffer: &mut BytesMut) -> Result<Option<Vec<u8>>, DriverError> {
     }
     let compressed = buffer[0];
     let length = u32::from_be_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]) as usize;
-    if buffer.len() < length + 5 {
+    if length > MAX_GRPC_MESSAGE_BYTES {
+        return Err(DriverError::Protocol(format!(
+            "gRPC message exceeds the {MAX_GRPC_MESSAGE_BYTES}-byte limit"
+        )));
+    }
+    let frame_length = length
+        .checked_add(5)
+        .ok_or_else(|| DriverError::Protocol("gRPC frame length overflow".into()))?;
+    if buffer.len() < frame_length {
         return Ok(None);
     }
     buffer.advance(5);
@@ -171,6 +185,9 @@ async fn reflect_method_at_path(
     target: &str,
     payload: &core_domain::GrpcPayload,
     reflection_service: &str,
+    deadline: TokioInstant,
+    timeout_ms: u64,
+    cancel: &CancellationToken,
 ) -> Result<MethodDescriptor, DriverError> {
     let request = ReflectionRequest {
         host: String::new(),
@@ -190,24 +207,44 @@ async fn reflect_method_at_path(
     for (name, value) in &payload.metadata {
         builder = builder.header(name, value);
     }
-    let response = builder
-        .send()
-        .await
-        .map_err(|error| DriverError::Connection(format!("gRPC reflection: {error:#}")))?;
+    let response = tokio::select! {
+        _ = cancel.cancelled() => return Err(DriverError::Cancelled),
+        result = tokio::time::timeout_at(deadline, builder.send()) => {
+            result.map_err(|_| deadline_error(timeout_ms))?
+                .map_err(|error| DriverError::Connection(format!("gRPC reflection: {error:#}")))?
+        }
+    };
     if !response.status().is_success() {
         return Err(DriverError::Protocol(format!(
             "gRPC reflection returned HTTP {}",
             response.status()
         )));
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| DriverError::Protocol(error.to_string()))?;
-    let mut framed = BytesMut::from(bytes.as_ref());
-    let message = take_frame(&mut framed)?.ok_or_else(|| {
-        DriverError::Protocol("gRPC reflection returned no response message".into())
-    })?;
+    let mut stream = response.bytes_stream();
+    let mut framed = BytesMut::new();
+    let message = loop {
+        if let Some(message) = take_frame(&mut framed)? {
+            break message;
+        }
+        let next = tokio::select! {
+            _ = cancel.cancelled() => return Err(DriverError::Cancelled),
+            result = tokio::time::timeout_at(deadline, stream.next()) => {
+                result.map_err(|_| deadline_error(timeout_ms))?
+            }
+        };
+        let Some(chunk) = next else {
+            return Err(DriverError::Protocol(
+                "gRPC reflection returned no response message".into(),
+            ));
+        };
+        let chunk = chunk.map_err(|error| DriverError::Protocol(error.to_string()))?;
+        if framed.len().saturating_add(chunk.len()) > MAX_GRPC_REFLECTION_BYTES {
+            return Err(DriverError::Protocol(format!(
+                "gRPC reflection response exceeds the {MAX_GRPC_REFLECTION_BYTES}-byte limit"
+            )));
+        }
+        framed.extend_from_slice(&chunk);
+    };
     let response = ReflectionResponse::decode(message.as_slice()).map_err(|error| {
         DriverError::Protocol(format!("invalid gRPC reflection response: {error}"))
     })?;
@@ -248,27 +285,38 @@ async fn reflect_method(
     client: &Client,
     target: &str,
     payload: &core_domain::GrpcPayload,
+    deadline: TokioInstant,
+    timeout_ms: u64,
+    cancel: &CancellationToken,
 ) -> Result<MethodDescriptor, DriverError> {
     match reflect_method_at_path(
         client,
         target,
         payload,
         "grpc.reflection.v1.ServerReflection",
+        deadline,
+        timeout_ms,
+        cancel,
     )
     .await
     {
         Ok(method) => Ok(method),
+        Err(error @ (DriverError::Timeout(_) | DriverError::Cancelled)) => Err(error),
         Err(v1_error) => reflect_method_at_path(
             client,
             target,
             payload,
             "grpc.reflection.v1alpha.ServerReflection",
+            deadline,
+            timeout_ms,
+            cancel,
         )
         .await
-        .map_err(|v1alpha_error| {
-            DriverError::Protocol(format!(
-                "gRPC reflection failed with v1 ({v1_error}) and v1alpha ({v1alpha_error})"
-            ))
+        .map_err(|v1alpha_error| match v1alpha_error {
+            error @ (DriverError::Timeout(_) | DriverError::Cancelled) => error,
+            error => DriverError::Protocol(format!(
+                "gRPC reflection failed with v1 ({v1_error}) and v1alpha ({error})"
+            )),
         }),
     }
 }
@@ -302,7 +350,7 @@ fn request_messages(
             DriverError::Validation("messageJson requires descriptorSetBase64".into())
         })?;
         let values = request_json_values(payload, json)?;
-        return values
+        let messages = values
             .into_iter()
             .map(|value| {
                 let text = serde_json::to_string(&value)
@@ -314,7 +362,9 @@ fn request_messages(
                         DriverError::Validation(format!("gRPC request JSON is invalid: {error}"))
                     })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
+        validate_request_message_sizes(&messages)?;
+        return Ok(messages);
     }
     let values: Vec<&str> =
         if payload.mode == "client_streaming" || payload.mode == "bidi_streaming" {
@@ -326,14 +376,40 @@ fn request_messages(
         } else {
             vec![payload.message_base64.as_str()]
         };
-    values
+    let messages = values
         .into_iter()
         .map(|value| {
             BASE64
                 .decode(value.trim())
                 .map_err(|error| DriverError::Validation(error.to_string()))
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_request_message_sizes(&messages)?;
+    Ok(messages)
+}
+
+fn validate_request_message_sizes(messages: &[Vec<u8>]) -> Result<(), DriverError> {
+    let mut total = 0usize;
+    for message in messages {
+        if message.len() > MAX_GRPC_MESSAGE_BYTES {
+            return Err(DriverError::Validation(format!(
+                "gRPC request message exceeds the {MAX_GRPC_MESSAGE_BYTES}-byte limit"
+            )));
+        }
+        total = total
+            .checked_add(message.len().saturating_add(5))
+            .ok_or_else(|| DriverError::Validation("gRPC request size overflow".into()))?;
+        if total > MAX_GRPC_REQUEST_BYTES {
+            return Err(DriverError::Validation(format!(
+                "gRPC request exceeds the {MAX_GRPC_REQUEST_BYTES}-byte limit"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn deadline_error(timeout_ms: u64) -> DriverError {
+    DriverError::Timeout(format!("gRPC request exceeded {timeout_ms} ms"))
 }
 
 fn response_preview(message: &[u8], method: Option<&MethodDescriptor>, index: usize) -> String {
@@ -453,6 +529,10 @@ impl ProtocolDriver for GrpcDriver {
                 "gRPC driver requires gRPC payload".into(),
             ));
         };
+        let timeout_ms = request.timeout_ms.max(1);
+        let deadline = TokioInstant::now()
+            .checked_add(Duration::from_millis(timeout_ms))
+            .ok_or_else(|| DriverError::Validation("gRPC timeout is too large".into()))?;
         let method_descriptor = match method_descriptor(payload)? {
             Some(method) => Some(method),
             None if payload
@@ -460,7 +540,17 @@ impl ProtocolDriver for GrpcDriver {
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty()) =>
             {
-                Some(reflect_method(&self.client, &request.target, payload).await?)
+                Some(
+                    reflect_method(
+                        &self.client,
+                        &request.target,
+                        payload,
+                        deadline,
+                        timeout_ms,
+                        &cancel,
+                    )
+                    .await?,
+                )
             }
             None => None,
         };
@@ -491,7 +581,13 @@ impl ProtocolDriver for GrpcDriver {
         for (name, value) in &payload.metadata {
             builder = builder.header(name, value);
         }
-        let response = tokio::select! { _ = cancel.cancelled() => return Err(DriverError::Cancelled), result = builder.send() => result.map_err(|error| DriverError::Connection(error.to_string()))? };
+        let response = tokio::select! {
+            _ = cancel.cancelled() => return Err(DriverError::Cancelled),
+            result = tokio::time::timeout_at(deadline, builder.send()) => {
+                result.map_err(|_| deadline_error(timeout_ms))?
+                    .map_err(|error| DriverError::Connection(error.to_string()))?
+            }
+        };
         let status = response.status();
         let headers = response
             .headers()
@@ -534,11 +630,25 @@ impl ProtocolDriver for GrpcDriver {
         let mut stream = response.bytes_stream();
         let mut buffer = BytesMut::new();
         let mut bytes_received = 0u64;
+        let mut wire_bytes_received = 0usize;
         let mut messages = 0usize;
         loop {
-            let next = tokio::select! { _ = cancel.cancelled() => return Err(DriverError::Cancelled), next = stream.next() => next };
+            let next = tokio::select! {
+                _ = cancel.cancelled() => return Err(DriverError::Cancelled),
+                result = tokio::time::timeout_at(deadline, stream.next()) => {
+                    result.map_err(|_| deadline_error(timeout_ms))?
+                }
+            };
             let Some(chunk) = next else { break };
             let chunk = chunk.map_err(|error| DriverError::Protocol(error.to_string()))?;
+            wire_bytes_received = wire_bytes_received
+                .checked_add(chunk.len())
+                .ok_or_else(|| DriverError::Protocol("gRPC response size overflow".into()))?;
+            if wire_bytes_received > MAX_GRPC_RESPONSE_BYTES {
+                return Err(DriverError::Protocol(format!(
+                    "gRPC response exceeds the {MAX_GRPC_RESPONSE_BYTES}-byte limit"
+                )));
+            }
             buffer.extend_from_slice(&chunk);
             while let Some(message) = take_frame(&mut buffer)? {
                 bytes_received += message.len() as u64;
@@ -624,6 +734,45 @@ mod tests {
         let mut frame = BytesMut::from(&encode_frame(b"x")[..]);
         frame[0] = 1;
         assert!(take_frame(&mut frame).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_frame_before_buffering_the_body() {
+        let declared = (MAX_GRPC_MESSAGE_BYTES as u32 + 1).to_be_bytes();
+        let mut frame =
+            BytesMut::from(&[0, declared[0], declared[1], declared[2], declared[3]][..]);
+        assert!(take_frame(&mut frame).is_err());
+        assert_eq!(frame.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn request_deadline_covers_waiting_for_response_headers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            drop(stream);
+        });
+        let mut request = RequestEnvelope::http_get("deadline", format!("http://{address}"));
+        request.timeout_ms = 30;
+        request.payload = ProtocolPayload::Grpc(GrpcPayload {
+            service: "test.Echo".into(),
+            method: "Say".into(),
+            message_base64: BASE64.encode(b"x"),
+            mode: "unary".into(),
+            metadata: vec![],
+            descriptor_set_base64: None,
+            message_json: None,
+        });
+        let execution_id = ExecutionId(request.id.0);
+        let (sink, _events) = EventSink::channel();
+        let error = GrpcDriver::new()
+            .execute(request, sink, CancellationToken::new(), execution_id)
+            .await
+            .unwrap_err();
+        server.abort();
+        assert!(matches!(error, DriverError::Timeout(_)), "{error:?}");
     }
 
     #[test]

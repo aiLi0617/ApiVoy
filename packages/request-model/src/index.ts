@@ -53,13 +53,13 @@ export type ProtocolPayload =
   | ({ type: "grpc" } & GrpcPayload)
   | { type: "raw"; value: unknown };
 
-/** Request authentication. Bearer tokens may be stored directly when explicitly selected. */
+/** Request authentication. Literal bearer tokens are transient execution input only. */
 export interface AuthRef {
   /** `none` | `bearer` | `basic` | `api_key` | `oauth2_client_credentials` */
   kind: string;
   /** Secret store name for bearer token, basic password, or API key. */
   secret_ref?: string | null;
-  /** Literal bearer token saved with the request when explicitly selected. */
+  /** Literal bearer token supplied to the execution transport; never persist it. */
   token?: string | null;
   /** Basic auth username (may contain `{{var}}`). */
   username?: string | null;

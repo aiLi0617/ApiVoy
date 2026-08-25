@@ -3,7 +3,7 @@
 //! Listens on 127.0.0.1 by default. Container deployments may explicitly override the bind address.
 //! Shares the same protocol-core crates as Desktop; ships as an independent binary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::fs;
 use std::net::SocketAddr;
@@ -63,6 +63,9 @@ const HEADER_PROTOCOL_API_VERSION: &str = "x-apivoy-protocol-api-version";
 const HEADER_CLIENT: &str = "x-apivoy-client";
 const HEADER_CLIENT_VERSION: &str = "x-apivoy-client-version";
 const MAX_PERSISTED_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const TCP_SESSION_TICKET_PREFIX: &str = "apivoy-ticket.";
+const TCP_SESSION_TICKET_LIFETIME_SECONDS: u64 = 30;
+const MAX_PENDING_TCP_SESSION_TICKETS: usize = 256;
 
 #[derive(Clone)]
 struct AppState {
@@ -70,6 +73,8 @@ struct AppState {
     http_driver: Arc<HttpDriver>,
     token: Arc<String>,
     sessions: Arc<Mutex<HashMap<String, Instant>>>,
+    tcp_session_tickets: Arc<Mutex<HashMap<String, TcpSessionTicket>>>,
+    allowed_origins: Arc<HashSet<String>>,
     secrets: Arc<SecretStore>,
     store: Arc<Mutex<LocalStore>>,
     executions: Arc<Mutex<HashMap<Uuid, ExecutionSlot>>>,
@@ -219,15 +224,24 @@ struct SaveEnvironmentBody {
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct EnvironmentQuery { project_id: Option<String> }
+struct EnvironmentQuery {
+    project_id: Option<String>,
+}
 
 #[derive(Deserialize)]
-#[serde(rename_all="camelCase")]
-struct SaveScriptBody { project_id:String, name:String, language:String, source:String }
+#[serde(rename_all = "camelCase")]
+struct SaveScriptBody {
+    project_id: String,
+    name: String,
+    language: String,
+    source: String,
+}
 
 #[derive(Deserialize)]
-#[serde(rename_all="camelCase")]
-struct ScriptQuery { project_id:String }
+#[serde(rename_all = "camelCase")]
+struct ScriptQuery {
+    project_id: String,
+}
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -302,18 +316,28 @@ struct MoveRequestBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ApiDefinitionQuery { project_id: String }
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SaveApiDefinitionBody {
-    id: Option<String>, project_id: String, module_id: Option<String>, name: String,
-    format: String, file_name: String, content: String,
+struct ApiDefinitionQuery {
+    project_id: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BindRequestDefinitionBody { definition_id: String, operation_ref: Option<String> }
+struct SaveApiDefinitionBody {
+    id: Option<String>,
+    project_id: String,
+    module_id: Option<String>,
+    name: String,
+    format: String,
+    file_name: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BindRequestDefinitionBody {
+    definition_id: String,
+    operation_ref: Option<String>,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -339,7 +363,18 @@ struct CookieMutation {
 #[derive(Deserialize)]
 struct TcpSessionQuery {
     target: String,
-    token: String,
+}
+
+struct TcpSessionTicket {
+    target: String,
+    expires_at: Instant,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TcpSessionTicketResponse {
+    ticket: String,
+    expires_in_seconds: u64,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -386,11 +421,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plugins =
         PluginManager::new_from_env(config_dir().join("plugins"), plugin_permission_grants())
             .map_err(|error| error.to_string())?;
+    let origins = allowed_origins()?;
+    let allowed_origin_strings = origins
+        .iter()
+        .filter_map(|origin| origin.to_str().ok())
+        .map(str::to_owned)
+        .collect();
     let state = AppState {
         engine: Arc::new(RwLock::new(engine)),
         http_driver,
         token,
         sessions: Arc::new(Mutex::new(HashMap::new())),
+        tcp_session_tickets: Arc::new(Mutex::new(HashMap::new())),
+        allowed_origins: Arc::new(allowed_origin_strings),
         secrets: Arc::new(SecretStore::with_keychain()),
         store: Arc::new(Mutex::new(store)),
         executions: Arc::new(Mutex::new(HashMap::new())),
@@ -400,7 +443,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         capture: CaptureProxy::new(),
     };
 
-    let origins = allowed_origins()?;
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([
@@ -424,6 +466,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protected = Router::new()
         .route("/v1/capabilities", get(capabilities))
         .route("/v1/session", post(create_session))
+        .route("/v1/tcp-session-ticket", post(create_tcp_session_ticket))
         .route("/v1/executions", post(start_execution))
         .route("/v1/executions/{id}/events", get(execution_events))
         .route("/v1/executions/{id}/cancel", post(cancel_execution))
@@ -442,8 +485,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/v1/environments/default", get(get_default_environment))
         .route("/v1/environments/default", put(put_default_environment))
-        .route("/v1/environments", get(list_environments).post(create_environment))
-        .route("/v1/environments/{id}", put(put_environment).delete(delete_environment))
+        .route(
+            "/v1/environments",
+            get(list_environments).post(create_environment),
+        )
+        .route(
+            "/v1/environments/{id}",
+            put(put_environment).delete(delete_environment),
+        )
         .route("/v1/scripts", get(list_scripts).post(create_script))
         .route("/v1/scripts/{id}", put(put_script).delete(delete_script))
         .route("/v1/history", get(list_history))
@@ -456,11 +505,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/requests/{id}",
             get(get_request).patch(move_request).delete(delete_request),
         )
-        .route("/v1/api-definitions", get(list_api_definitions).post(save_api_definition))
-        .route("/v1/api-definitions/{id}", get(get_api_definition).put(save_api_definition_at_id).delete(delete_api_definition))
+        .route(
+            "/v1/api-definitions",
+            get(list_api_definitions).post(save_api_definition),
+        )
+        .route(
+            "/v1/api-definitions/{id}",
+            get(get_api_definition)
+                .put(save_api_definition_at_id)
+                .delete(delete_api_definition),
+        )
         .route(
             "/v1/requests/{id}/definition-binding",
-            get(get_request_definition_binding).put(bind_request_definition).delete(unbind_request_definition),
+            get(get_request_definition_binding)
+                .put(bind_request_definition)
+                .delete(unbind_request_definition),
         )
         .route("/v1/workspace-tree", get(get_workspace_tree))
         .route("/v1/workspaces", post(create_workspace))
@@ -539,7 +598,9 @@ fn agent_bind_addr() -> Result<SocketAddr, Box<dyn std::error::Error>> {
 
 fn allowed_origins() -> Result<Vec<HeaderValue>, Box<dyn std::error::Error>> {
     std::env::var("APIVOY_ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "http://localhost:5180".to_string())
+        .unwrap_or_else(|_| {
+            "http://localhost:5180,http://tauri.localhost,tauri://localhost".to_string()
+        })
         .split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -649,6 +710,39 @@ async fn create_session(State(state): State<AppState>) -> Json<SessionResponse> 
         token,
         expires_in_seconds: LIFETIME_SECONDS,
     })
+}
+
+async fn create_tcp_session_ticket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<TcpSessionQuery>,
+) -> Result<Json<TcpSessionTicketResponse>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    let target = body.target.trim();
+    if target.is_empty() || target.len() > 2_048 || target.contains("\r") || target.contains("\n") {
+        return Err((StatusCode::BAD_REQUEST, "invalid TCP target".into()));
+    }
+    let ticket = Uuid::new_v4().simple().to_string();
+    let now = Instant::now();
+    let mut tickets = state.tcp_session_tickets.lock().await;
+    tickets.retain(|_, entry| entry.expires_at > now);
+    if tickets.len() >= MAX_PENDING_TCP_SESSION_TICKETS {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many pending TCP session tickets".into(),
+        ));
+    }
+    tickets.insert(
+        ticket.clone(),
+        TcpSessionTicket {
+            target: target.to_owned(),
+            expires_at: now + Duration::from_secs(TCP_SESSION_TICKET_LIFETIME_SECONDS),
+        },
+    );
+    Ok(Json(TcpSessionTicketResponse {
+        ticket,
+        expires_in_seconds: TCP_SESSION_TICKET_LIFETIME_SECONDS,
+    }))
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -1002,27 +1096,47 @@ async fn run_websocket_mock(mut socket: WebSocket, rule: MockRule) {
 async fn tcp_session(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
-    Query(query): Query<TcpSessionQuery>,
+    headers: HeaderMap,
 ) -> Response {
-    let valid_master = query.token.as_bytes() == state.token.as_bytes();
-    let valid_session = {
-        let now = Instant::now();
-        let mut sessions = state.sessions.lock().await;
-        sessions.retain(|_, expires| *expires > now);
-        sessions
-            .get(&query.token)
-            .is_some_and(|expires| *expires > now)
+    if let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    {
+        if !state.allowed_origins.contains(origin) {
+            warn!(%origin, "rejected TCP WebSocket from untrusted origin");
+            return (StatusCode::FORBIDDEN, "untrusted WebSocket origin").into_response();
+        }
+    }
+    let Some(ticket) = tcp_session_ticket_from_headers(&headers) else {
+        return (StatusCode::UNAUTHORIZED, "missing TCP session ticket").into_response();
     };
-    if !valid_master && !valid_session {
+    let target = {
+        let now = Instant::now();
+        let mut tickets = state.tcp_session_tickets.lock().await;
+        tickets.retain(|_, entry| entry.expires_at > now);
+        tickets.remove(ticket).map(|entry| entry.target)
+    };
+    let Some(target) = target else {
         return (
             StatusCode::UNAUTHORIZED,
-            "invalid or expired pairing/session token",
+            "invalid or expired TCP session ticket",
         )
             .into_response();
-    }
-    let target = query.target;
-    ws.on_upgrade(move |socket| relay_tcp_session(socket, target))
+    };
+    ws.protocols(["apivoy"])
+        .on_upgrade(move |socket| relay_tcp_session(socket, target))
         .into_response()
+}
+
+fn tcp_session_ticket_from_headers(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::SEC_WEBSOCKET_PROTOCOL)?
+        .to_str()
+        .ok()?
+        .split(',')
+        .map(str::trim)
+        .find_map(|protocol| protocol.strip_prefix(TCP_SESSION_TICKET_PREFIX))
+        .filter(|ticket| !ticket.is_empty())
 }
 
 async fn relay_tcp_session(mut socket: WebSocket, target: String) {
@@ -1035,7 +1149,11 @@ async fn relay_tcp_session(mut socket: WebSocket, target: String) {
         }
     };
     let connected = serde_json::json!({ "type": "connected", "target": target }).to_string();
-    if socket.send(AxumWsMessage::Text(connected.into())).await.is_err() {
+    if socket
+        .send(AxumWsMessage::Text(connected.into()))
+        .await
+        .is_err()
+    {
         return;
     }
     let (mut tcp_read, mut tcp_write) = tokio::io::split(stream);
@@ -1255,38 +1373,186 @@ async fn put_default_environment(
     Ok(Json(env))
 }
 
-async fn list_environments(State(state): State<AppState>, headers: HeaderMap, Query(query): Query<EnvironmentQuery>) -> Result<Json<Vec<EnvironmentRecord>>, (StatusCode,String)> {
+async fn list_environments(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<EnvironmentQuery>,
+) -> Result<Json<Vec<EnvironmentRecord>>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.list_environments(query.project_id.as_deref()).map(Json).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))
+    state
+        .store
+        .lock()
+        .await
+        .list_environments(query.project_id.as_deref())
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
-async fn create_environment(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<SaveEnvironmentBody>) -> Result<(StatusCode,Json<EnvironmentRecord>),(StatusCode,String)> {
+async fn create_environment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SaveEnvironmentBody>,
+) -> Result<(StatusCode, Json<EnvironmentRecord>), (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    let env = EnvironmentRecord { id: format!("env-{}", uuid::Uuid::new_v4()), project_id: body.project_id.unwrap_or_else(|| "default-project".into()), name: body.name.unwrap_or_else(|| "New environment".into()), variables: body.variables, secret_refs: body.secret_refs, updated_at: Utc::now() };
-    state.store.lock().await.save_environment(&env).map_err(|e| (StatusCode::BAD_REQUEST,e.to_string()))?;
-    Ok((StatusCode::CREATED,Json(env)))
+    let env = EnvironmentRecord {
+        id: format!("env-{}", uuid::Uuid::new_v4()),
+        project_id: body.project_id.unwrap_or_else(|| "default-project".into()),
+        name: body.name.unwrap_or_else(|| "New environment".into()),
+        variables: body.variables,
+        secret_refs: body.secret_refs,
+        updated_at: Utc::now(),
+    };
+    state
+        .store
+        .lock()
+        .await
+        .save_environment(&env)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok((StatusCode::CREATED, Json(env)))
 }
 
-async fn put_environment(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<SaveEnvironmentBody>) -> Result<Json<EnvironmentRecord>,(StatusCode,String)> {
+async fn put_environment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<SaveEnvironmentBody>,
+) -> Result<Json<EnvironmentRecord>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    let mut env = state.store.lock().await.get_environment(&id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))?.ok_or((StatusCode::NOT_FOUND,"environment not found".into()))?;
-    if let Some(name) = body.name { env.name = name; }
-    if let Some(project_id) = body.project_id { env.project_id = project_id; }
-    env.variables = body.variables; env.secret_refs = body.secret_refs; env.updated_at = Utc::now();
-    state.store.lock().await.save_environment(&env).map_err(|e| (StatusCode::BAD_REQUEST,e.to_string()))?;
+    let mut env = state
+        .store
+        .lock()
+        .await
+        .get_environment(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "environment not found".into()))?;
+    if let Some(name) = body.name {
+        env.name = name;
+    }
+    if let Some(project_id) = body.project_id {
+        env.project_id = project_id;
+    }
+    env.variables = body.variables;
+    env.secret_refs = body.secret_refs;
+    env.updated_at = Utc::now();
+    state
+        .store
+        .lock()
+        .await
+        .save_environment(&env)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     Ok(Json(env))
 }
 
-async fn delete_environment(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode,(StatusCode,String)> {
+async fn delete_environment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.delete_environment(&id).map_err(|e| (StatusCode::BAD_REQUEST,e.to_string()))?;
+    state
+        .store
+        .lock()
+        .await
+        .delete_environment(&id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn list_scripts(State(state):State<AppState>,headers:HeaderMap,Query(query):Query<ScriptQuery>)->Result<Json<Vec<ScriptRecord>>,(StatusCode,String)>{check_protocol_version(&headers)?;state.store.lock().await.list_scripts(&query.project_id).map(Json).map_err(|e|(StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))}
-async fn create_script(State(state):State<AppState>,headers:HeaderMap,Json(body):Json<SaveScriptBody>)->Result<(StatusCode,Json<ScriptRecord>),(StatusCode,String)>{check_protocol_version(&headers)?;if body.language!="javascript"&&body.language!="typescript"{return Err((StatusCode::BAD_REQUEST,"unsupported script language".into()))}let now=Utc::now();let item=ScriptRecord{id:format!("script-{}",uuid::Uuid::new_v4()),project_id:body.project_id,name:body.name,language:body.language,source:body.source,created_at:now,updated_at:now};state.store.lock().await.save_script(&item).map_err(|e|(StatusCode::BAD_REQUEST,e.to_string()))?;Ok((StatusCode::CREATED,Json(item)))}
-async fn put_script(State(state):State<AppState>,headers:HeaderMap,Path(id):Path<String>,Json(body):Json<SaveScriptBody>)->Result<Json<ScriptRecord>,(StatusCode,String)>{check_protocol_version(&headers)?;if body.language!="javascript"&&body.language!="typescript"{return Err((StatusCode::BAD_REQUEST,"unsupported script language".into()))}let previous=state.store.lock().await.get_script(&id).map_err(|e|(StatusCode::INTERNAL_SERVER_ERROR,e.to_string()))?.ok_or((StatusCode::NOT_FOUND,"script not found".into()))?;let item=ScriptRecord{id,project_id:body.project_id,name:body.name,language:body.language,source:body.source,created_at:previous.created_at,updated_at:Utc::now()};state.store.lock().await.save_script(&item).map_err(|e|(StatusCode::BAD_REQUEST,e.to_string()))?;Ok(Json(item))}
-async fn delete_script(State(state):State<AppState>,headers:HeaderMap,Path(id):Path<String>)->Result<StatusCode,(StatusCode,String)>{check_protocol_version(&headers)?;state.store.lock().await.delete_script(&id).map_err(|e|(StatusCode::BAD_REQUEST,e.to_string()))?;Ok(StatusCode::NO_CONTENT)}
+async fn list_scripts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ScriptQuery>,
+) -> Result<Json<Vec<ScriptRecord>>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state
+        .store
+        .lock()
+        .await
+        .list_scripts(&query.project_id)
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+async fn create_script(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SaveScriptBody>,
+) -> Result<(StatusCode, Json<ScriptRecord>), (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    if body.language != "javascript" && body.language != "typescript" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "unsupported script language".into(),
+        ));
+    }
+    let now = Utc::now();
+    let item = ScriptRecord {
+        id: format!("script-{}", uuid::Uuid::new_v4()),
+        project_id: body.project_id,
+        name: body.name,
+        language: body.language,
+        source: body.source,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .store
+        .lock()
+        .await
+        .save_script(&item)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok((StatusCode::CREATED, Json(item)))
+}
+async fn put_script(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<SaveScriptBody>,
+) -> Result<Json<ScriptRecord>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    if body.language != "javascript" && body.language != "typescript" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "unsupported script language".into(),
+        ));
+    }
+    let previous = state
+        .store
+        .lock()
+        .await
+        .get_script(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "script not found".into()))?;
+    let item = ScriptRecord {
+        id,
+        project_id: body.project_id,
+        name: body.name,
+        language: body.language,
+        source: body.source,
+        created_at: previous.created_at,
+        updated_at: Utc::now(),
+    };
+    state
+        .store
+        .lock()
+        .await
+        .save_script(&item)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok(Json(item))
+}
+async fn delete_script(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    state
+        .store
+        .lock()
+        .await
+        .delete_script(&id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
 async fn list_history(
     State(state): State<AppState>,
@@ -1451,55 +1717,160 @@ async fn move_request(
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
 
-async fn list_api_definitions(State(state): State<AppState>, headers: HeaderMap, Query(query): Query<ApiDefinitionQuery>) -> Result<Json<Vec<ApiDefinitionRecord>>, (StatusCode, String)> {
+async fn list_api_definitions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ApiDefinitionQuery>,
+) -> Result<Json<Vec<ApiDefinitionRecord>>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.list_api_definitions(&query.project_id).map(Json).map_err(internal_store_error)
+    state
+        .store
+        .lock()
+        .await
+        .list_api_definitions(&query.project_id)
+        .map(Json)
+        .map_err(internal_store_error)
 }
 
-async fn save_api_definition(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<SaveApiDefinitionBody>) -> Result<(StatusCode, Json<ApiDefinitionRecord>), (StatusCode, String)> {
+async fn save_api_definition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SaveApiDefinitionBody>,
+) -> Result<(StatusCode, Json<ApiDefinitionRecord>), (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    save_api_definition_record(state, body, None).await.map(|item| (StatusCode::CREATED, Json(item)))
+    save_api_definition_record(state, body, None)
+        .await
+        .map(|item| (StatusCode::CREATED, Json(item)))
 }
 
-async fn save_api_definition_at_id(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<SaveApiDefinitionBody>) -> Result<Json<ApiDefinitionRecord>, (StatusCode, String)> {
+async fn save_api_definition_at_id(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<SaveApiDefinitionBody>,
+) -> Result<Json<ApiDefinitionRecord>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    save_api_definition_record(state, body, Some(id)).await.map(Json)
+    save_api_definition_record(state, body, Some(id))
+        .await
+        .map(Json)
 }
 
-async fn save_api_definition_record(state: AppState, body: SaveApiDefinitionBody, path_id: Option<String>) -> Result<ApiDefinitionRecord, (StatusCode, String)> {
-    let id = path_id.or(body.id).unwrap_or_else(|| Uuid::new_v4().to_string());
-    let existing = state.store.lock().await.get_api_definition(&id).map_err(internal_store_error)?;
+async fn save_api_definition_record(
+    state: AppState,
+    body: SaveApiDefinitionBody,
+    path_id: Option<String>,
+) -> Result<ApiDefinitionRecord, (StatusCode, String)> {
+    let id = path_id
+        .or(body.id)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let existing = state
+        .store
+        .lock()
+        .await
+        .get_api_definition(&id)
+        .map_err(internal_store_error)?;
     let now = Utc::now();
-    let record = ApiDefinitionRecord { id, project_id: body.project_id, module_id: body.module_id, name: body.name, format: body.format, file_name: body.file_name, content: body.content, created_at: existing.map(|item| item.created_at).unwrap_or(now), updated_at: now };
-    state.store.lock().await.save_api_definition(&record).map_err(internal_store_error)?;
+    let record = ApiDefinitionRecord {
+        id,
+        project_id: body.project_id,
+        module_id: body.module_id,
+        name: body.name,
+        format: body.format,
+        file_name: body.file_name,
+        content: body.content,
+        created_at: existing.map(|item| item.created_at).unwrap_or(now),
+        updated_at: now,
+    };
+    state
+        .store
+        .lock()
+        .await
+        .save_api_definition(&record)
+        .map_err(internal_store_error)?;
     Ok(record)
 }
 
-async fn get_api_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<ApiDefinitionRecord>, (StatusCode, String)> {
+async fn get_api_definition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ApiDefinitionRecord>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.get_api_definition(&id).map_err(internal_store_error)?.map(Json).ok_or_else(|| (StatusCode::NOT_FOUND, "API definition not found".into()))
+    state
+        .store
+        .lock()
+        .await
+        .get_api_definition(&id)
+        .map_err(internal_store_error)?
+        .map(Json)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "API definition not found".into()))
 }
 
-async fn delete_api_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode, (StatusCode, String)> {
+async fn delete_api_definition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.delete_api_definition(&id).map(|_| StatusCode::NO_CONTENT).map_err(internal_store_error)
+    state
+        .store
+        .lock()
+        .await
+        .delete_api_definition(&id)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(internal_store_error)
 }
 
-async fn get_request_definition_binding(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<Option<RequestDefinitionBinding>>, (StatusCode, String)> {
+async fn get_request_definition_binding(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Option<RequestDefinitionBinding>>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.get_request_definition_binding(&id).map(Json).map_err(internal_store_error)
+    state
+        .store
+        .lock()
+        .await
+        .get_request_definition_binding(&id)
+        .map(Json)
+        .map_err(internal_store_error)
 }
 
-async fn bind_request_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<BindRequestDefinitionBody>) -> Result<Json<RequestDefinitionBinding>, (StatusCode, String)> {
+async fn bind_request_definition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<BindRequestDefinitionBody>,
+) -> Result<Json<RequestDefinitionBinding>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    let binding = RequestDefinitionBinding { request_id: id, definition_id: body.definition_id, operation_ref: body.operation_ref, updated_at: Utc::now() };
-    state.store.lock().await.bind_request_definition(&binding).map_err(internal_store_error)?;
+    let binding = RequestDefinitionBinding {
+        request_id: id,
+        definition_id: body.definition_id,
+        operation_ref: body.operation_ref,
+        updated_at: Utc::now(),
+    };
+    state
+        .store
+        .lock()
+        .await
+        .bind_request_definition(&binding)
+        .map_err(internal_store_error)?;
     Ok(Json(binding))
 }
 
-async fn unbind_request_definition(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<String>) -> Result<StatusCode, (StatusCode, String)> {
+async fn unbind_request_definition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.unbind_request_definition(&id).map(|_| StatusCode::NO_CONTENT).map_err(internal_store_error)
+    state
+        .store
+        .lock()
+        .await
+        .unbind_request_definition(&id)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(internal_store_error)
 }
 
 async fn get_workspace_tree(
@@ -1520,7 +1891,11 @@ async fn get_workspace_tree(
         );
     }
     for project in &projects {
-        modules.extend(store.list_modules(&project.id).map_err(internal_store_error)?);
+        modules.extend(
+            store
+                .list_modules(&project.id)
+                .map_err(internal_store_error)?,
+        );
         collections.extend(
             store
                 .list_collections(&project.id)
@@ -1539,13 +1914,22 @@ async fn get_workspace_tree(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CreateModuleBody { project_id: String, name: String }
+struct CreateModuleBody {
+    project_id: String,
+    name: String,
+}
 
 async fn create_module(
-    State(state): State<AppState>, headers: HeaderMap, Json(body): Json<CreateModuleBody>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateModuleBody>,
 ) -> Result<(StatusCode, Json<ModuleRecord>), (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state.store.lock().await.create_module(&body.project_id, &body.name)
+    state
+        .store
+        .lock()
+        .await
+        .create_module(&body.project_id, &body.name)
         .map(|record| (StatusCode::CREATED, Json(record)))
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
@@ -1703,7 +2087,12 @@ async fn create_collection(
         .store
         .lock()
         .await
-        .create_collection_in_module(&body.project_id, body.module_id.as_deref(), body.parent_id.as_deref(), &body.name)
+        .create_collection_in_module(
+            &body.project_id,
+            body.module_id.as_deref(),
+            body.parent_id.as_deref(),
+            &body.name,
+        )
         .map(|record| (StatusCode::CREATED, Json(record)))
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
@@ -2088,5 +2477,15 @@ mod tests {
             select_mock_rule_id(&rules, "GET", "/same"),
             Some(exact_high_id)
         );
+    }
+
+    #[test]
+    fn tcp_ticket_is_read_from_websocket_subprotocol() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("apivoy, apivoy-ticket.abc123"),
+        );
+        assert_eq!(tcp_session_ticket_from_headers(&headers), Some("abc123"));
     }
 }
