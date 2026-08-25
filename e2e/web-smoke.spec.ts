@@ -14,6 +14,15 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/#workbench=http");
 });
 
+test("starts with zero tabs and the default new-page content", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".workbench-tabs")).toBeVisible();
+  await expect(page.locator(".workbench-tab")).toHaveCount(0);
+  await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(0);
+  await expect(page.locator(".workbench-home")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "从这里开始探索接口" })).toBeVisible();
+});
+
 test("opens the grouped protocol workspace without horizontal overflow", async ({ page }) => {
   await expect(page).toHaveTitle("ApiVoy");
   await expect(page.locator(".workbench-tabs")).toBeVisible();
@@ -28,7 +37,7 @@ test("opens the grouped protocol workspace without horizontal overflow", async (
   await expect(separator).toHaveAttribute("aria-valuenow", String(initialRatio + 5));
 });
 
-test("tab overflow tools expose every tab and allow closing the final tab", async ({ page }, testInfo) => {
+test("tab overflow tools expose every tab and allow closing the final tab", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 760 });
   const sparseGeometry = await page.locator(".workbench-tabs").evaluate((bar) => {
     const scroll = bar.querySelector(".workbench-tab-scroll")!.getBoundingClientRect();
@@ -58,29 +67,45 @@ test("tab overflow tools expose every tab and allow closing the final tab", asyn
   await expect.poll(() => tabs.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
 
   const more = page.getByRole("button", { name: "更多页签操作" });
-  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
+  await more.dispatchEvent("mouseover");
   const menu = page.getByRole("menu", { name: "页签列表与操作" });
   await expect(menu).toBeVisible();
   await more.focus();
   await more.press("Escape");
   await expect(menu).toBeHidden();
   await more.evaluate((button) => (button as HTMLElement).blur());
-  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
+  await more.dispatchEvent("mouseover");
   await expect(menu.getByRole("menuitem")).toHaveCount(9);
+  const overflowGeometry = await more.evaluate((button) => {
+    const wrapper = button.closest(".workbench-tabs-more")!;
+    const content = button.closest(".workbench-content")!.getBoundingClientRect();
+    const menuBounds = wrapper.querySelector(".workbench-tabs-menu")!.getBoundingClientRect();
+    const trigger = wrapper.getBoundingClientRect();
+    return { className: wrapper.className, content: { left: content.left, right: content.right }, trigger: { left: trigger.left, right: trigger.right }, menu: { left: menuBounds.left, right: menuBounds.right } };
+  });
+  expect(overflowGeometry.menu.left, JSON.stringify(overflowGeometry)).toBeGreaterThanOrEqual(overflowGeometry.content.left);
+  expect(overflowGeometry.menu.right, JSON.stringify(overflowGeometry)).toBeLessThanOrEqual(overflowGeometry.content.right);
   await menu.getByRole("menuitem", { name: "关闭其他标签页" }).click();
   await expect(tabs.locator(".workbench-tab")).toHaveCount(1);
 
-  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
+  await more.dispatchEvent("mouseover");
   await page.getByRole("menuitem", { name: "关闭当前标签页" }).click();
   await expect(tabs.locator(".workbench-tab")).toHaveCount(0);
   await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(0);
   await expect(page.locator(".workbench-home")).toBeVisible();
   await expect(page.getByRole("button", { name: "新建", exact: true }).last()).toBeVisible();
+  await more.dispatchEvent("mouseover");
+  await expect(menu).toContainText("暂无打开的页签");
+  const emptyMenuBox = await menu.boundingBox();
+  expect(emptyMenuBox!.x).toBeGreaterThanOrEqual(0);
+  expect(emptyMenuBox!.x + emptyMenuBox!.width).toBeLessThanOrEqual(720);
+  await expect(menu.getByRole("menuitem", { name: "关闭全部标签页" })).toBeDisabled();
 
   await page.getByRole("button", { name: "新建", exact: true }).last().dispatchEvent("click");
   await expect(tabs.locator(".workbench-tab")).toHaveCount(1);
-  if (testInfo.project.name === "desktop-chromium") await more.dispatchEvent("mouseover"); else await more.focus();
-  await page.getByRole("menuitem", { name: "关闭全部标签页" }).click();
+  await page.keyboard.press("Escape");
+  await more.dispatchEvent("mouseover");
+  await page.getByRole("menuitem", { name: "关闭全部标签页" }).dispatchEvent("click");
   await expect(tabs.locator(".workbench-tab")).toHaveCount(0);
   await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(0);
   await expect(page.locator(".workbench-home")).toBeVisible();

@@ -140,7 +140,8 @@ kbd { padding: 2px 5px; border: 1px solid var(--apivoy-border); border-radius: 4
 .workbench-tab-tools { position: relative; flex: 0 0 auto; height: 31px; display: flex; align-items: center; padding: 0 3px; background: var(--apivoy-nav); }
 .workbench-tab-tools .ui-icon-button { border: 0; border-radius: 0; background: transparent; }
 .workbench-tabs-more { position: relative; height: 100%; display: flex; align-items: center; }
-.workbench-tabs-menu { position: absolute; z-index: 90; top: 29px; right: 0; width: 240px; padding: 6px; border: 1px solid var(--apivoy-border-strong); border-radius: 7px; background: var(--apivoy-bg-elevated); box-shadow: 0 14px 36px rgba(0,0,0,.38); }
+.workbench-tabs-menu { position: absolute; z-index: 90; top: 29px; right: auto; left: 0; width: 240px; padding: 6px; border: 1px solid var(--apivoy-border-strong); border-radius: 7px; background: var(--apivoy-bg-elevated); box-shadow: 0 14px 36px rgba(0,0,0,.38); }
+.workbench-tabs-more.is-align-right .workbench-tabs-menu { right: 0; left: auto; }
 .workbench-tabs-menu-list { max-height: min(360px,55vh); overflow-y: auto; padding-bottom: 5px; border-bottom: 1px solid var(--apivoy-border); }
 .workbench-tabs-menu button { width: 100%; min-height: 30px; display: flex; align-items: center; gap: 8px; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent; color: var(--apivoy-muted); font-size: 11px; text-align: left; }
 .workbench-tabs-menu button:hover,.workbench-tabs-menu button:focus-visible,.workbench-tabs-menu button.is-active { background: var(--apivoy-accent-soft); color: var(--apivoy-text); }
@@ -304,7 +305,7 @@ small { color: var(--apivoy-muted); }
  .has-project-rail .explorer-resize-handle { left:calc(60px + var(--explorer-width,220px) - 7px); }
  .has-project-rail .explorer-edge-toggle { left:calc(60px + var(--explorer-width,220px)); }
  .has-project-rail.explorer-collapsed .explorer-edge-toggle { left:60px; }
- .workbench-deck { grid-template-columns: 52px minmax(0,1fr); }
+ .workbench-deck { grid-template-columns: minmax(0,1fr); }
  .protocol-label, .favorite-button, .protocol-group-title span, .protocol-nav-header span { display: none; }
  .protocol-item { justify-content: center; padding: 0; }
 }
