@@ -149,12 +149,33 @@ function pointerValue(root: Record<string, unknown>, fragment: string): unknown 
   return current;
 }
 
+/** Replace OpenAPI `{var}` placeholders with `{{var}}` without a regex (avoids js/polynomial-redos). */
+function expandOpenApiServerUrl(url: string): string {
+  let result = "";
+  for (let index = 0; index < url.length; index += 1) {
+    const char = url[index];
+    if (char !== "{") {
+      result += char;
+      continue;
+    }
+    const close = url.indexOf("}", index + 1);
+    if (close === -1) {
+      result += url.slice(index);
+      break;
+    }
+    result += `{{${url.slice(index + 1, close)}}}`;
+    index = close;
+  }
+  return result;
+}
+
 async function parseDocumentObject(text: string, budget: ImportBudget, label = "导入文件"): Promise<Record<string, unknown>> {
   consumeDocument(budget, text, label);
   try { return object(JSON.parse(text)); }
   catch (jsonError) {
     try {
       const { parse } = await import("yaml");
+      // Document size is capped by consumeDocument; maxAliasCount bounds alias expansion.
       return object(parse(text, { maxAliasCount: 100 }));
     } catch (yamlError) {
       const detail = yamlError instanceof Error ? yamlError.message : String(yamlError);
@@ -238,7 +259,7 @@ function importOpenApi(root: Record<string, unknown>, budget: ImportBudget): Imp
   const server = servers[0] && typeof servers[0] === "object" ? servers[0] as Record<string, unknown> : {};
   const serverVariables = server.variables && typeof server.variables === "object" ? server.variables as Record<string, unknown> : {};
   const variables = Object.fromEntries(Object.entries(serverVariables).map(([name, definition]) => [name, String(object(definition).default ?? "") ]));
-  const base = String(server.url ?? "").replace(/\{([^}]+)\}/g, "{{$1}}");
+  const base = expandOpenApiServerUrl(String(server.url ?? ""));
   const requests: PortableRequest[] = [];
   for (const [path, pathItemValue] of Object.entries(object(root.paths ?? {}))) {
     const pathItem = object(resolvePointer(root, pathItemValue, new Set(), budget));

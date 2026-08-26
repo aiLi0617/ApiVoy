@@ -163,18 +163,30 @@ export function readableDefinitionError(error: unknown, fallback: string) {
               return String(error);
             }
           })();
+  // Single-pass decode avoids CodeQL js/double-escaping (&amp;lt; must stay &lt;, not <).
+  const named: Record<string, string> = {
+    nbsp: " ",
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+  };
   const decoded = raw
-    .replace(/&#x([0-9a-f]+);/gi, (_, value: string) =>
-      String.fromCodePoint(Number.parseInt(value, 16)),
-    )
-    .replace(/&#(\d+);/g, (_, value: string) =>
-      String.fromCodePoint(Number.parseInt(value, 10)),
-    )
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
+    .replace(/&(#x[0-9a-f]+|#\d+|nbsp|amp|lt|gt|quot);/gi, (entity, body: string) => {
+      if (body[0] === "#") {
+        const code =
+          body[1] === "x" || body[1] === "X"
+            ? Number.parseInt(body.slice(2), 16)
+            : Number.parseInt(body.slice(1), 10);
+        if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return entity;
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return entity;
+        }
+      }
+      return named[body.toLowerCase()] ?? entity;
+    })
     .trim();
   return decoded && decoded !== "{}" ? decoded : fallback;
 }

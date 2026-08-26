@@ -56,10 +56,24 @@ export function diffHttpInterfaceStructure(current: HttpInterfaceStructure, base
   return result;
 }
 
+function isSafePathSegment(part: string): boolean {
+  return part !== "__proto__" && part !== "prototype" && part !== "constructor";
+}
+
 function setAtPath(root: Record<string, unknown>, path: string, value: unknown) {
-  const parts = path.split("."); let cursor = root;
-  for (const part of parts.slice(0, -1)) { const next = cursor[part]; cursor = next && typeof next === "object" && !Array.isArray(next) ? next as Record<string, unknown> : (cursor[part] = {}) as Record<string, unknown>; }
-  cursor[parts.at(-1)!] = value;
+  const parts = path.split(".");
+  let cursor = root;
+  for (const part of parts.slice(0, -1)) {
+    if (!isSafePathSegment(part)) return;
+    const next = cursor[part];
+    cursor =
+      next && typeof next === "object" && !Array.isArray(next)
+        ? (next as Record<string, unknown>)
+        : ((cursor[part] = Object.create(null)) as Record<string, unknown>);
+  }
+  const leaf = parts.at(-1)!;
+  if (!isSafePathSegment(leaf)) return;
+  cursor[leaf] = value;
 }
 
 export function alignRequestToInterface(request: HttpWorkbenchRequest, baseline: HttpInterfaceStructure): HttpWorkbenchRequest {
