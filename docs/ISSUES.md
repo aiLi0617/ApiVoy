@@ -21,7 +21,18 @@
 | [ISS-008](#iss-008-首页形成嵌套-main-landmark) | 首页形成嵌套 main landmark | P2 | open | 2026-08-15 |
 | [ISS-009](#iss-009-wss-执行因-rustls-cryptoprovider-未初始化而崩溃) | WSS 执行因 Rustls CryptoProvider 未初始化而崩溃 | P0 | done | 2026-08-15 |
 | [ISS-010](#iss-010-glib-安全修复被-tauri-gtk3-栈挡住无法自动升级) | glib 安全修复被 Tauri GTK3 栈挡住，无法自动升级 | P2 | open | 2026-08-18 |
-| [UX 走查](./UX_WALKTHROUGH.md) | 功能放置与交互（23 项，多数 open） | P0–P2 | open | 2026-08-12 |
+| [ISS-011](#iss-011-集合运行按最近修改倒序执行) | 集合运行按最近修改倒序执行 | P1 | open | 2026-08-18 |
+| [ISS-012](#iss-012-集合运行忽略所选环境且不递归子集合) | 集合运行忽略所选环境且不递归子集合 | P1 | open | 2026-08-18 |
+| [ISS-013](#iss-013-desktopwebcli-集合运行器实现与变量语义分裂) | Desktop/Web/CLI 集合运行器实现与变量语义分裂 | P1 | open | 2026-08-18 |
+| [ISS-014](#iss-014-ci-未按路径按需触发) | CI 未按路径按需触发 | P1 | done | 2026-08-18 |
+| [ISS-015](#iss-015-release-校验缺少-e2e-与协作服务测试) | Release 校验缺少 E2E 与协作服务测试 | P2 | open | 2026-08-18 |
+| [ISS-016](#iss-016-安装包与私有化工作流漏监听-crates) | 安装包与私有化工作流漏监听 crates | P2 | open | 2026-08-18 |
+| [ISS-017](#iss-017-协议网关默认绑定全接口) | 协议网关默认绑定 0.0.0.0 | P1 | open | 2026-08-18 |
+| [ISS-018](#iss-018-网关-ci-runner-只能执行单条请求) | 网关 CI Runner 只能执行单条请求 | P2 | open | 2026-08-18 |
+| [ISS-019](#iss-019-installer-tools-冒烟断言了错误的-health-service-名) | Installer tools 冒烟断言了错误的 health service 名 | P1 | done | 2026-08-26 |
+| [ISS-020](#iss-020-传递依赖-h2-安全公告拖红-ci-security) | 传递依赖 h2 安全公告拖红 CI security | P1 | done | 2026-08-26 |
+| [ISS-021](#iss-021-codeql-告警未纳入前置审查清单) | CodeQL 告警未纳入前置审查清单 | P1 | done | 2026-08-26 |
+| [UX 走查](./UX_WALKTHROUGH.md) | 功能放置与交互（UX-001–055 已关闭） | P0–P2 | done | 2026-08-12 |
 
 ---
 
@@ -344,3 +355,395 @@ Dependabot 对 `glib` 报 `security_update_not_possible`：当前解析到 `0.18
 | 日期 | 说明 |
 |------|------|
 | 2026-08-18 | 建单；状态 open；等级 P2。记录 Dependabot 无法自动升级的原因与后续升级时机。 |
+
+---
+
+## ISS-011 集合运行按最近修改倒序执行
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | open |
+| **模块** | Collection Runner / local-store / Desktop / Web |
+| **记录日期** | 2026-08-18 |
+| **关联** | `crates/local-store` `list_requests`、`apps/desktop/src-tauri` `run_collection`、`apps/web/src/agentClient.ts` `runCollectionViaAgent` |
+
+### 问题
+
+集合运行的请求顺序来自 `list_requests` 的 `ORDER BY updated_at DESC`。刚编辑过的请求会排到最前，而不是资源树/拖拽后的顺序。
+
+登录拿 token、再调业务接口这类依赖顺序的集合会跑错。CLI `apivoy-cli run` 按 JSON 数组顺序，和 UI 结果对不齐。
+
+### 理想状态
+
+Runner 按树顺序执行：父集合 → 子集合 → 同级 `sort_order`。导出给 CLI 的集合文件使用同一顺序。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **建议方案** | 请求表增加 `sort_order`（集合表已有）；`list_requests` 与 Runner 改为按该字段；补回归测试：先改最后一条再跑集合，顺序仍为树顺序 |
+| **不做的理由** | （暂无） |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P1 |
+
+---
+
+## ISS-012 集合运行忽略所选环境且不递归子集合
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | open |
+| **模块** | Collection Runner / Desktop / Web / Agent |
+| **记录日期** | 2026-08-18 |
+| **关联** | `run_collection` 写死 `default-env`；`list_requests` 仅 `collection_id = 当前 id`；HTTP 工作台环境选择 |
+
+### 问题
+
+1. **环境**：单次发送会读请求上的 `environmentRef`；Desktop 集合运行始终加载 `default-env`。工作台已选 Staging/Prod 时，点「运行集合」仍打到默认环境。Web 把 envelope 原样交给 Agent，两端行为不一致。
+2. **嵌套集合**：资源树支持子集合，运行只查当前 `collection_id`。父集合点运行会跳过子文件夹里的全部请求。
+
+### 理想状态
+
+- Runner 提供「本次运行环境」覆盖；未选时用每条请求自己的 `environmentRef`。
+- 默认递归收集子孙请求，可选「仅当前层」。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **建议方案** | 与 ISS-013 的共享 CollectionRunner 一并做：环境覆盖入参、递归收集、UI 开关 |
+| **不做的理由** | （暂无） |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P1 |
+
+---
+
+## ISS-013 Desktop/Web/CLI 集合运行器实现与变量语义分裂
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | open |
+| **模块** | Collection Runner / CLI / Local Agent / 协议网关 |
+| **记录日期** | 2026-08-18 |
+| **关联** | Desktop `run_collection`、Web `runCollectionViaAgent`、`apps/cli` `run`、ISS-011、ISS-012 |
+
+### 问题
+
+三条通道都叫「跑集合」，实现是三套：
+
+| 通道 | 现状 |
+|------|------|
+| CLI | 内存 `collection_variables` 跨请求传递，不改落盘环境；支持并发、数据迭代、JSON/JUnit |
+| Desktop | 每条独立 `VariableScope`；后置脚本提取的变量写回 `default-env`，污染用户环境 |
+| Web | 浏览器 for-loop 调 Agent；关页即停；没有集合级取消；依赖 Agent 写回环境才能「串联」 |
+
+UI Runner 不能取消、不能选环境、不能看逐步进度。网关 `POST /v1/runner/execute` 只跑一条请求（见 ISS-018）。
+
+`PHASE_PLAN` 还计划把 Java `automation` 拆成协作微服务。执行已经在 Rust Engine / Agent / CLI / Gateway，Java 再做一套协议执行会变成第四套。
+
+### 理想状态
+
+抽出共享 Rust `CollectionRunner`：集合变量只在本次 run 内存中传递；环境覆盖显式传入；失败即停 / 并发 / 数据迭代与 CLI 对齐。Agent 增加 `POST /v1/collections/{id}/runs`，Web 不再在浏览器里编排。协作服务继续做 identity / sync / audit，需要远程跑集合时调用 Gateway/Agent。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **建议方案** | 先修 ISS-011/012 语义，再抽共享 runner；UI 补取消与进度；Gateway CI 改为跑整个 collection |
+| **不要做的** | 不要在 Java 协作服务里再实现协议执行引擎 |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P1 |
+
+---
+
+## ISS-014 CI 未按路径按需触发
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | done |
+| **模块** | GitHub Actions / `.github/workflows/ci.yml` |
+| **记录日期** | 2026-08-18 |
+| **关联** | ISS-015、ISS-016 |
+
+### 问题
+
+CI 在任意 PR 和 `main` 推送上全量跑 TypeScript、Playwright、Cargo、三平台 Desktop、Java。改 README、文档或无关文件也会占用完整 runner 矩阵。
+
+### 理想状态
+
+按改动路径启动对应 job；文档/技能/截图不启动 CI；需要全量时用 `workflow_dispatch`。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **已做** | `ci.yml` 增加 workflow 级 `paths`；用 `dorny/paths-filter` 拆 `test-js` / `test-e2e` / `test-rust` / `desktop-check` / `security` / `collaboration-server`；聚合 job `CI` 作为闸门；手动运行仍全量 |
+| **验证** | 只改 `docs/` 或 `*.md` 时 Actions 不出现 CI；只改协作服务时仅 Java job 运行；Actions 手动 CI 仍跑全部 |
+| **后续** | 若开启分支保护，必过检查从旧 `test` 改为聚合 job `CI` |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单并完成按需触发；状态 done |
+
+---
+
+## ISS-015 Release 校验缺少 E2E 与协作服务测试
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P2 |
+| **状态** | open |
+| **模块** | `.github/workflows/release.yml` |
+| **记录日期** | 2026-08-18 |
+| **关联** | ISS-014、`docs/maintainers/RELEASE.md` |
+
+### 问题
+
+tag `v*` 的 Release `validate` 有 typecheck、单测、`cargo test`、clippy，没有 `pnpm test:e2e`，也没有 `collaboration-server` 的 Gradle 测试。安装包生命周期也不在 tag 上跑。alpha 可能带着坏掉的 Web 冒烟或协作服务发出去。
+
+### 理想状态
+
+Release validate 至少加上 Playwright e2e 与 Gradle test；安装包生命周期对 tag 复用或跑一次。Draft 发布流程保持人工 Publish。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **建议方案** | `release.yml` `validate` 增加 e2e 与 `./gradlew test`；installer-lifecycle 用 `workflow_call` 或 `push: tags` 接入 |
+| **不做的理由** | （暂无） |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P2 |
+
+---
+
+## ISS-016 安装包与私有化工作流漏监听 crates
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P2 |
+| **状态** | open |
+| **模块** | `.github/workflows/installer-lifecycle.yml` / `private-deploy.yml` |
+| **记录日期** | 2026-08-18 |
+| **关联** | `deploy/agent.Dockerfile`、`deploy/gateway.Dockerfile`、`deploy/web.Dockerfile` |
+
+### 问题
+
+两条工作流已按路径过滤，但漏了实际影响产物的目录：
+
+- `private-deploy` 镜像 context 是仓库根，Agent/Gateway Dockerfile `COPY crates`，Web 镜像 `COPY packages`。只改 crates/packages 不会重建镜像。
+- `installer-lifecycle` 不听 `crates/**`，且没有 `push: main`。核心 crate 变更不会做安装/卸载冒烟。
+
+### 理想状态
+
+路径集合覆盖真实构建输入：`crates/**`、`Cargo.*`、`packages/**`、`pnpm-lock.yaml` 等。installer-lifecycle 在 `main` 或 tag 上再跑一次。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **建议方案** | 按 Dockerfile / Tauri 构建输入补 `paths`；避免再对文档触发 |
+| **不做的理由** | （暂无） |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P2 |
+
+---
+
+## ISS-017 协议网关默认绑定全接口
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | open |
+| **模块** | protocol-gateway / 威胁模型 |
+| **记录日期** | 2026-08-18 |
+| **关联** | `apps/protocol-gateway/src/main.rs` `APIVOY_GATEWAY_BIND`、AGENTS.md「默认不远程绑定」、`docs/THREAT_MODEL.md` |
+
+### 问题
+
+Local Agent 默认 `127.0.0.1:39217`。协议网关默认 `0.0.0.0:39218`。本机 `cargo run -p apivoy-protocol-gateway` 会把远程执行口暴露到局域网。
+
+Compose 里绑 `0.0.0.0` 合理（容器内、前面有 Nginx）。二进制默认值不应与 Agent / AGENTS.md 相反。
+
+定时任务把完整 `RequestEnvelope` 落到 `jobs.json`，文档写了「不要明文」，代码没有敏感扫描。
+
+### 理想状态
+
+二进制默认 `127.0.0.1:39218`；`deploy/compose.yaml` 显式设 `0.0.0.0`。创建/持久化 job 时扫描敏感字段。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **建议方案** | 改默认 bind；补单测；job 落盘前做与导出相同的敏感扫描 |
+| **风险** | 已依赖默认全接口的私有化脚本需改环境变量（Compose 已显式设置，不受影响） |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P1 |
+
+---
+
+## ISS-018 网关 CI Runner 只能执行单条请求
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P2 |
+| **状态** | open |
+| **模块** | protocol-gateway / CLI |
+| **记录日期** | 2026-08-18 |
+| **关联** | `POST /v1/runner/execute`、ISS-013、`docs/guides/cli-collections.md` |
+
+### 问题
+
+网关宣传 `modes: ["remote","scheduled","ci"]`，但 CI 入口只接收一条 `RequestEnvelope` 和 `failOnAssertion`。不能跑 ApiVoy 集合、不能数据迭代、退出码语义与 `apivoy-cli run` 不完全对齐。
+
+### 理想状态
+
+Gateway CI 接收 collection（或项目包），复用共享 CollectionRunner，退出码与 CLI 一致。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **建议方案** | 依赖 ISS-013 的共享 runner；保留现有单条接口做兼容，新增 collection 入口 |
+| **不做的理由** | （暂无） |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-18 | 建单；状态 open；等级 P2 |
+
+---
+
+## ISS-019 Installer tools 冒烟断言了错误的 health service 名
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | done |
+| **模块** | `.github/workflows/installer-lifecycle.yml` / Local Agent `/health` |
+| **记录日期** | 2026-08-26 |
+| **关联** | [PR_REVIEW_CHECKLIST.md](./maintainers/PR_REVIEW_CHECKLIST.md) §3、`apps/local-agent` |
+
+### 问题
+
+`tools` job 编译与安装成功后，用 `grep` / PowerShell 断言 health 含 `apivoy-local-agent`。实际 JSON 为 `"service":"apivoy-agent"`（crate 包名 ≠ 二进制名 ≠ health 字段）。三平台 tools 全红，易被误判为 Agent 起不来。
+
+### 理想状态
+
+契约单一：文档、冒烟、工作流都断言 `apivoy-agent`；改字段时同步清单 §3。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **已做** | 修正 installer-lifecycle Unix/Windows 断言；SMOKE_CHECKLIST 写明期望字段；审查清单 §3 前置 |
+| **验证** | tools job 在 health 就绪后应通过字段断言 |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-26 | 建单并修复；状态 done |
+
+---
+
+## ISS-020 传递依赖 h2 安全公告拖红 CI security
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | done |
+| **模块** | `Cargo.lock` / CI `security` / `cargo audit` |
+| **记录日期** | 2026-08-26 |
+| **关联** | `RUSTSEC-2026-0258`、[DEPENDENCY_SECURITY.md](./DEPENDENCY_SECURITY.md)、审查清单 §1 |
+
+### 问题
+
+`h2 0.4.15`（经 `reqwest`/`hyper`）触发 `RUSTSEC-2026-0258`，`cargo audit -D warnings` 失败，聚合 job `CI` 变红。业务代码未改也会被 lockfile 拖红。
+
+### 理想状态
+
+改 Rust 依赖或 lockfile 时本地先跑 `cargo audit`；能升级则升级，不把新 advisory 默默加入 ignore。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **已做** | `cargo update -p h2 --precise 0.4.16`；审查清单要求触及 lockfile 时本地 audit |
+| **验证** | `cargo audit -D warnings` 通过；CI `security` 绿 |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-26 | 建单并修复；状态 done |
+
+---
+
+## ISS-021 CodeQL 告警未纳入前置审查清单
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | done |
+| **模块** | `packages/ui` / `packages/import-export` / GitHub CodeQL |
+| **记录日期** | 2026-08-26 |
+| **关联** | [PR_REVIEW_CHECKLIST.md](./maintainers/PR_REVIEW_CHECKLIST.md) §2 |
+
+### 问题
+
+PR 上 Analyze 子任务全绿，但 CodeQL 门禁因「new alerts」失败。本轮典型项：
+
+- `DOMParser.parseFromString` → client XSS（TCP XML 校验）
+- 链式 HTML 实体解码 → double-escaping
+- OpenAPI `{var}` 正则替换 → polynomial ReDoS
+- `setAtPath` 写入 `__proto__` 等 → prototype pollution
+
+这些本可在审查阶段按模式扫出，却拖到 PR Checks。
+
+### 理想状态
+
+UI/导入/路径写入变更按审查清单 §2 自查；Codex/维护者审查引用同一清单；新「只在 CodeQL 才发现」的模式补回清单。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **已做** | 修复上述四处实现；新增 `docs/maintainers/PR_REVIEW_CHECKLIST.md`；PR 模板与 CONTRIBUTING/AGENTS 引用 |
+| **验证** | 相关单测通过；等待 CodeQL 门禁对新 commit 转绿 |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-26 | 建单、修复并落审查清单；状态 done |

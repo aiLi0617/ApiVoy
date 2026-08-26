@@ -14,6 +14,7 @@
 .standardized-workbench pre { background: var(--apivoy-bg) !important; color: var(--apivoy-text) !important; }
 .standardized-workbench h2:first-child { margin-top: 0 !important; font-size: 15px !important; }
 .standardized-workbench details { border-color: var(--apivoy-border) !important; background: var(--apivoy-bg-elevated) !important; }
+.standardized-workbench details.websocket-detail-more { border-color: transparent !important; background: transparent !important; }
 .standardized-workbench [style*="linear-gradient"], .standardized-workbench [style*="radial-gradient"] { background-image: none !important; }
 .standardized-workbench [style*="border-radius: 18"], .standardized-workbench [style*="border-radius:18"] { border-radius: 7px !important; }
 .standardized-workbench pre { border: 1px solid var(--apivoy-border); }

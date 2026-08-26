@@ -29,6 +29,9 @@ For UI changes:
 - Do not weaken Local Agent authentication.
 - Do not enable remote binding by default.
 - Changes to secrets, proxying, scripts, and plugins require security review.
+- Before merging security-, dependency-, workflow-, or parser-related changes, apply
+  [docs/maintainers/PR_REVIEW_CHECKLIST.md](docs/maintainers/PR_REVIEW_CHECKLIST.md)
+  so CI/CodeQL/Installer failures are caught in review rather than only on GitHub Actions.
 
 ## Scope rules
 
@@ -38,3 +41,4 @@ For UI changes:
 - Preserve backward compatibility for workspace files where possible.
 
 See [docs/maintainers/CODEX_WORKFLOWS.md](docs/maintainers/CODEX_WORKFLOWS.md) for planned Codex maintainer workflows.
+See [docs/maintainers/PR_REVIEW_CHECKLIST.md](docs/maintainers/PR_REVIEW_CHECKLIST.md) for front-loaded review checks.

@@ -14,9 +14,9 @@ Applies to Desktop, Web + Local Agent, CLI, WASM plugins, QuickJS scripts, impor
 |---|---|
 | **Asset** | User workspace, secrets, execution environment |
 | **Threat** | Postman/OpenAPI/HAR/ApiVoy package triggers unexpected requests, exfiltration, or parser crashes |
-| **Existing mitigation** | Structured parsers in `packages/import-export`; sensitive field scanning on export; user confirms imports |
-| **Remaining risk** | Complex `$ref` graphs or malformed payloads may still cause high CPU use |
-| **Planned improvement** | Stricter size limits, fuzz tests, import sandbox previews |
+| **Existing mitigation** | Structured parsers in `packages/import-export`; per-file/total-size, document-count, nesting, node, `$ref`, and request-count budgets; YAML alias cap; sensitive field scanning on export; user confirms imports |
+| **Remaining risk** | Malformed payloads may still exercise parser-specific edge cases within the enforced budgets |
+| **Planned improvement** | Fuzz tests and import sandbox previews |
 
 ---
 

@@ -72,9 +72,9 @@ jobs:
           command: |
             set -euo pipefail
             if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-              gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=false --title "ApiVoy ${RELEASE_TAG}" --notes-file /tmp/release-notes.md
+              gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=true --prerelease=false --title "ApiVoy ${RELEASE_TAG} — Explore Every Protocol" --notes-file /tmp/release-notes.md
             else
-              gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft --title "ApiVoy ${RELEASE_TAG}" --notes-file /tmp/release-notes.md
+              gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft --title "ApiVoy ${RELEASE_TAG} — Explore Every Protocol" --notes-file /tmp/release-notes.md
             fi
 
   desktop:

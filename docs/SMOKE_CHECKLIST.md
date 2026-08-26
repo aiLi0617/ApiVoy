@@ -28,7 +28,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   http://127.0.0.1:39217/v1/executions
 ```
 
-期望：`/health` 含 `protocolApiVersion` / `agentVersion`；`POST /v1/executions` 返回 `202` + `executionId`。随后：
+期望：`/health` JSON 含 `"service":"apivoy-agent"`（注意：crate 名是 `apivoy-local-agent`，二进制是 `apivoy-agent`，health 字段用后者）、`protocolApiVersion` / `agentVersion`；`POST /v1/executions` 返回 `202` + `executionId`。随后：
 
 ```bash
 curl -N -H "Authorization: Bearer $TOKEN" \

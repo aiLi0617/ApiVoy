@@ -1,12 +1,14 @@
 # Secret management
 
-ApiVoy never stores plaintext secrets in project SQLite or exported JSON.
+ApiVoy uses the OS keychain or Agent secret store by default. HTTP Bearer auth also offers an explicit direct-token mode; tokens entered there are stored with the local request.
 
 ## How it works
 
 1. Store a secret via the UI (**Save to keychain** / Agent secret store).
 2. The project records a `secret_ref` identifier.
 3. At execution time the engine resolves the ref into memory only.
+
+For HTTP Bearer auth, choose **Direct token** only when saving the token in the local request is acceptable. Team snapshots redact this field, but local project exports must still be reviewed before sharing.
 
 ## Desktop vs Web
 

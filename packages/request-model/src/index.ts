@@ -53,12 +53,14 @@ export type ProtocolPayload =
   | ({ type: "grpc" } & GrpcPayload)
   | { type: "raw"; value: unknown };
 
-/** Request auth reference — secrets stay in Keychain / Agent secret-store. */
+/** Request authentication. Literal bearer tokens are transient execution input only. */
 export interface AuthRef {
   /** `none` | `bearer` | `basic` | `api_key` | `oauth2_client_credentials` */
   kind: string;
   /** Secret store name for bearer token, basic password, or API key. */
   secret_ref?: string | null;
+  /** Literal bearer token supplied to the execution transport; never persist it. */
+  token?: string | null;
   /** Basic auth username (may contain `{{var}}`). */
   username?: string | null;
   /** API Key header name (default `X-Api-Key`). */

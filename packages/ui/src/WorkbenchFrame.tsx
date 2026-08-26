@@ -8,16 +8,21 @@ function SplitLayoutIcon({ direction = "vertical" }: { direction?: "vertical" | 
   </svg>;
 }
 
-export interface SplitPaneProps { id: string; primary: ReactNode; secondary: ReactNode; secondaryActions?: ReactNode; direction?: WorkbenchLayoutPreference; minPrimary?: number; minSecondary?: number; primaryLabel?: string; secondaryLabel?: string }
-export function SplitPane({ id, primary, secondary, secondaryActions, direction = "vertical", minPrimary = 280, minSecondary = 240, primaryLabel = "请求", secondaryLabel = "响应" }: SplitPaneProps) {
+export interface SplitPaneProps { id: string; primary: ReactNode; secondary: ReactNode; secondaryActions?: ReactNode; direction?: WorkbenchLayoutPreference; fixedDirection?: "vertical" | "horizontal"; minPrimary?: number; minSecondary?: number; primaryLabel?: string; secondaryLabel?: string }
+export function calculateSplitCollapseThreshold(totalSize: number, minSecondary: number, handleSize: number) {
+  return totalSize > 0 ? Math.max(.25, Math.min(.99, (totalSize - handleSize - minSecondary) / totalSize)) : .94;
+}
+export function SplitPane({ id, primary, secondary, secondaryActions, direction = "vertical", fixedDirection, minPrimary = 280, minSecondary = 240, primaryLabel = "请求", secondaryLabel = "响应" }: SplitPaneProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const saved = useAppStore((state) => state.splitPreferences[id]);
+  const globalDirection = useAppStore((state) => state.splitDirection);
+  const setGlobalDirection = useAppStore((state) => state.setSplitDirection);
   const setPreference = useAppStore((state) => state.setSplitPreference);
   const [ratio, setRatio] = useState(() => saved?.ratio ?? .42);
   const [collapsedPanel, setCollapsedPanel] = useState<"primary" | "secondary" | null>(null);
   const expandedRatioRef = useRef(saved?.ratio && saved.ratio < .9 ? saved.ratio : .42);
-  const preferredDirection = saved?.direction ?? direction;
-  const actualDirection: "vertical" | "horizontal" = preferredDirection === "horizontal" ? "horizontal" : "vertical";
+  const preferredDirection = globalDirection ?? direction;
+  const actualDirection: "vertical" | "horizontal" = fixedDirection ?? (preferredDirection === "horizontal" ? "horizontal" : "vertical");
   useEffect(() => setRatio(saved?.ratio ?? .42), [saved?.ratio]);
   function persist(nextDirection: WorkbenchLayoutPreference, nextRatio: number) {
     const value = Math.min(.99, Math.max(.25, nextRatio));
@@ -25,25 +30,53 @@ export function SplitPane({ id, primary, secondary, secondaryActions, direction 
     setPreference(id, { direction: nextDirection, ratio: value });
   }
   function update(next: number) { if (next < .94) expandedRatioRef.current = next; persist(actualDirection, next); }
+  function collapseThreshold(root: HTMLDivElement) {
+    const bounds = root.getBoundingClientRect();
+    const total = actualDirection === "horizontal" ? bounds.width : bounds.height;
+    const handleSize = actualDirection === "horizontal" ? 24 : 44;
+    return calculateSplitCollapseThreshold(total, minSecondary, handleSize);
+  }
+  function resize(next: number, root: HTMLDivElement) {
+    if (next >= collapseThreshold(root)) {
+      if (collapsedPanel !== "secondary" && ratio < .94) expandedRatioRef.current = ratio;
+      setCollapsedPanel("secondary");
+      return;
+    }
+    if (collapsedPanel === "secondary") setCollapsedPanel(null);
+    update(next);
+  }
   function toggleSecondary() {
     if (collapsedPanel === "secondary") { setCollapsedPanel(null); persist(actualDirection, expandedRatioRef.current); }
     else { if (ratio < .94) expandedRatioRef.current = ratio; setCollapsedPanel("secondary"); }
   }
-  function setDirection(next: WorkbenchLayoutPreference) { persist(next, ratio); }
+  function setDirection(next: Exclude<WorkbenchLayoutPreference, "auto">) { setGlobalDirection(next); }
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
-    const root = rootRef.current; if (!root) return; event.currentTarget.setPointerCapture(event.pointerId);
-    const bounds = root.getBoundingClientRect(); const vertical = getComputedStyle(root).gridTemplateColumns.split(" ").length === 1;
+    const root = rootRef.current; if (!root || event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    handle.setPointerCapture(pointerId);
+    const bounds = root.getBoundingClientRect(); const vertical = actualDirection === "vertical";
     let dragCollapsed = collapsedPanel === "secondary";
     const move = (moveEvent: globalThis.PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
       const next = vertical ? (moveEvent.clientY - bounds.top) / bounds.height : (moveEvent.clientX - bounds.left) / bounds.width;
-      if (next >= .97) { if (!dragCollapsed) { if (ratio < .94) expandedRatioRef.current = ratio; dragCollapsed = true; setCollapsedPanel("secondary"); } return; }
+      if (next >= collapseThreshold(root)) { if (!dragCollapsed) { if (ratio < .94) expandedRatioRef.current = ratio; dragCollapsed = true; setCollapsedPanel("secondary"); } return; }
       if (dragCollapsed) { dragCollapsed = false; setCollapsedPanel(null); }
       update(next);
     };
-    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
-    window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
+    const stop = (stopEvent: globalThis.PointerEvent) => {
+      if (stopEvent.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
   }
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) { if (["ArrowLeft","ArrowUp"].includes(event.key)) { event.preventDefault(); if (collapsedPanel === "secondary") toggleSecondary(); else update(ratio - .05); } if (["ArrowRight","ArrowDown"].includes(event.key)) { event.preventDefault(); update(ratio + .05); } if (event.key === "Home") update(.25); if (event.key === "End") { expandedRatioRef.current = ratio < .94 ? ratio : expandedRatioRef.current; setCollapsedPanel("secondary"); } }
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) { const root = rootRef.current; if (["ArrowLeft","ArrowUp"].includes(event.key)) { event.preventDefault(); if (collapsedPanel === "secondary") toggleSecondary(); else update(ratio - .05); } if (["ArrowRight","ArrowDown"].includes(event.key)) { event.preventDefault(); if (root && collapsedPanel !== "secondary") resize(ratio + .05, root); } if (event.key === "Home") update(.25); if (event.key === "End") { expandedRatioRef.current = ratio < .94 ? ratio : expandedRatioRef.current; setCollapsedPanel("secondary"); } }
   const layouts: Array<{ id: "vertical" | "horizontal"; label: string; title: string }> = [
     { id: "vertical", label: "上下", title: "请求在上、响应在下（适合阅读正文）" },
     { id: "horizontal", label: "左右", title: "请求在左、响应在右" },

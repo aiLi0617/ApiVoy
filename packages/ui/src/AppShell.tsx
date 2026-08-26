@@ -24,6 +24,15 @@ export interface AppShellProps {
     sso: ReactNode;
   };
   environment?: EnvironmentEditorProps;
+  projectContext?: {
+    projects: Array<{ id: string; name: string }>;
+    selectedProjectId: string;
+    onSelectProject: (projectId: string) => void;
+  };
+}
+
+export function calculateExplorerWidth(clientX: number, explorerLeft: number, maximumWidth: number) {
+  return Math.min(maximumWidth, Math.max(0, clientX - explorerLeft));
 }
 
 function EnvironmentVariablesDialog({ open, onClose, environment }: { open: boolean; onClose: () => void; environment?: EnvironmentEditorProps }) {
@@ -38,18 +47,52 @@ function EnvironmentVariablesDialog({ open, onClose, environment }: { open: bool
   </div></div>;
 }
 
-export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, status, connectionStatus = null, collaboration, environment }: AppShellProps) {
-  const { t } = useI18n();
+function ProjectSettingsDialog({ open, onClose, projectName }: { open: boolean; onClose: () => void; projectName?: string }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useDialogFocus(open, dialogRef, onClose, closeRef);
+  if (!open) return null;
+  const openProjectFeature = (eventName: string, detail?: string) => {
+    onClose();
+    window.dispatchEvent(new CustomEvent(eventName, { detail }));
+  };
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}><div ref={dialogRef} className="settings-dialog project-settings-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
+    <header className="settings-dialog-header"><div><span className="settings-scope-label">项目级</span><h2 id={titleId}>项目设置</h2><p>{projectName ? `当前项目：${projectName}。` : "当前项目。"}这些配置与项目资源关联，切换项目后会随之切换。</p></div><button ref={closeRef} type="button" className="ui-icon-button" aria-label="关闭项目设置" onClick={onClose}><Icon name="close"/></button></header>
+    <div className="project-settings-content">
+      <section><Icon name="menu"/><div><h3>环境与变量</h3><p>项目请求共享的环境变量与 Secret 引用。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-environment")}>管理环境</button></section>
+      <section><Icon name="code"/><div><h3>项目脚本</h3><p>维护请求可复用的前置、后置脚本。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-script-library")}>管理脚本</button></section>
+      <section><Icon name="send"/><div><h3>集合运行</h3><p>运行当前项目中的请求集合。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "runner")}>打开</button></section>
+      <section><Icon name="archive"/><div><h3>Mock</h3><p>管理当前项目的 Mock 定义。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "mock")}>打开</button></section>
+    </div>
+    <footer className="settings-dialog-footer"><span className="settings-scope-note">主题、语言、Agent 和服务连接请前往顶部的“软件设置”。</span><button type="button" className="ui-button primary" onClick={onClose}>完成</button></footer>
+  </div></div>;
+}
+
+export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, status, connectionStatus = null, collaboration, environment, projectContext }: AppShellProps) {
+  const { locale, t } = useI18n();
+  const applicationSettingsLabel = locale === "zh-CN" ? "软件设置" : "Application settings";
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [environmentOpen, setEnvironmentOpen] = useState(false);
   const [collaborationOpen, setCollaborationOpen] = useState(false);
   const [collaborationTab, setCollaborationTab] = useState<CollaborationTab>("team");
+  const [projectModule, setProjectModule] = useState<"home" | "resources" | "runner" | "mock" | "automation">(() => {
+    if (typeof window === "undefined") return "home";
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const view = params.get("view");
+    if (view === "resources" || view === "runner" || view === "mock" || view === "automation") return view;
+    const workbench = params.get("workbench");
+    if (workbench === "runner" || workbench === "mock") return workbench;
+    return workbench ? "resources" : "home";
+  });
   const [search, setSearch] = useState("");
   const [activeCommand, setActiveCommand] = useState(0);
   const paletteRef = useRef<HTMLDivElement>(null);
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const explorerRef = useRef<HTMLElement>(null);
   const resizingExplorerRef = useRef(false);
   const [explorerWidth, setExplorerWidth] = useState(() => {
     if (typeof window === "undefined") return 232;
@@ -64,14 +107,16 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
   const collapsedExplorer = useAppStore((state) => state.collapsedExplorer);
   const toggleExplorer = useAppStore((state) => state.toggleExplorer);
   const explorerOpen = !collapsedExplorer;
+  const showExplorer = explorerOpen && projectModule !== "home";
+  const showProjectRail = projectModule !== "home";
 
   function maxExplorerWidth() {
     return Math.max(190, (workspaceRef.current?.getBoundingClientRect().width ?? 840) / 2);
   }
 
   function resizeExplorer(clientX: number) {
-    const left = workspaceRef.current?.getBoundingClientRect().left ?? 0;
-    const next = Math.min(maxExplorerWidth(), Math.max(0, clientX - left));
+    const left = explorerRef.current?.getBoundingClientRect().left ?? workspaceRef.current?.getBoundingClientRect().left ?? 0;
+    const next = calculateExplorerWidth(clientX, left, maxExplorerWidth());
     explorerWidthRef.current = next;
     setExplorerWidth(next);
   }
@@ -96,6 +141,28 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
     const preventBrowserContextMenu = (event: MouseEvent) => event.preventDefault();
     window.addEventListener("contextmenu", preventBrowserContextMenu);
     return () => window.removeEventListener("contextmenu", preventBrowserContextMenu);
+  }, []);
+  useEffect(() => {
+    const showProjectView = (view: "resources" | "runner" | "mock" | "automation") => {
+      setProjectModule(view);
+      const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      params.set("view", view);
+      history.replaceState(null, "", `#${params}`);
+    };
+    const showHome = () => { setProjectModule("home"); const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.delete("view"); history.replaceState(null, "", `#${params}`); };
+    const showResources = () => showProjectView("resources");
+    const showRequest = () => showProjectView("resources");
+    const showWorkbench = (event: Event) => { const id = (event as CustomEvent<string>).detail; showProjectView(id === "runner" ? "runner" : id === "mock" ? "mock" : "resources"); };
+    window.addEventListener("apivoy-project-home", showHome);
+    window.addEventListener("apivoy-project-resources", showResources);
+    window.addEventListener("apivoy-open-request", showRequest);
+    window.addEventListener("apivoy-select-workbench", showWorkbench);
+    return () => {
+      window.removeEventListener("apivoy-project-home", showHome);
+      window.removeEventListener("apivoy-project-resources", showResources);
+      window.removeEventListener("apivoy-open-request", showRequest);
+      window.removeEventListener("apivoy-select-workbench", showWorkbench);
+    };
   }, []);
 
   useEffect(() => {
@@ -132,13 +199,21 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
       setCollaborationOpen(false);
       setEnvironmentOpen(true);
     };
+    const openProjectSettingsEvent = () => {
+      setPaletteOpen(false);
+      setSettingsOpen(false);
+      setCollaborationOpen(false);
+      setProjectSettingsOpen(true);
+    };
     window.addEventListener("apivoy-open-collaboration", openCollaboration);
     window.addEventListener("apivoy-open-settings", openSettingsEvent);
     window.addEventListener("apivoy-open-environment", openEnvironmentEvent);
+    window.addEventListener("apivoy-open-project-settings", openProjectSettingsEvent);
     return () => {
       window.removeEventListener("apivoy-open-collaboration", openCollaboration);
       window.removeEventListener("apivoy-open-settings", openSettingsEvent);
       window.removeEventListener("apivoy-open-environment", openEnvironmentEvent);
+      window.removeEventListener("apivoy-open-project-settings", openProjectSettingsEvent);
     };
   }, []);
   useEffect(() => {
@@ -176,7 +251,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
 
   const workbenchCommands = DEFAULT_WORKBENCH_GROUPS.flatMap((group) => group.workbenchIds.map((id) => ({ id, group: group.label, label: WORKBENCH_LABELS[id] ?? id }))).filter((item) => `${item.label} ${item.group}`.toLowerCase().includes(search.toLowerCase()));
   const actions = [
-    { id: "action-settings", label: t("settings.open"), icon: "sliders" as const, run: () => openSettings() },
+    { id: "action-settings", label: applicationSettingsLabel, icon: "sliders" as const, run: () => openSettings() },
     ...(collaboration ? [{ id: "action-collab", label: t("collaboration.open"), icon: "users" as const, run: () => openCollaboration("team") }] : []),
     { id: "action-theme", label: t("command.theme"), icon: "sun" as const, run: () => cycleTheme() },
     { id: "action-import", label: t("command.import"), icon: "download" as const, run: () => { setPaletteOpen(false); window.dispatchEvent(new CustomEvent("apivoy-import-requests")); } },
@@ -203,7 +278,13 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
     <a className="skip-link" href="#apivoy-main">{t("shell.skip")}</a>
     <header className="app-header">
       <div className="header-leading">
-        <div className="brand-lockup"><span className="brand-mark"><BrandMark /></span><div><strong>{title}</strong><span>{t("app.tagline")}</span></div></div>
+        {projectModule === "home" ? <div className="header-home-brand" aria-label={title}><span className="brand-mark"><BrandMark /></span><strong>{title}</strong></div> : projectContext?.projects.length ? <div className="header-project-breadcrumb" aria-label="当前项目">
+          <button type="button" aria-label="返回主窗口" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-project-home"))}><Icon name="command"/><span>主窗口</span></button>
+          <span className="header-project-separator">/</span>
+          <select aria-label="切换项目" value={projectContext.selectedProjectId} onChange={(event) => projectContext.onSelectProject(event.target.value)}>
+            {projectContext.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+        </div> : null}
       </div>
       <div className="header-context">
         {connectionStatus ? <span className={`connection-status tone-${connectionStatus.tone ?? "ok"}`}><span className="status-dot"/>{connectionStatus.label}</span> : null}
@@ -215,14 +296,22 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
         <button data-testid="command-trigger" className="command-trigger" aria-label={t("command.open")} onClick={() => setPaletteOpen(true)}><Icon name="search"/><span>{t("command.open")}</span><kbd>⌘ K</kbd></button>
         <button data-testid="theme-toggle" className="ui-icon-button" aria-label={t("command.theme")} title={`${t("settings.theme")}: ${themeMode}`} onClick={cycleTheme}><Icon name={themeMode === "light" ? "sun" : "moon"}/></button>
         {collaboration ? <button className={`ui-icon-button${collaborationOpen ? " is-active" : ""}`} aria-label={t("collaboration.open")} title={t("collaboration.open")} onClick={() => openCollaboration("team")}><Icon name="users"/></button> : null}
-        <button className="ui-icon-button" aria-label={t("settings.open")} title={`${t("settings.open")} Ctrl/⌘ ,`} onClick={openSettings}><Icon name="sliders"/></button>
+        <button className="ui-icon-button" aria-label={applicationSettingsLabel} title={`${applicationSettingsLabel} Ctrl/⌘ ,`} onClick={openSettings}><Icon name="sliders"/></button>
       </div>
     </header>
-    <div ref={workspaceRef} className={`app-workspace ${explorerOpen ? "explorer-open" : "explorer-collapsed"}`} style={{ "--explorer-width": `${explorerWidth}px` } as CSSProperties}>
-      {explorer && explorerOpen ? <button type="button" className="explorer-backdrop" aria-label={t("shell.explorer.close")} onClick={toggleExplorer} /> : null}
-      {explorer ? <aside id="apivoy-explorer" className="resource-explorer" aria-label={t("shell.explorer")}>{explorer}</aside> : null}
-      {explorer && explorerOpen ? <div className="explorer-resize-handle" role="separator" aria-label="调整资源管理器宽度" aria-orientation="vertical" aria-valuemin={0} aria-valuemax={Math.round(maxExplorerWidth())} aria-valuenow={Math.round(explorerWidth)} tabIndex={0} onPointerDown={(event) => { if (window.matchMedia("(max-width: 768px)").matches) return; explorerDragStartWidthRef.current = explorerWidthRef.current; resizingExplorerRef.current = true; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (resizingExplorerRef.current) resizeExplorer(event.clientX); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); finishExplorerResize(); }} onPointerCancel={finishExplorerResize} onDoubleClick={() => { explorerWidthRef.current = 232; expandedExplorerWidthRef.current = 232; setExplorerWidth(232); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); const next = Math.min(maxExplorerWidth(), Math.max(190, explorerWidth + (event.key === "ArrowRight" ? 10 : -10))); explorerWidthRef.current = next; expandedExplorerWidthRef.current = next; setExplorerWidth(next); }}/>: null}
-      {explorer && !explorerOpen ? <button type="button" className="explorer-edge-toggle" aria-label={t("shell.explorer")} aria-expanded={false} aria-controls="apivoy-explorer" title={t("shell.explorer")} onClick={toggleExplorer}><Icon name="chevron"/></button> : null}
+    <div ref={workspaceRef} className={`app-workspace${showProjectRail ? " has-project-rail" : ""} ${showExplorer ? "explorer-open" : "explorer-collapsed"}`} style={{ "--explorer-width": `${explorerWidth}px` } as CSSProperties}>
+      {showProjectRail ? <nav className="project-module-nav" aria-label="项目功能">
+        <button type="button" className={projectModule === "resources" ? "is-active" : undefined} onClick={() => { setProjectModule("resources"); window.dispatchEvent(new CustomEvent("apivoy-project-resources")); }}><Icon name="folder"/><span>资源管理</span></button>
+        <button type="button" className={projectModule === "runner" ? "is-active" : undefined} onClick={() => { setProjectModule("runner"); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "runner" })); }}><Icon name="send"/><span>运行集合</span></button>
+        <button type="button" className={projectModule === "mock" ? "is-active" : undefined} onClick={() => { setProjectModule("mock"); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "mock" })); }}><Icon name="archive"/><span>Mock</span></button>
+        <button type="button" className={projectModule === "automation" ? "is-active" : undefined} onClick={() => { setProjectModule("automation"); const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.set("view", "automation"); params.delete("workbench"); history.replaceState(null, "", `#${params}`); }}><Icon name="bolt"/><span>自动化</span></button>
+        <button type="button" className="project-module-settings" onClick={() => { setPaletteOpen(false); setSettingsOpen(false); setProjectSettingsOpen(true); }}><Icon name="sliders"/><span>项目设置</span></button>
+        <div className="project-rail-brand" aria-label={title}><span className="brand-mark"><BrandMark /></span><strong>{title}</strong></div>
+      </nav> : null}
+      {explorer && showExplorer ? <button type="button" className="explorer-backdrop" aria-label={t("shell.explorer.close")} onClick={toggleExplorer} /> : null}
+      {explorer ? <aside ref={explorerRef} id="apivoy-explorer" className="resource-explorer" aria-label={t("shell.explorer")}>{explorer}</aside> : null}
+      {explorer && showExplorer ? <div className="explorer-resize-handle" role="separator" aria-label="调整资源管理器宽度" aria-orientation="vertical" aria-valuemin={0} aria-valuemax={Math.round(maxExplorerWidth())} aria-valuenow={Math.round(explorerWidth)} tabIndex={0} onPointerDown={(event) => { if (window.matchMedia("(max-width: 768px)").matches) return; explorerDragStartWidthRef.current = explorerWidthRef.current; resizingExplorerRef.current = true; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (resizingExplorerRef.current) resizeExplorer(event.clientX); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); finishExplorerResize(); }} onPointerCancel={finishExplorerResize} onDoubleClick={() => { explorerWidthRef.current = 232; expandedExplorerWidthRef.current = 232; setExplorerWidth(232); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); const next = Math.min(maxExplorerWidth(), Math.max(190, explorerWidth + (event.key === "ArrowRight" ? 10 : -10))); explorerWidthRef.current = next; expandedExplorerWidthRef.current = next; setExplorerWidth(next); }}/>: null}
+      {explorer && projectModule !== "home" && !explorerOpen ? <button type="button" className="explorer-edge-toggle" aria-label={t("shell.explorer")} aria-expanded={false} aria-controls="apivoy-explorer" title={t("shell.explorer")} onClick={toggleExplorer}><Icon name="chevron"/></button> : null}
       <main id="apivoy-main" tabIndex={-1} className="app-main">{children}</main>
     </div>
     {paletteOpen ? <div className="command-overlay" role="presentation" onMouseDown={() => setPaletteOpen(false)}><div ref={paletteRef} className="command-palette" role="dialog" aria-modal="true" aria-label={t("command.title")} onMouseDown={(event) => event.stopPropagation()}><div className="command-input-wrap"><Icon name="search"/><input ref={paletteInputRef} role="combobox" aria-expanded="true" aria-controls="apivoy-command-results" aria-activedescendant={commandResults[activeCommand] ? `command-${commandResults[activeCommand].id}` : undefined} autoComplete="off" value={search} onKeyDown={onCommandKeyDown} onChange={(event) => setSearch(event.target.value)} placeholder={t("command.placeholder")} aria-label={t("command.open")}/></div>
@@ -233,6 +322,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
       {workbenchCommands.length === 0 && actions.length === 0 ? <div className="command-empty">{t("command.empty")}</div> : null}
     </div></div></div> : null}
     <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} channelLabel={channelLabel} />
+    <ProjectSettingsDialog open={projectSettingsOpen} onClose={() => setProjectSettingsOpen(false)} projectName={projectContext?.projects.find((project) => project.id === projectContext.selectedProjectId)?.name}/>
     <EnvironmentVariablesDialog open={environmentOpen} onClose={() => setEnvironmentOpen(false)} environment={environment}/>
     {collaboration ? <CollaborationHub open={collaborationOpen} onClose={() => setCollaborationOpen(false)} initialTab={collaborationTab} team={collaboration.team} comments={collaboration.comments} sso={collaboration.sso} /> : null}
   </div></FeedbackProvider>;

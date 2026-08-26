@@ -59,12 +59,16 @@ pub async fn apply_auth(
 
     match kind.as_str() {
         "bearer" => {
-            let name = auth
-                .secret_ref
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .ok_or(AuthError::MissingSecretRef)?;
-            let token = resolve_secret(scope, &vars, name)?;
+            let token = if let Some(value) = auth.token.as_deref().filter(|s| !s.is_empty()) {
+                resolve_template(value, &vars).map_err(|e| AuthError::Resolve(e.to_string()))?
+            } else {
+                let name = auth
+                    .secret_ref
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .ok_or(AuthError::MissingSecretRef)?;
+                resolve_secret(scope, &vars, name)?
+            };
             inject_header(&mut request, "Authorization", format!("Bearer {token}"));
         }
         "basic" => {
@@ -370,6 +374,23 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn applies_request_local_bearer_token() {
+        let mut req = http_req();
+        let mut auth = AuthRef::bearer("unused-secret-ref");
+        auth.secret_ref = None;
+        auth.token = Some("{{prefix}}-abc123".into());
+        req.auth_ref = Some(auth);
+        req.variables.insert("prefix".into(), "local".into());
+
+        let out = apply_auth(req, &VariableScope::default()).await.unwrap();
+        match out.payload {
+            ProtocolPayload::Http(p) => assert!(p.headers.iter().any(|(name, value)| {
+                name.eq_ignore_ascii_case("Authorization") && value == "Bearer local-abc123"
+            })),
+            _ => panic!("http"),
+        }
+    }
     #[tokio::test]
     async fn applies_basic() {
         let mut req = http_req();

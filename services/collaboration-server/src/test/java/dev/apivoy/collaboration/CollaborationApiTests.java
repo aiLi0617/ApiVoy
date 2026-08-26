@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import java.util.concurrent.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
@@ -50,6 +51,17 @@ class CollaborationApiTests {
         mvc.perform(get("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken)).andExpect(status().isOk()).andExpect(jsonPath("$.document.requests[0].id").value("r1"));
         mvc.perform(put("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).contentType(MediaType.APPLICATION_JSON).content("{"+"\"baseRevision\":1,\"document\":{},\"patch\":{}"+"}")).andExpect(status().isForbidden());
         mvc.perform(put("/v1/organizations/{org}/workspaces/{workspace}",organizationId,"workspace-a").header("Authorization","Bearer "+ownerToken).contentType(MediaType.APPLICATION_JSON).content("{"+"\"baseRevision\":0,\"document\":{},\"patch\":{}"+"}")).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("revision_conflict")).andExpect(jsonPath("$.currentRevision").value(1));
+        String ownerId=owner.get("user").get("id").asText();
+        ExecutorService executor=Executors.newFixedThreadPool(2);
+        CountDownLatch ready=new CountDownLatch(2),start=new CountDownLatch(1);
+        Callable<Boolean> concurrentPush=()->{ready.countDown();start.await();try{service.push(ownerId,organizationId,"workspace-a",1,json.readTree("{\"winner\":true}"),json.readTree("{\"op\":\"replace\"}"));return true;}catch(RuntimeException expected){return false;}};
+        Future<Boolean> first=executor.submit(concurrentPush),second=executor.submit(concurrentPush);
+        Assertions.assertTrue(ready.await(5,TimeUnit.SECONDS));start.countDown();
+        int successes=(first.get(10,TimeUnit.SECONDS)?1:0)+(second.get(10,TimeUnit.SECONDS)?1:0);
+        executor.shutdownNow();
+        Assertions.assertEquals(1,successes);
+        Assertions.assertEquals(2,workspaces.findByOrganizationIdAndWorkspaceId(organizationId,"workspace-a").orElseThrow().revision);
+        Assertions.assertEquals(java.util.List.of(1L,2L),changes.findByOrganizationIdAndWorkspaceIdAndRevisionGreaterThanOrderByRevision(organizationId,"workspace-a",0).stream().map(change->change.revision).toList());
         mvc.perform(get("/v1/organizations/{org}/workspaces/{workspace}/changes",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).param("afterRevision","0")).andExpect(status().isOk()).andExpect(jsonPath("$[0].revision").value(1));
         JsonNode comment=body(mvc.perform(post("/v1/organizations/{org}/workspaces/{workspace}/comments",organizationId,"workspace-a").header("Authorization","Bearer "+viewerToken).contentType(MediaType.APPLICATION_JSON).content("""
           {"body":"Please verify the authentication example."}

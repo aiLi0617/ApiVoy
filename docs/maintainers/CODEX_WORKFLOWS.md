@@ -15,6 +15,10 @@ Codex will be used for:
 7. Release-note drafting
 8. Security-sensitive change review assistance
 
+When reviewing or summarizing PRs, apply the front-loaded checks in
+[PR_REVIEW_CHECKLIST.md](./PR_REVIEW_CHECKLIST.md) for any touched surface
+(dependencies, CodeQL-prone UI/import code, Agent health contract, workflows).
+
 All Codex output **must be reviewed by a maintainer** before merging or publishing.
 
 ## Explicitly excluded

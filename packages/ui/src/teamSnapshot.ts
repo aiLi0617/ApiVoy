@@ -17,7 +17,7 @@ export interface TeamRestoreAdapter {
 
 const sensitive = /^(authorization|proxy-authorization|cookie|set-cookie|password|passwd|token|access.?token|refresh.?token|api.?key|client.?secret|secret)$/i;
 function redact(value: unknown, key = ""): unknown {
-  if (/ref$/i.test(key)) return value;
+  if (/ref$/i.test(key) && (value == null || typeof value !== "object")) return value;
   if (sensitive.test(key)) return typeof value === "string" && value.includes("{{") ? value : "{{redacted}}";
   if (Array.isArray(value)) {
     if (value.length === 2 && typeof value[0] === "string" && sensitive.test(value[0])) return [value[0], typeof value[1] === "string" && value[1].includes("{{") ? value[1] : "{{redacted}}"];

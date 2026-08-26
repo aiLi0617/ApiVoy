@@ -25,8 +25,9 @@ use execution_engine::{
     VariableScope,
 };
 use local_store::{
-    CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord, LocalStore,
-    ProjectRecord, StoredRequest, WorkspaceRecord,
+    ApiDefinitionRecord, CollectionRecord, EnvironmentRecord, ExecutionFilter, ExecutionRecord,
+    LocalStore, ModuleRecord, ProjectRecord, RequestDefinitionBinding, StoredRequest,
+    WorkspaceRecord,
 };
 use plugin_runtime::{InstalledPlugin, PluginManager, PluginManifest, PluginPermission};
 use secret_store::{SecretBackendKind, SecretStore};
@@ -105,6 +106,7 @@ struct ExecuteResponse {
 struct WorkspaceTree {
     workspaces: Vec<WorkspaceRecord>,
     projects: Vec<ProjectRecord>,
+    modules: Vec<ModuleRecord>,
     collections: Vec<CollectionRecord>,
     requests: Vec<StoredRequest>,
 }
@@ -115,6 +117,8 @@ struct AuthDto {
     kind: String,
     #[serde(default)]
     secret_ref: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
     #[serde(default)]
     username: Option<String>,
     #[serde(default)]
@@ -140,6 +144,7 @@ impl From<AuthDto> for AuthRef {
         AuthRef {
             kind: value.kind,
             secret_ref: value.secret_ref,
+            token: value.token,
             username: value.username,
             header_name: value.header_name,
             token_url: value.token_url,
@@ -171,6 +176,8 @@ struct HttpExecuteRequest {
     #[serde(default)]
     multipart: Vec<MultipartPart>,
     timeout_ms: u64,
+    #[serde(default)]
+    metadata: serde_json::Value,
     #[serde(default)]
     variables: HashMap<String, String>,
     #[serde(default)]
@@ -627,6 +634,7 @@ async fn http_get(
             body_source: None,
             multipart: vec![],
             timeout_ms: 30_000,
+            metadata: serde_json::json!({}),
             variables: HashMap::new(),
             assertions: vec![],
             environment_id: None,
@@ -724,6 +732,111 @@ struct HistoryFilterDto {
     protocol_id: Option<String>,
     #[serde(default)]
     status: Option<u16>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveApiDefinitionRequest {
+    id: Option<String>,
+    project_id: String,
+    name: String,
+    format: String,
+    file_name: String,
+    content: String,
+}
+
+#[tauri::command]
+async fn list_api_definitions(
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ApiDefinitionRecord>, String> {
+    state
+        .store
+        .lock()
+        .await
+        .list_api_definitions(&project_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn save_api_definition(
+    request: SaveApiDefinitionRequest,
+    state: State<'_, AppState>,
+) -> Result<ApiDefinitionRecord, String> {
+    let id = request.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let existing = state
+        .store
+        .lock()
+        .await
+        .get_api_definition(&id)
+        .map_err(|error| error.to_string())?;
+    let now = chrono::Utc::now();
+    let record = ApiDefinitionRecord {
+        id,
+        project_id: request.project_id,
+        module_id: None,
+        name: request.name,
+        format: request.format,
+        file_name: request.file_name,
+        content: request.content,
+        created_at: existing.map(|item| item.created_at).unwrap_or(now),
+        updated_at: now,
+    };
+    state
+        .store
+        .lock()
+        .await
+        .save_api_definition(&record)
+        .map_err(|error| error.to_string())?;
+    Ok(record)
+}
+
+#[tauri::command]
+async fn get_request_definition_binding(
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<RequestDefinitionBinding>, String> {
+    state
+        .store
+        .lock()
+        .await
+        .get_request_definition_binding(&request_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn bind_request_definition(
+    request_id: String,
+    definition_id: String,
+    operation_ref: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<RequestDefinitionBinding, String> {
+    let binding = RequestDefinitionBinding {
+        request_id,
+        definition_id,
+        operation_ref,
+        updated_at: chrono::Utc::now(),
+    };
+    state
+        .store
+        .lock()
+        .await
+        .bind_request_definition(&binding)
+        .map_err(|error| error.to_string())?;
+    Ok(binding)
+}
+
+#[tauri::command]
+async fn unbind_request_definition(
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .store
+        .lock()
+        .await
+        .unbind_request_definition(&request_id)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -861,6 +974,7 @@ async fn get_workspace_tree(state: State<'_, AppState>) -> Result<WorkspaceTree,
     let workspaces = store.list_workspaces().map_err(|e| e.to_string())?;
     let mut projects = Vec::new();
     let mut collections = Vec::new();
+    let mut modules = Vec::new();
     for workspace in &workspaces {
         projects.extend(
             store
@@ -869,6 +983,7 @@ async fn get_workspace_tree(state: State<'_, AppState>) -> Result<WorkspaceTree,
         );
     }
     for project in &projects {
+        modules.extend(store.list_modules(&project.id).map_err(|e| e.to_string())?);
         collections.extend(
             store
                 .list_collections(&project.id)
@@ -879,6 +994,7 @@ async fn get_workspace_tree(state: State<'_, AppState>) -> Result<WorkspaceTree,
     Ok(WorkspaceTree {
         workspaces,
         projects,
+        modules,
         collections,
         requests,
     })
@@ -961,6 +1077,20 @@ async fn create_project(
 }
 
 #[tauri::command]
+async fn create_module(
+    project_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<ModuleRecord, String> {
+    state
+        .store
+        .lock()
+        .await
+        .create_module(&project_id, &name)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn rename_project(
     id: String,
     name: String,
@@ -987,6 +1117,7 @@ async fn delete_project(id: String, state: State<'_, AppState>) -> Result<(), St
 #[tauri::command]
 async fn create_collection(
     project_id: String,
+    module_id: Option<String>,
     parent_id: Option<String>,
     name: String,
     state: State<'_, AppState>,
@@ -995,7 +1126,12 @@ async fn create_collection(
         .store
         .lock()
         .await
-        .create_collection(&project_id, parent_id.as_deref(), &name)
+        .create_collection_in_module(
+            &project_id,
+            module_id.as_deref(),
+            parent_id.as_deref(),
+            &name,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -1262,6 +1398,7 @@ fn build_envelope(request: &HttpExecuteRequest) -> RequestEnvelope {
         envelope.id = core_domain::RequestId(id);
     }
     envelope.timeout_ms = request.timeout_ms.max(1);
+    envelope.metadata = request.metadata.clone();
     envelope.payload = ProtocolPayload::Http(HttpPayload {
         method: request.method.clone(),
         headers: request.headers.clone(),
@@ -1375,6 +1512,11 @@ pub fn run() {
             load_latest_request,
             list_history,
             get_history_item,
+            list_api_definitions,
+            save_api_definition,
+            get_request_definition_binding,
+            bind_request_definition,
+            unbind_request_definition,
             get_environment,
             save_environment,
             put_secret,
@@ -1392,6 +1534,7 @@ pub fn run() {
             touch_workspace,
             delete_workspace,
             create_project,
+            create_module,
             rename_project,
             delete_project,
             create_collection,

@@ -132,7 +132,7 @@ jobs:
           agent_pid=$!
           trap 'kill "$agent_pid" 2>/dev/null || true' EXIT
           for attempt in {1..20}; do curl -fsS http://127.0.0.1:39227/health && break; sleep 1; done
-          curl -fsS http://127.0.0.1:39227/health | grep -q 'apivoy-local-agent'
+          curl -fsS http://127.0.0.1:39227/health | grep -q '"service":"apivoy-agent"'
           kill "$agent_pid"
           wait "$agent_pid" || true
           trap - EXIT
@@ -152,7 +152,7 @@ jobs:
           $agent = Start-Process "$install\apivoy-agent.exe" -PassThru -WindowStyle Hidden
           try {
             $ready = $false
-            1..20 | ForEach-Object { if (-not $ready) { Start-Sleep 1; try { $health = Invoke-RestMethod http://127.0.0.1:39227/health; $ready = $health.service -eq 'apivoy-local-agent' } catch {} } }
+            1..20 | ForEach-Object { if (-not $ready) { Start-Sleep 1; try { $health = Invoke-RestMethod http://127.0.0.1:39227/health; $ready = $health.service -eq 'apivoy-agent' } catch {} } }
             if (-not $ready) { throw 'Installed Agent did not become healthy' }
           } finally { Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue }
           Remove-Item (Split-Path $install -Parent) -Recurse -Force

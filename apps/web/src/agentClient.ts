@@ -23,6 +23,7 @@ import type {
   CaptureStatus,
   CapturedExchange,
   CollectionRunCase,
+  TcpSessionConnection,
 } from "@apivoy/ui";
 
 const runtime = (window as Window & { __APIVOY_CONFIG__?: { agentUrl?: string; agentToken?: string } }).__APIVOY_CONFIG__;
@@ -82,12 +83,20 @@ interface StoredRequest {
   target: string;
   envelope: RequestEnvelope;
 }
+export interface ApiDefinitionRecord { id: string; projectId: string; moduleId?: string | null; name: string; format: string; fileName: string; content: string; createdAt: string; updatedAt: string }
+export interface RequestDefinitionBindingRecord { requestId: string; definitionId: string; operationRef?: string | null; updatedAt: string }
 export async function loadEnvelopeViaAgent(id: string): Promise<RequestEnvelope | null> {
   await checkAgentHandshake();
   const response = await fetch(`${agentBase()}/v1/requests/${id}`, { headers: agentHeaders() });
   if (!response.ok) throw new Error(await response.text());
   return ((await response.json()) as StoredRequest | null)?.envelope ?? null;
 }
+
+export async function listApiDefinitionsViaAgent(projectId: string): Promise<ApiDefinitionRecord[]> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/api-definitions?projectId=${encodeURIComponent(projectId)}`, { headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function saveApiDefinitionViaAgent(input: { projectId: string; name: string; format: string; fileName: string; content: string }): Promise<ApiDefinitionRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/api-definitions`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(input) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function getRequestDefinitionBindingViaAgent(requestId: string): Promise<RequestDefinitionBindingRecord | null> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function bindRequestDefinitionViaAgent(requestId: string, definitionId: string, operationRef?: string): Promise<RequestDefinitionBindingRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { method: "PUT", headers: agentHeaders(), body: JSON.stringify({ definitionId, operationRef }) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function unbindRequestDefinitionViaAgent(requestId: string): Promise<void> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { method: "DELETE", headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); }
 
 function agentHeaders(extra?: HeadersInit): Headers {
   const headers = new Headers(extra);
@@ -146,6 +155,7 @@ export function toEnvelope(request: HttpWorkbenchRequest): RequestEnvelope {
     preScripts: request.preScripts,
     postScripts: request.postScripts,
   });
+  envelope.metadata = { ...(envelope.metadata ?? {}), ...(request.metadata ?? {}) };
   if (request.id) envelope.id = request.id;
   return envelope;
 }
@@ -166,6 +176,7 @@ export function fromEnvelope(envelope: RequestEnvelope, fallbackTarget?: string)
     bodySource: payload.bodySource ?? undefined,
     multipart: payload.multipart ?? [],
     timeoutMs: envelope.timeoutMs,
+    metadata: (envelope.metadata ?? {}) as Record<string, unknown>,
     variables: envelope.variables ?? {},
     assertions: envelope.assertions ?? [],
     auth: envelope.authRef ?? null,
@@ -376,6 +387,7 @@ async function createWorkspaceRecord<T>(path: string, body: unknown): Promise<T>
 }
 
 export const createProjectViaAgent = (workspaceId: string, name: string) => createWorkspaceRecord<WorkspaceTree["projects"][number]>("/v1/projects", { workspaceId, name });
+export const createModuleViaAgent = (projectId: string, name: string) => createWorkspaceRecord<NonNullable<WorkspaceTree["modules"]>[number]>("/v1/modules", { projectId, name });
 export const createWorkspaceViaAgent = (name: string) => createWorkspaceRecord<WorkspaceTree["workspaces"][number]>("/v1/workspaces", { name });
 export const renameWorkspaceViaAgent = (id: string, name: string) => mutateWorkspace(`/v1/workspaces/${id}`, "PATCH", { name });
 export const archiveWorkspaceViaAgent = (id: string, archived: boolean) => mutateWorkspace(`/v1/workspaces/${id}/archive`, "PATCH", { archived });
@@ -383,7 +395,7 @@ export const touchWorkspaceViaAgent = (id: string) => mutateWorkspace(`/v1/works
 export const deleteWorkspaceViaAgent = (id: string) => mutateWorkspace(`/v1/workspaces/${id}`, "DELETE");
 export const renameProjectViaAgent = (id: string, name: string) => mutateWorkspace(`/v1/projects/${id}`, "PATCH", { name });
 export const deleteProjectViaAgent = (id: string) => mutateWorkspace(`/v1/projects/${id}`, "DELETE");
-export const createCollectionViaAgent = (projectId: string, parentId: string | null, name: string) => createWorkspaceRecord<WorkspaceTree["collections"][number]>("/v1/collections", { projectId, parentId, name });
+export const createCollectionViaAgent = (projectId: string, parentId: string | null, name: string, moduleId?: string) => createWorkspaceRecord<WorkspaceTree["collections"][number]>("/v1/collections", { projectId, parentId, name, moduleId });
 export const renameCollectionViaAgent = (id: string, name: string, parentId: string | null, sortOrder: number) => mutateWorkspace(`/v1/collections/${id}`, "PATCH", { name, parentId, sortOrder });
 export const updateCollectionTagsViaAgent = (id: string, tags: string[]) => mutateWorkspace(`/v1/collections/${id}/tags`, "PATCH", { tags });
 export const deleteCollectionViaAgent = (id: string) => mutateWorkspace(`/v1/collections/${id}`, "DELETE");
@@ -394,7 +406,20 @@ export async function listMockRulesViaAgent(): Promise<MockRule[]> { await check
 export async function createMockRuleViaAgent(rule: Omit<MockRule, "id">): Promise<void> { await mutateWorkspace("/v1/mock-rules", "POST", rule); }
 export async function deleteMockRuleViaAgent(id: string): Promise<void> { await mutateWorkspace(`/v1/mock-rules/${id}`, "DELETE"); }
 export const agentBaseUrl = agentBase();
-export const tcpSessionUrlViaAgent = (target: string) => `${agentBase().replace(/^http/, "ws")}/v1/tcp-session?target=${encodeURIComponent(target)}&token=${encodeURIComponent(bootstrapToken ?? "")}`;
+export async function tcpSessionConnectionViaAgent(target: string): Promise<TcpSessionConnection> {
+  await checkAgentHandshake();
+  const response = await fetch(`${agentBase()}/v1/tcp-session-ticket`, {
+    method: "POST",
+    headers: agentHeaders(),
+    body: JSON.stringify({ target }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const { ticket } = await response.json() as { ticket: string };
+  return {
+    url: `${agentBase().replace(/^http/, "ws")}/v1/tcp-session`,
+    protocols: ["apivoy", `apivoy-ticket.${ticket}`],
+  };
+}
 export async function listPluginsViaAgent(): Promise<InstalledPlugin[]> { await checkAgentHandshake(); const res = await fetch(`${agentBase()}/v1/plugins`, { headers: agentHeaders() }); if (!res.ok) throw new Error(await res.text()); return res.json(); }
 export async function installPluginViaAgent(manifest: PluginManifest, wasmBase64: string): Promise<void> { await mutateWorkspace("/v1/plugins", "POST", { manifest, wasmBase64 }); }
 export async function enablePluginViaAgent(id: string, enabled: boolean): Promise<void> { await mutateWorkspace(`/v1/plugins/${id}`, "PATCH", { enabled }); }

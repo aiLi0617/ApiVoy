@@ -68,4 +68,8 @@ A pull request should include:
 - Screenshots for UI changes
 - Security implications when touching secrets, authentication, TLS, scripts, plugins, proxying, or protocol parsing
 
+Before requesting review, self-check any touched areas against
+[docs/maintainers/PR_REVIEW_CHECKLIST.md](docs/maintainers/PR_REVIEW_CHECKLIST.md)
+(dependency audit, CodeQL-prone UI/import patterns, Agent health contract, workflow assertions).
+
 See [AGENTS.md](AGENTS.md) for maintainer automation rules and [SECURITY.md](SECURITY.md) for vulnerability reporting.

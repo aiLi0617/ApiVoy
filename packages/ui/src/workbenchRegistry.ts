@@ -13,7 +13,8 @@ export interface WorkbenchRegistryEntry extends WorkbenchTab {
 export const WORKBENCH_REGISTRY: WorkbenchRegistryEntry[] = [
   { id: "http", label: "HTTP", protocols: ["http", "graphql", "soap", "jsonrpc"] },
   { id: "sse", label: "SSE", protocol: "sse" },
-  { id: "socket", label: "TCP / UDP", protocols: ["tcp", "udp"] },
+  { id: "tcp", label: "TCP", protocol: "tcp" },
+  { id: "udp", label: "UDP", protocol: "udp" },
   { id: "websocket", label: "WebSocket", protocol: "websocket" },
   { id: "grpc", label: "gRPC", protocol: "grpc" },
   { id: "redis", label: "Redis", protocol: "redis" },

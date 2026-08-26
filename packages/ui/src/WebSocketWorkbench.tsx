@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { consumeHydrate } from "./openRequestPipeline";
-import { KeyValueRows, queryRowsFromUrl, urlWithQueryRows, type HeaderRow, type HttpRunResult, type HttpSendHooks } from "./HttpWorkbench";
+import { KeyValueRows, createQueryRow, queryRowsFromUrl, urlWithQueryRows, type HeaderRow, type HttpRunResult, type HttpSendHooks } from "./HttpWorkbench";
 import { ProtocolCodeGenerator } from "./ProtocolCodeGenerator";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
 import { SplitPane } from "./WorkbenchFrame";
@@ -10,6 +10,17 @@ import { useAppStore } from "./appStore";
 
 export interface WebSocketWorkbenchRequest { name: string; url: string; headers: Array<[string, string]>; subprotocols: string[]; messages: Array<{ encoding: "text" | "binary"; data: string }>; receiveLimit: number; timeoutMs: number; reconnectMax: number; reconnectDelayMs: number }
 export interface WebSocketWorkbenchProps { onConnect: (request: WebSocketWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>; onCancel: (executionId: string) => Promise<void>; onSave?: (request: WebSocketWorkbenchRequest) => Promise<void>; externalRequest?: WebSocketWorkbenchRequest | null; onTitleChange?: (title: string) => void }
+function rowsFromPairs(entries: Array<[string, string]>): HeaderRow[] {
+  return [...entries.map(([key, value]) => createQueryRow(key, value)), createQueryRow()];
+}
+
+function cookieRowsFromHeaders(headers: Array<[string, string]>): HeaderRow[] {
+  const cookies = headers.filter(([name]) => name.toLowerCase() === "cookie").flatMap(([, value]) => value.split(";")).flatMap((item) => {
+    const separator = item.indexOf("=");
+    return separator > 0 ? [createQueryRow(item.slice(0, separator).trim(), item.slice(separator + 1).trim())] : [];
+  });
+  return [...cookies, createQueryRow()];
+}
 
 export function WebSocketWorkbench({ onSave, externalRequest, onTitleChange }: WebSocketWorkbenchProps) {
   const [name, setName] = useState("");
@@ -20,7 +31,8 @@ export function WebSocketWorkbench({ onSave, externalRequest, onTitleChange }: W
   const [clearAfterSend, setClearAfterSend] = useState(false);
   const encoding: "text" | "binary" = messageFormat === "binary" ? "binary" : "text";
   const [message, setMessage] = useState("");
-  const [headersText, setHeadersText] = useState("");
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createQueryRow()]);
+  const [cookieRows, setCookieRows] = useState<HeaderRow[]>(() => [createQueryRow()]);
   const [subprotocols, setSubprotocols] = useState("");
   const [receiveLimit, setReceiveLimit] = useState(1);
   const [timeoutMs, setTimeoutMs] = useState(5000);
@@ -28,6 +40,11 @@ export function WebSocketWorkbench({ onSave, externalRequest, onTitleChange }: W
   const [reconnectDelayMs, setReconnectDelayMs] = useState(1000);
   const [frames, setFrames] = useState<Array<{ id: string; time: string; direction: "→" | "←" | "•"; type: string; payload: string }>>([]);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
+  const [messageListRatio, setMessageListRatio] = useState(() => {
+    if (typeof window === "undefined") return 46;
+    const saved = Number(window.localStorage.getItem("apivoy-websocket-message-list-ratio"));
+    return Number.isFinite(saved) && saved >= 5 && saved <= 95 ? saved : 46;
+  });
   const [detailFormat, setDetailFormat] = useState<"pretty" | "hexdump" | "raw">("pretty");
   const [detailContentType, setDetailContentType] = useState<"auto" | "json" | "xml" | "html" | "javascript" | "text">("auto");
   const [detailCharset, setDetailCharset] = useState<"auto" | "utf-8" | "gb18030" | "utf-16le" | "utf-16be" | "windows-1252" | "iso-8859-1">("auto");
@@ -36,19 +53,86 @@ export function WebSocketWorkbench({ onSave, externalRequest, onTitleChange }: W
   const [frameFilter, setFrameFilter] = useState<"all" | "incoming" | "outgoing">("all");
   const [connecting, setConnecting] = useState(false);
   const [interactive, setInteractive] = useState(false);
-  const [requestTab, setRequestTab] = useState<"message" | "params" | "settings">("message");
+  const [requestTab, setRequestTab] = useState<"message" | "params" | "headers" | "cookies" | "settings">("message");
   const [responseTab, setResponseTab] = useState<"messages" | "headers" | "cookies" | "request">("messages");
   const [hasConnected, setHasConnected] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const detailEditorRef = useRef<CodeEditorHandle | null>(null);
-  const responseDetailsStacked = useAppStore((state) => state.splitPreferences["websocket-workbench"]?.direction === "horizontal");
-  useEffect(() => { const apply = (value: WebSocketWorkbenchRequest) => { setName(value.name ?? ""); setUrl(value.url); setQueryRows(queryRowsFromUrl(value.url)); setHeadersText(value.headers.map(([name, item]) => `${name}: ${item}`).join("\n")); setSubprotocols(value.subprotocols.join(", ")); const first = value.messages[0]; setMessageFormat(first?.encoding === "binary" ? "binary" : "text"); setMessage(first?.data ?? ""); setReceiveLimit(value.receiveLimit); setTimeoutMs(value.timeoutMs); setReconnectMax(value.reconnectMax); setReconnectDelayMs(value.reconnectDelayMs); }; if (externalRequest) apply(externalRequest); else { const draft = readWorkbenchDraft<WebSocketWorkbenchRequest>("websocket"); if (draft) apply(draft); } const listener = (event: Event) => { const envelope = (event as CustomEvent).detail; const payload = envelope?.payload; if (payload?.type === "websocket") apply({ name: envelope.name, url: envelope.target, headers: payload.headers, subprotocols: payload.subprotocols, messages: payload.messages, receiveLimit: payload.receiveLimit ?? 1, timeoutMs: envelope.timeoutMs, reconnectMax: payload.reconnectMax, reconnectDelayMs: payload.reconnectDelayMs }); }; const pending = consumeHydrate("websocket"); if (pending) listener(new CustomEvent("apivoy-open-request", { detail: pending.envelope }) as Event); const onHydrate = (event: Event) => { const d = (event as CustomEvent).detail; if (d?.workbenchId !== "websocket") return; listener(new CustomEvent("apivoy-open-request", { detail: d.envelope }) as Event); }; window.addEventListener("apivoy-open-request", listener); window.addEventListener("apivoy-hydrate-request", onHydrate); return () => { window.removeEventListener("apivoy-open-request", listener); window.removeEventListener("apivoy-hydrate-request", onHydrate); }; }, [externalRequest]);
+  const messageBrowserRef = useRef<HTMLDivElement | null>(null);
+  const [compactResponseDetails, setCompactResponseDetails] = useState(false);
+  const responseDetailsStackedByLayout = useAppStore((state) => state.splitDirection === "horizontal");
+  const responseDetailsStacked = responseDetailsStackedByLayout || compactResponseDetails;
+  useEffect(() => { window.localStorage.setItem("apivoy-websocket-message-list-ratio", String(messageListRatio)); }, [messageListRatio]);
+  useEffect(() => {
+    const browser = messageBrowserRef.current;
+    if (!browser || !selectedFrameId) return;
+    const detail = browser.querySelector<HTMLElement>(".websocket-frame-detail");
+    const syncDetailToolbar = () => {
+      const bounds = detail?.getBoundingClientRect();
+      const width = bounds ? Math.max(0, Math.min(bounds.right, window.innerWidth) - Math.max(bounds.left, 0)) : 0;
+      browser.classList.toggle("is-detail-compact", width > 0 && width < 432);
+    };
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.target === browser) setCompactResponseDetails(!responseDetailsStackedByLayout && entry.contentRect.width < 720);
+      syncDetailToolbar();
+      setMessageListRatio((current) => clampMessageListRatio(current));
+    });
+    observer.observe(browser);
+    if (detail) observer.observe(detail);
+    window.addEventListener("resize", syncDetailToolbar);
+    syncDetailToolbar();
+    return () => { observer.disconnect(); window.removeEventListener("resize", syncDetailToolbar); browser.classList.remove("is-detail-compact"); };
+  }, [hasConnected, responseTab, responseDetailsStackedByLayout, selectedFrameId]);
+  useEffect(() => { const apply = (value: WebSocketWorkbenchRequest) => { setName(value.name ?? ""); setUrl(value.url); setQueryRows(queryRowsFromUrl(value.url)); setHeaderRows(rowsFromPairs(value.headers.filter(([header]) => header.toLowerCase() !== "cookie"))); setCookieRows(cookieRowsFromHeaders(value.headers)); setSubprotocols(value.subprotocols.join(", ")); const first = value.messages[0]; setMessageFormat(first?.encoding === "binary" ? "binary" : "text"); setMessage(first?.data ?? ""); setReceiveLimit(value.receiveLimit); setTimeoutMs(value.timeoutMs); setReconnectMax(value.reconnectMax); setReconnectDelayMs(value.reconnectDelayMs); }; if (externalRequest) apply(externalRequest); else { const draft = readWorkbenchDraft<WebSocketWorkbenchRequest>("websocket"); if (draft) apply(draft); } const listener = (event: Event) => { const envelope = (event as CustomEvent).detail; const payload = envelope?.payload; if (payload?.type === "websocket") apply({ name: envelope.name, url: envelope.target, headers: payload.headers, subprotocols: payload.subprotocols, messages: payload.messages, receiveLimit: payload.receiveLimit ?? 1, timeoutMs: envelope.timeoutMs, reconnectMax: payload.reconnectMax, reconnectDelayMs: payload.reconnectDelayMs }); }; const pending = consumeHydrate("websocket"); if (pending) listener(new CustomEvent("apivoy-open-request", { detail: pending.envelope }) as Event); const onHydrate = (event: Event) => { const d = (event as CustomEvent).detail; if (d?.workbenchId !== "websocket") return; listener(new CustomEvent("apivoy-open-request", { detail: d.envelope }) as Event); }; window.addEventListener("apivoy-open-request", listener); window.addEventListener("apivoy-hydrate-request", onHydrate); return () => { window.removeEventListener("apivoy-open-request", listener); window.removeEventListener("apivoy-hydrate-request", onHydrate); }; }, [externalRequest]);
   useEffect(() => { onTitleChange?.(name.trim() || "WebSocket"); }, [name, onTitleChange]);
-  const request = (): WebSocketWorkbenchRequest => ({ name: name.trim() || `WebSocket ${url}`, url, headers: headersText.split("\n").filter(Boolean).map((line): [string, string] => { const index = line.indexOf(":"); return index < 0 ? [line.trim(), ""] : [line.slice(0, index).trim(), line.slice(index + 1).trim()]; }), subprotocols: subprotocols.split(",").map((item) => item.trim()).filter(Boolean), messages: message ? [{ encoding, data: message }] : [], receiveLimit, timeoutMs, reconnectMax, reconnectDelayMs });
+  const request = (): WebSocketWorkbenchRequest => { const headers = headerRows.filter((row) => row.enabled && row.key.trim()).map((row): [string, string] => [row.key.trim(), row.value]); const cookies = cookieRows.filter((row) => row.enabled && row.key.trim()); if (cookies.length) headers.push(["Cookie", cookies.map((row) => `${row.key.trim()}=${row.value}`).join("; ")]); return { name: name.trim() || `WebSocket ${url}`, url, headers, subprotocols: subprotocols.split(",").map((item) => item.trim()).filter(Boolean), messages: message ? [{ encoding, data: message }] : [], receiveLimit, timeoutMs, reconnectMax, reconnectDelayMs }; };
   useAutosaveDraft("websocket", request);
   function appendFrame(direction: "→" | "←" | "•", value: string) {
     const match = value.match(/^(TEXT|BINARY(?:\s+(?:BASE64|HEX))?)\s+([\s\S]*)$/);
     setFrames((current) => [...current, { id: crypto.randomUUID(), time: new Date().toLocaleTimeString([], { hour12: false }), direction, type: match?.[1] ?? (direction === "•" ? "状态" : "TEXT"), payload: match?.[2] ?? value }]);
+  }
+  function resizeMessagePanels(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const update = (clientX: number, clientY: number) => {
+      const bounds = messageBrowserRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const position = responseDetailsStacked ? clientY - bounds.top : clientX - bounds.left;
+      const size = responseDetailsStacked ? bounds.height : bounds.width;
+      if (size > 0) setMessageListRatio(clampMessageListRatio(position / size * 100));
+    };
+    update(event.clientX, event.clientY);
+    const move = (moveEvent: PointerEvent) => update(moveEvent.clientX, moveEvent.clientY);
+    const finish = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  }
+  function messageListRatioBounds(): [number, number] {
+    const bounds = messageBrowserRef.current?.getBoundingClientRect();
+    const size = bounds ? (responseDetailsStacked ? bounds.height : bounds.width) : 0;
+    if (!size) return [22, 78];
+    const listMinimum = responseDetailsStacked ? 120 : 320;
+    const detailMinimum = responseDetailsStacked ? 150 : 370;
+    const minimum = listMinimum / size * 100;
+    const maximum = (size - detailMinimum - 7) / size * 100;
+    return minimum <= maximum ? [minimum, maximum] : [50, 50];
+  }
+  function clampMessageListRatio(value: number) {
+    const [minimum, maximum] = messageListRatioBounds();
+    return Math.min(maximum, Math.max(minimum, value));
+  }
+  function resizeMessagePanelsWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    const decreaseKey = responseDetailsStacked ? "ArrowUp" : "ArrowLeft";
+    const increaseKey = responseDetailsStacked ? "ArrowDown" : "ArrowRight";
+    if (event.key === decreaseKey || event.key === increaseKey) {
+      event.preventDefault();
+      setMessageListRatio((current) => clampMessageListRatio(current + (event.key === increaseKey ? 2 : -2)));
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const [minimum, maximum] = messageListRatioBounds();
+      setMessageListRatio(event.key === "Home" ? minimum : maximum);
+    }
   }
   function connectInteractive() {
     if (socketRef.current) return;
@@ -122,24 +206,28 @@ export function WebSocketWorkbench({ onSave, externalRequest, onTitleChange }: W
   function downloadSelectedFrame() { if (!selectedFrame) return; const blob = new Blob([selectedFramePayload], { type: "text/plain;charset=utf-8" }); const href = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = href; anchor.download = `websocket-${selectedFrame.direction === "←" ? "received" : "sent"}-${selectedFrame.time.replace(/:/g, "-")}.txt`; anchor.click(); URL.revokeObjectURL(href); }
   async function copySelectedFrame() { if (!selectedFrame) return; await navigator.clipboard.writeText(selectedFramePayload); }
   const connectionStatus = <span className={`websocket-status ${interactive ? "is-open" : connecting ? "is-connecting" : ""}`}>{interactive ? "已连接" : connecting ? "连接中" : "未连接"}</span>;
-  return <div className="websocket-workbench-layout"><SplitPane id="websocket-workbench" direction="vertical" minPrimary={220} minSecondary={160} primaryLabel="WebSocket 请求配置" secondaryLabel="响应检查器" secondaryActions={connectionStatus} primary={<section className={`websocket-workbench websocket-request-pane tab-${requestTab}`}>
+  return <div className="websocket-workbench-layout"><SplitPane id="websocket-workbench" direction="vertical" minPrimary={304} minSecondary={160} primaryLabel="WebSocket 请求配置" secondaryLabel="响应检查器" secondaryActions={connectionStatus} primary={<section className={`websocket-workbench websocket-request-pane tab-${requestTab}`}>
     <input className="websocket-name" aria-label="接口名称" value={name} onChange={(event) => setName(event.target.value)} placeholder="接口名称"/>
     <div className="websocket-commandbar"><input aria-label="WebSocket 地址" value={url} onChange={(event) => setUrl(event.target.value)} onBlur={(event) => setQueryRows(queryRowsFromUrl(event.target.value))} placeholder="WebSocket 接口地址（ws:// 或 wss://）"/>{!interactive ? <button className="websocket-primary" disabled={connecting || !url.trim() || queryParamsInvalid} onClick={connectInteractive}>{connecting ? "连接中…" : "连接"}</button> : <button className="websocket-danger" onClick={closeInteractive}>断开</button>}{onSave && <button className="websocket-secondary" onClick={() => void onSave(request())}>保存</button>}</div>
-    <div className="websocket-request-tabs" role="tablist" aria-label="WebSocket 请求配置">{([['message','Message'],['params','Params'],['settings','设置']] as const).map(([id,label]) => <button key={id} type="button" role="tab" aria-selected={requestTab === id} className={requestTab === id ? "is-active" : ""} onClick={() => setRequestTab(id)}>{label}</button>)}</div>
-    {requestTab === "message" && <section className="websocket-message-editor"><header><strong>消息内容</strong><select aria-label="消息帧格式" value={messageFormat} onChange={(event) => setMessageFormat(event.target.value as typeof messageFormat)}><option value="text">Text</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="binary">Binary</option></select>{messageFormat === "binary" && <select aria-label="二进制编码" value={binaryEncoding} onChange={(event) => setBinaryEncoding(event.target.value as typeof binaryEncoding)}><option value="base64">Base64</option><option value="hexadecimal">Hexadecimal</option></select>}{["json","xml","html"].includes(messageFormat) && <button type="button" className="websocket-format-button" disabled={!message.trim()} onClick={formatMessage}>格式化</button>}</header><CodeEditor value={message} onChange={setMessage} language={messageFormat === "binary" || messageFormat === "text" ? "plaintext" : messageFormat} height="100%" bare/><footer><label className="websocket-clear-after-send"><input type="checkbox" checked={clearAfterSend} onChange={(event) => setClearAfterSend(event.target.checked)}/><span>发送后清空输入</span></label><button className="websocket-primary" disabled={!interactive || !message} onClick={sendInteractive}>发送</button></footer></section>}
-    {requestTab === "params" && <section className="websocket-params-panel"><KeyValueRows rows={queryRows} setRows={setQueryRows} kind="Param" nameLabel="参数名" valueLabel="参数值" addPlaceholder="添加参数" loading={connecting || interactive} onRowsChange={(rows) => setUrl((current) => urlWithQueryRows(current, rows))}/></section>}
-    {requestTab === "settings" && <section className="websocket-settings-panel"><div className="websocket-settings-fields websocket-settings-fields-single"><label><span>子协议</span><input value={subprotocols} onChange={(event) => setSubprotocols(event.target.value)} placeholder="graphql-transport-ws"/></label></div><label className="websocket-settings-headers"><span>请求 Header <small>浏览器连接无法附加自定义 Header，建议使用 Cookie、URL 参数或子协议认证</small></span><textarea value={headersText} onChange={(event) => setHeadersText(event.target.value)} placeholder="Authorization: Bearer {{token}}"/></label></section>}
-    <ProtocolCodeGenerator input={{ protocol: "websocket", request: request() }} />
+    <div className="websocket-request-tabs" role="tablist" aria-label="WebSocket 请求配置">{([['message','Message'],['params','Params'],['headers','Headers'],['cookies','Cookies'],['settings','设置']] as const).map(([id,label]) => <button key={id} type="button" role="tab" aria-selected={requestTab === id} className={requestTab === id ? "is-active" : ""} onClick={() => setRequestTab(id)}>{label}</button>)}</div>
+    {requestTab === "message" && <section className="websocket-message-editor"><header><strong>消息内容</strong><select aria-label="消息帧格式" value={messageFormat} onChange={(event) => setMessageFormat(event.target.value as typeof messageFormat)}><option value="text">Text</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="binary">Binary</option></select>{messageFormat === "binary" && <select aria-label="二进制编码" value={binaryEncoding} onChange={(event) => setBinaryEncoding(event.target.value as typeof binaryEncoding)}><option value="base64">Base64</option><option value="hexadecimal">Hexadecimal</option></select>}<div className="websocket-message-actions"><button type="button" className="websocket-message-tool" aria-label="格式化消息" title="格式化" disabled={!["json","xml","html"].includes(messageFormat) || !message.trim()} onClick={formatMessage}><Icon name="code"/></button><button type="button" className="websocket-message-tool" aria-label="清空消息内容" title="清空" disabled={!message} onClick={() => setMessage("")}><Icon name="broom"/></button></div></header><CodeEditor value={message} onChange={setMessage} language={messageFormat === "binary" || messageFormat === "text" ? "plaintext" : messageFormat} height="100%" bare/><footer><label className="websocket-clear-after-send"><input type="checkbox" checked={clearAfterSend} onChange={(event) => setClearAfterSend(event.target.checked)}/><span>发送后清空输入</span></label><button className="websocket-primary" disabled={!interactive || !message} onClick={sendInteractive}>发送</button></footer></section>}
+    {requestTab === "params" && <section className="websocket-params-panel" data-title="Query 参数"><KeyValueRows rows={queryRows} setRows={setQueryRows} kind="Param" nameLabel="参数名" valueLabel="参数值" addPlaceholder="添加参数" loading={connecting || interactive} onRowsChange={(rows) => setUrl((current) => urlWithQueryRows(current, rows))}/></section>}
+    {requestTab === "headers" && <section className="websocket-params-panel" data-title="请求 Headers"><KeyValueRows rows={headerRows} setRows={setHeaderRows} kind="Header" nameLabel="Header 名称" valueLabel="Header 值" addPlaceholder="添加 Header" loading={connecting || interactive}/></section>}
+    {requestTab === "cookies" && <section className="websocket-params-panel" data-title="请求 Cookies"><KeyValueRows rows={cookieRows} setRows={setCookieRows} kind="Cookie" nameLabel="Cookie 名称" valueLabel="Cookie 值" addPlaceholder="添加 Cookie" loading={connecting || interactive}/></section>}
+    {requestTab === "settings" && <section className="websocket-settings-panel"><div className="websocket-settings-fields websocket-settings-fields-single"><label><span>子协议</span><input value={subprotocols} onChange={(event) => setSubprotocols(event.target.value)} placeholder="graphql-transport-ws"/></label></div></section>}
   </section>} secondary={<section className={`websocket-response${hasConnected ? " has-response" : ""}`}>
       {!hasConnected ? <div className="websocket-response-waiting"><strong>等待连接</strong><span>建立 WebSocket 连接后，消息、Header、Cookie 和实际请求会显示在这里。</span></div> : <>
       <div className="websocket-response-tabs" role="tablist" aria-label="WebSocket 响应">
         {([['messages', 'Messages'], ['headers', `Header ${responseHeaders.length}`], ['cookies', `Cookie ${responseCookies.length}`], ['request', '实际请求']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={responseTab === id} className={responseTab === id ? "is-active" : ""} onClick={() => setResponseTab(id)}>{label}</button>)}
       </div>
       <div className="websocket-frame-list" role="tabpanel">
-        {responseTab === "messages" && <div className={`websocket-message-browser${selectedFrame ? " has-detail" : ""}${responseDetailsStacked ? " is-stacked" : ""}`}><section className="websocket-message-summary"><header className="websocket-message-toolbar"><input type="search" aria-label="搜索 WebSocket 消息" value={frameQuery} onChange={(event) => setFrameQuery(event.target.value)} placeholder="搜索消息"/><select aria-label="筛选 WebSocket 消息" value={frameFilter} onChange={(event) => setFrameFilter(event.target.value as typeof frameFilter)}><option value="all">全部消息</option><option value="incoming">仅接收</option><option value="outgoing">仅发送</option></select><button type="button" className="websocket-clear-messages" aria-label="清空消息" title="清空消息" onClick={() => { setFrames([]); setSelectedFrameId(null); }}><Icon name="archive"/></button></header><div className="websocket-message-list">{visibleFrames.map((frame) => <button type="button" key={frame.id} className={`websocket-frame websocket-frame-${frame.direction === "←" ? "incoming" : frame.direction === "→" ? "outgoing" : "status"}${selectedFrameId === frame.id ? " is-selected" : ""}`} aria-disabled={frame.direction === "•"} onClick={() => { if (frame.direction !== "•") setSelectedFrameId(frame.id); }}><b>{frame.direction === "•" ? "✓" : frame.direction}</b><code>{frame.payload ? displayFramePayload(frame.payload).replace(/\s+/g, " ").trim() : frame.type}</code><time>{frame.time}</time></button>)}</div></section>{selectedFrame && <section className="websocket-frame-detail"><header><div className="websocket-frame-detail-options"><select aria-label="消息展示格式" value={detailFormat} onChange={(event) => setDetailFormat(event.target.value as typeof detailFormat)}><option value="pretty">Pretty</option><option value="hexdump">Hexdump</option><option value="raw">Raw</option></select><select aria-label="消息内容类型" value={detailContentType} onChange={(event) => setDetailContentType(event.target.value as typeof detailContentType)}><option value="auto">Auto</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="javascript">JavaScript</option><option value="text">Text</option></select><select aria-label="消息字符编码" value={detailCharset} onChange={(event) => setDetailCharset(event.target.value as typeof detailCharset)}><option value="auto">Auto</option><option value="utf-8">UTF-8</option><option value="gb18030">GBK / GB18030</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option><option value="windows-1252">Windows-1252</option><option value="iso-8859-1">ISO-8859-1</option></select><button type="button" className={detailWordWrap ? "is-active" : ""} aria-label="切换自动换行" title="自动换行" onClick={() => setDetailWordWrap((current) => !current)}><Icon name="wrap"/></button></div><div className="websocket-frame-detail-actions"><button type="button" aria-label="下载消息" title="下载" onClick={downloadSelectedFrame}><Icon name="download"/></button><button type="button" aria-label="复制消息" title="复制" onClick={() => void copySelectedFrame()}><Icon name="copy"/></button><button type="button" aria-label="搜索消息内容" title="搜索" onClick={() => detailEditorRef.current?.openFind()}><Icon name="search"/></button><button type="button" aria-label="关闭消息详情" title="关闭" onClick={() => setSelectedFrameId(null)}><Icon name="close"/></button></div></header><CodeEditor ref={detailEditorRef} value={selectedFramePayload} onChange={() => {}} language={selectedFrameLanguage} height="100%" wordWrap={detailWordWrap} readOnly bare/></section>}</div>}
+        {responseTab === "messages" && <div ref={messageBrowserRef} className={`websocket-message-browser${selectedFrame ? " has-detail" : ""}${responseDetailsStacked ? " is-stacked" : ""}`} style={{ "--websocket-message-list-ratio": `${messageListRatio}%` } as CSSProperties}>
+          <section className="websocket-message-summary"><header className="websocket-message-toolbar"><input type="search" aria-label="搜索 WebSocket 消息" value={frameQuery} onChange={(event) => setFrameQuery(event.target.value)} placeholder="搜索消息"/><select aria-label="筛选 WebSocket 消息" value={frameFilter} onChange={(event) => setFrameFilter(event.target.value as typeof frameFilter)}><option value="all">全部消息</option><option value="incoming">仅接收</option><option value="outgoing">仅发送</option></select><button type="button" className="websocket-clear-messages" aria-label="清空消息" title="清空消息" onClick={() => { setFrames([]); setSelectedFrameId(null); }}><Icon name="archive"/></button></header><div className="websocket-message-list">{visibleFrames.map((frame) => <button type="button" key={frame.id} className={`websocket-frame websocket-frame-${frame.direction === "←" ? "incoming" : frame.direction === "→" ? "outgoing" : "status"}${selectedFrameId === frame.id ? " is-selected" : ""}`} aria-disabled={frame.direction === "•"} onClick={() => { if (frame.direction !== "•") setSelectedFrameId(frame.id); }}><b>{frame.direction === "•" ? "✓" : frame.direction}</b><code>{frame.payload ? displayFramePayload(frame.payload).replace(/\s+/g, " ").trim() : frame.type}</code><time>{frame.time}</time></button>)}</div></section>
+          {selectedFrame && <><div className="websocket-detail-resizer" role="separator" tabIndex={0} aria-label="调整消息列表和详情区域大小" aria-orientation={responseDetailsStacked ? "horizontal" : "vertical"} aria-valuemin={22} aria-valuemax={78} aria-valuenow={Math.round(messageListRatio)} onPointerDown={resizeMessagePanels} onKeyDown={resizeMessagePanelsWithKeyboard} onDoubleClick={() => setMessageListRatio(46)}/><section className="websocket-frame-detail"><header><div className="websocket-frame-detail-options"><select aria-label="消息展示格式" value={detailFormat} onChange={(event) => setDetailFormat(event.target.value as typeof detailFormat)}><option value="pretty">Pretty</option><option value="hexdump">Hexdump</option><option value="raw">Raw</option></select><select aria-label="消息内容类型" value={detailContentType} onChange={(event) => setDetailContentType(event.target.value as typeof detailContentType)}><option value="auto">Auto</option><option value="json">JSON</option><option value="xml">XML</option><option value="html">HTML</option><option value="javascript">JavaScript</option><option value="text">Text</option></select><select aria-label="消息字符编码" value={detailCharset} onChange={(event) => setDetailCharset(event.target.value as typeof detailCharset)}><option value="auto">Auto</option><option value="utf-8">UTF-8</option><option value="gb18030">GBK / GB18030</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option><option value="windows-1252">Windows-1252</option><option value="iso-8859-1">ISO-8859-1</option></select><button type="button" className={detailWordWrap ? "is-active" : ""} aria-label="切换自动换行" title="自动换行" onClick={() => setDetailWordWrap((current) => !current)}><Icon name="wrap"/></button></div><div className="websocket-frame-detail-actions"><button type="button" className="websocket-detail-direct-action" aria-label="下载消息" title="下载" onClick={downloadSelectedFrame}><Icon name="download"/></button><button type="button" className="websocket-detail-direct-action" aria-label="复制消息" title="复制" onClick={() => void copySelectedFrame()}><Icon name="copy"/></button><button type="button" className="websocket-detail-direct-action" aria-label="搜索消息内容" title="搜索" onClick={() => detailEditorRef.current?.openFind()}><Icon name="search"/></button><details className="websocket-detail-more"><summary aria-label="更多消息操作" title="更多">•••</summary><div role="menu" aria-label="更多消息操作"><button type="button" role="menuitem" onClick={(event) => { downloadSelectedFrame(); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name="download"/>下载</button><button type="button" role="menuitem" onClick={(event) => { void copySelectedFrame(); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name="copy"/>复制</button><button type="button" role="menuitem" onClick={(event) => { detailEditorRef.current?.openFind(); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name="search"/>搜索</button></div></details><button type="button" aria-label="关闭消息详情" title="关闭" onClick={() => setSelectedFrameId(null)}><Icon name="close"/></button></div></header><CodeEditor ref={detailEditorRef} value={selectedFramePayload} onChange={() => {}} language={selectedFrameLanguage} height="100%" wordWrap={detailWordWrap} readOnly bare/></section></>}
+        </div>}
         {responseTab === "headers" && (responseHeaders.length ? <div className="websocket-response-table">{responseHeaders.map(([header, value], index) => <div key={`${header}-${index}`}><strong>{header}</strong><span>{value}</span></div>)}</div> : <div className="websocket-response-empty">浏览器 WebSocket API 不提供握手响应 Header。</div>)}
         {responseTab === "cookies" && (responseCookies.length ? <div className="websocket-response-table">{responseCookies.map(([header, value], index) => <div key={`${header}-${index}`}><strong>{header}</strong><span>{value}</span></div>)}</div> : <div className="websocket-response-empty">没有响应 Cookie。</div>)}
-        {responseTab === "request" && <div className="websocket-actual-request"><section><strong>连接地址</strong><code>{actualRequest.url}</code></section><section><strong>子协议</strong><code>{actualRequest.subprotocols.join(", ") || "（空）"}</code></section><section><strong>请求 Header</strong><pre>{actualRequest.headers.length ? actualRequest.headers.map(([header, value]) => `${header}: ${value}`).join("\n") : "（空）"}</pre></section></div>}
+        {responseTab === "request" && <div className="websocket-actual-request"><section><strong>连接地址</strong><code>{actualRequest.url}</code></section><section><strong>子协议</strong><code>{actualRequest.subprotocols.join(", ") || "（空）"}</code></section><section><strong>请求 Header</strong>{actualRequest.headers.length ? <pre>{actualRequest.headers.map(([header, value]) => `${header}: ${value}`).join("\n")}</pre> : <code>（空）</code>}</section><section><ProtocolCodeGenerator input={{ protocol: "websocket", request: actualRequest }} /></section></div>}
       </div>
       </>}
     </section>}/></div>;
