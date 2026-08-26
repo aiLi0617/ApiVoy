@@ -573,10 +573,8 @@ mod tests {
         engine.register(Arc::new(MockOkDriver));
         let mut req = mock_request();
         req.assertions = vec![
-            Assertion::StatusEquals { expected: 200 },
-            Assertion::BodyContains {
-                expected: "ok".into(),
-            },
+            Assertion { id: "status".into(), enabled: true, target: core_domain::AssertionTarget::Status, operator: core_domain::AssertionOperator::Equals, selector: None, expected: Some("200".into()) },
+            Assertion { id: "body".into(), enabled: true, target: core_domain::AssertionTarget::Body, operator: core_domain::AssertionOperator::Contains, selector: None, expected: Some("ok".into()) },
         ];
         let (_, _, events) = engine.execute_collect(req).await.expect("ok");
         let assertion_events: Vec<_> = events

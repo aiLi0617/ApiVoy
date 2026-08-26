@@ -9,6 +9,7 @@ import { BrandMark } from "./BrandMark";
 import { CollaborationHub, type CollaborationTab } from "./CollaborationHub";
 import { EnvironmentEditor, type EnvironmentEditorProps } from "./EnvironmentEditor";
 import { useDialogFocus } from "./useDialogFocus";
+import { DEFAULT_RESPONSE_VALIDATION_SETTINGS, readResponseValidationSettings, writeResponseValidationSettings, type ProjectResponseValidationSettings } from "./responseValidationSettings";
 
 export interface AppShellProps {
   title?: string;
@@ -47,11 +48,15 @@ function EnvironmentVariablesDialog({ open, onClose, environment }: { open: bool
   </div></div>;
 }
 
-function ProjectSettingsDialog({ open, onClose, projectName }: { open: boolean; onClose: () => void; projectName?: string }) {
+function ProjectSettingsDialog({ open, onClose, projectId, projectName }: { open: boolean; onClose: () => void; projectId?: string; projectName?: string }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [validation, setValidation] = useState<ProjectResponseValidationSettings>(DEFAULT_RESPONSE_VALIDATION_SETTINGS);
+  const [category, setCategory] = useState<"general" | "validation" | "tools">("general");
+  const [saved, setSaved] = useState(false);
   useDialogFocus(open, dialogRef, onClose, closeRef);
+  useEffect(() => { if (open) { setValidation(readResponseValidationSettings(projectId)); setCategory("general"); setSaved(false); } }, [open, projectId]);
   if (!open) return null;
   const openProjectFeature = (eventName: string, detail?: string) => {
     onClose();
@@ -59,13 +64,15 @@ function ProjectSettingsDialog({ open, onClose, projectName }: { open: boolean; 
   };
   return <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}><div ref={dialogRef} className="settings-dialog project-settings-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
     <header className="settings-dialog-header"><div><span className="settings-scope-label">项目级</span><h2 id={titleId}>项目设置</h2><p>{projectName ? `当前项目：${projectName}。` : "当前项目。"}这些配置与项目资源关联，切换项目后会随之切换。</p></div><button ref={closeRef} type="button" className="ui-icon-button" aria-label="关闭项目设置" onClick={onClose}><Icon name="close"/></button></header>
-    <div className="project-settings-content">
-      <section><Icon name="menu"/><div><h3>环境与变量</h3><p>项目请求共享的环境变量与 Secret 引用。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-environment")}>管理环境</button></section>
-      <section><Icon name="code"/><div><h3>项目脚本</h3><p>维护请求可复用的前置、后置脚本。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-script-library")}>管理脚本</button></section>
-      <section><Icon name="send"/><div><h3>集合运行</h3><p>运行当前项目中的请求集合。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "runner")}>打开</button></section>
-      <section><Icon name="archive"/><div><h3>Mock</h3><p>管理当前项目的 Mock 定义。</p></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "mock")}>打开</button></section>
+    <div className="project-settings-layout">
+      <nav className="project-settings-nav" aria-label="项目设置分类">{([['general','项目配置','settings'],['validation','响应校验','activity'],['tools','项目工具','bolt']] as const).map(([id,label,icon]) => <button type="button" key={id} className={category === id ? "is-active" : ""} aria-current={category === id ? "page" : undefined} onClick={() => setCategory(id)}><Icon name={icon}/><span>{label}</span><Icon name="chevron"/></button>)}</nav>
+      <main className="project-settings-main">
+        {category === "general" ? <section className="project-settings-page"><header><h3>项目配置</h3><p>管理仅作用于当前项目的环境和公共执行资源。</p></header><div className="project-setting-links"><article><Icon name="menu"/><div><strong>环境与变量</strong><span>项目请求共享的环境变量与 Secret 引用。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-environment")}>管理</button></article><article><Icon name="code"/><div><strong>项目脚本</strong><span>维护可复用的前置与后置操作。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-script-library")}>管理</button></article></div></section> : null}
+        {category === "validation" ? <section className="project-settings-page project-validation-page"><header><h3>响应校验</h3><p>根据接口设计中的返回响应，自动检查调试结果是否符合约定。</p></header><div className="project-setting-group"><div><strong>启用响应校验</strong><span>在接口调试时默认校验所选的设计响应；已保存用例不受此设置影响。</span></div><label className="http-switch"><input type="checkbox" checked={validation.enabled} onChange={(event) => { setSaved(false); setValidation((current) => ({ ...current, enabled: event.target.checked })); }}/><span/></label></div><div className={`project-validation-content${validation.enabled ? "" : " is-disabled"}`} aria-disabled={!validation.enabled}><header><strong>校验内容</strong><span>选择与接口定义进行比较的响应部分。</span></header>{([['status','HTTP 状态码','实际状态码必须与选中的返回响应一致'],['headers','Headers','检查接口设计中声明的必需响应头'],['bodyFormat','Body 数据格式','检查 JSON 等响应格式能否正确解析'],['bodySchema','Body 数据结构','检查必填属性、字段类型及嵌套结构']] as const).map(([key,label,description]) => <label key={key}><input type="checkbox" disabled={!validation.enabled} checked={validation[key]} onChange={(event) => { setSaved(false); setValidation((current) => ({ ...current, [key]: event.target.checked })); }}/><span><strong>{label}</strong><small>{description}</small></span></label>)}</div><div className={`project-setting-group${validation.enabled && validation.bodySchema ? "" : " is-disabled"}`}><div><strong>Object 对象允许额外字段</strong><span>开启后，响应中未在接口设计声明的字段不会导致校验失败。</span></div><label className="http-switch"><input type="checkbox" disabled={!validation.enabled || !validation.bodySchema} checked={validation.allowAdditionalProperties} onChange={(event) => { setSaved(false); setValidation((current) => ({ ...current, allowAdditionalProperties: event.target.checked })); }}/><span/></label></div></section> : null}
+        {category === "tools" ? <section className="project-settings-page"><header><h3>项目工具</h3><p>进入当前项目的批量运行与模拟服务。</p></header><div className="project-setting-links"><article><Icon name="send"/><div><strong>集合运行</strong><span>批量执行当前项目中的请求集合。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "runner")}>打开</button></article><article><Icon name="archive"/><div><strong>Mock</strong><span>管理当前项目的 Mock 定义。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "mock")}>打开</button></article></div></section> : null}
+      </main>
     </div>
-    <footer className="settings-dialog-footer"><span className="settings-scope-note">主题、语言、Agent 和服务连接请前往顶部的“软件设置”。</span><button type="button" className="ui-button primary" onClick={onClose}>完成</button></footer>
+    <footer className="settings-dialog-footer"><span className="settings-scope-note">{saved ? "项目设置已保存" : "主题、语言、Agent 和服务连接请前往“软件设置”。"}</span><button type="button" className="ui-button secondary" onClick={onClose}>取消</button><button type="button" className="ui-button primary" disabled={!projectId} onClick={() => { if (projectId) { writeResponseValidationSettings(projectId, validation); setSaved(true); } }}>保存</button></footer>
   </div></div>;
 }
 
@@ -322,7 +329,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
       {workbenchCommands.length === 0 && actions.length === 0 ? <div className="command-empty">{t("command.empty")}</div> : null}
     </div></div></div> : null}
     <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} channelLabel={channelLabel} />
-    <ProjectSettingsDialog open={projectSettingsOpen} onClose={() => setProjectSettingsOpen(false)} projectName={projectContext?.projects.find((project) => project.id === projectContext.selectedProjectId)?.name}/>
+    <ProjectSettingsDialog open={projectSettingsOpen} onClose={() => setProjectSettingsOpen(false)} projectId={projectContext?.selectedProjectId} projectName={projectContext?.projects.find((project) => project.id === projectContext.selectedProjectId)?.name}/>
     <EnvironmentVariablesDialog open={environmentOpen} onClose={() => setEnvironmentOpen(false)} environment={environment}/>
     {collaboration ? <CollaborationHub open={collaborationOpen} onClose={() => setCollaborationOpen(false)} initialTab={collaborationTab} team={collaboration.team} comments={collaboration.comments} sso={collaboration.sso} /> : null}
   </div></FeedbackProvider>;

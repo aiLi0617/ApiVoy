@@ -1087,9 +1087,15 @@ export function mergeDesignIntoHttpDraft(
   fields: DefinitionField[],
   bodyMode: BodyDesignMode = "json",
 ): HttpDebugDraft {
+  const designedStatuses = [...new Set(fields.filter((field) => field.scope.startsWith("response.")).map((field) => field.status || "200"))];
+  const responseStatuses = designedStatuses.length ? designedStatuses : ["200"];
   const next = {
     ...draft,
     headers: draft.headers.map((header) => [...header] as [string, string]),
+    metadata: {
+      ...(draft.metadata ?? {}),
+      __apivoyResponseDefinitions: responseStatuses.map((status) => ({ status, fields: fields.filter((field) => field.scope.startsWith("response.") && (field.status || "200") === status) })),
+    },
   };
   const url = new URL(draft.url || "/", "http://apivoy.local");
   for (const field of fields.filter(
@@ -1218,6 +1224,7 @@ function syncDesignToDebug(
   fields: DefinitionField[],
   bodyMode: BodyDesignMode,
   security?: SecurityDesignConfig,
+  projectId?: string,
 ) {
   if (workbenchId !== "http") return;
   const draft = readWorkbenchDraft<HttpDebugDraft>("http") ?? {
@@ -1236,6 +1243,7 @@ function syncDesignToDebug(
     tlsVerify: true,
   };
   const request = mergeDesignIntoHttpDraft(draft, fields, bodyMode);
+  request.metadata = { ...(request.metadata ?? {}), __apivoyProjectId: projectId };
   if (security) {
     const existingAuth = request.auth && typeof request.auth === "object" ? request.auth as Record<string, unknown> : {};
     request.auth = security.authScheme === "none" ? null : {
@@ -1435,9 +1443,10 @@ function DefinitionPanel({
     const inferredFields = !current && liveDraft ? definitionFieldsFromHttpDraft(liveDraft) : [];
     const inferredBodyMode: BodyDesignMode = liveDraft?.body?.trim() ? "json" : "none";
     const nextContent = current?.content ?? (inferredFields.length ? fieldsToDefinition(inferredFields, workbenchId, "3.1", inferredBodyMode) : "");
+    const nextFields = inferredFields.length ? inferredFields : parseDefinitionFields(nextContent, workbenchId);
     setDefinitionId(current?.id ?? "");
     setContent(nextContent);
-    setFields(inferredFields.length ? inferredFields : parseDefinitionFields(nextContent, workbenchId));
+    setFields(nextFields);
     setSecurity(parseSecurityDesign(nextContent));
     setBodyMode(
       (nextContent.match(/^\s*x-apivoy-body-mode:\s*([\w-]+)/m)?.[1] as
@@ -1447,6 +1456,7 @@ function DefinitionPanel({
     lastVisualContent.current = nextContent;
     if (workbenchId === "http")
       setOpenApiVersion(detectOpenApiVersion(nextContent));
+    if (workbenchId === "http") syncDesignToDebug(workbenchId, nextFields, (nextContent.match(/^\s*x-apivoy-body-mode:\s*([\w-]+)/m)?.[1] as BodyDesignMode | undefined) ?? inferredBodyMode, parseSecurityDesign(nextContent), projectId);
   }
   useEffect(() => {
     void reload().catch((error) =>
@@ -1463,6 +1473,8 @@ function DefinitionPanel({
         workbenchId,
         parseDefinitionFields(content, workbenchId),
         bodyMode,
+        security,
+        projectId,
       );
   }, [lastSavedAt]);
   async function saveDefinition() {
@@ -1547,7 +1559,7 @@ function DefinitionPanel({
     setFields(next);
     setContent(generated);
     lastVisualContent.current = generated;
-    syncDesignToDebug(workbenchId, next, bodyMode);
+    syncDesignToDebug(workbenchId, next, bodyMode, security, projectId);
   }
   function changeOpenApiVersion(next: OpenApiVersion) {
     setOpenApiVersion(next);
@@ -1581,7 +1593,7 @@ function DefinitionPanel({
     );
     setContent(generated);
     lastVisualContent.current = generated;
-    syncDesignToDebug(workbenchId, fields, next);
+    syncDesignToDebug(workbenchId, fields, next, security, projectId);
     setMessage(
       `请求 Body 已切换为 ${BODY_DESIGN_MODES.find((item) => item.id === next)?.label ?? next}`,
     );
@@ -1592,7 +1604,7 @@ function DefinitionPanel({
     visualFieldCache.set(generated, fields.map((field) => ({ ...field })));
     setContent(generated);
     lastVisualContent.current = generated;
-    syncDesignToDebug(workbenchId, fields, bodyMode, next);
+    syncDesignToDebug(workbenchId, fields, bodyMode, next, projectId);
   }
   function validateSource(showSuccess = true): DefinitionParseIssue[] {
     const issues = validateDefinitionSource(content, workbenchId);

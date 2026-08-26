@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch
 import { createPortal } from "react-dom";
 import type {
   Assertion,
+  AssertionOperator,
+  AssertionTarget,
   AssertionResultEvent,
   AuthRef,
   ExecutionSummary,
@@ -23,6 +25,7 @@ import { listEnvironmentResources } from "./agentResources";
 import { useI18n } from "./i18n";
 import { alignRequestToInterface, captureHttpInterfaceStructure, diffHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY, readInterfaceStructureMetadata } from "./interfaceStructureV2";
 import { HttpRequestResponseView } from "./HttpRequestResponseView";
+import { DEFAULT_RESPONSE_VALIDATION_SETTINGS, readResponseValidationSettings, RESPONSE_VALIDATION_SETTINGS_EVENT, type ProjectResponseValidationSettings } from "./responseValidationSettings";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 type BearerTokenSource = "direct" | "secret_ref";
@@ -531,61 +534,62 @@ function formatKv(vars: Record<string, string>): string {
     .join("\n");
 }
 
-function parseAssertions(text: string): Assertion[] {
-  const out: Assertion[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const status = trimmed.match(/^status\s*==\s*(\d+)$/i);
-    if (status) {
-      out.push({ type: "status_equals", expected: Number(status[1]) });
-      continue;
-    }
-    const duration = trimmed.match(/^duration\s*<\s*(\d+)$/i);
-    if (duration) {
-      out.push({ type: "duration_lt", max_ms: Number(duration[1]) });
-      continue;
-    }
-    const contains = trimmed.match(/^body\s+contains\s+(.+)$/i);
-    if (contains) {
-      out.push({ type: "body_contains", expected: contains[1].trim() });
-      continue;
-    }
-    const header = trimmed.match(/^header\s+(\S+)\s+==\s+(.+)$/i);
-    if (header) {
-      out.push({ type: "header_equals", name: header[1], expected: header[2].trim() });
-      continue;
-    }
-    const jsonpath = trimmed.match(/^jsonpath\s+(\S+)\s+==\s+(.+)$/i);
-    if (jsonpath) {
-      out.push({ type: "json_path_equals", path: jsonpath[1], expected: jsonpath[2].trim() });
+export const ASSERTION_SCHEMA_VERSION = 2;
+const ASSERTION_OPERATORS: Record<AssertionTarget, AssertionOperator[]> = {
+  status: ["equals", "not_equals", "in", "greater_than", "less_than"],
+  header: ["equals", "not_equals", "contains", "not_contains", "exists", "not_exists"],
+  body: ["contains", "not_contains"],
+  json_path: ["equals", "not_equals", "exists", "not_exists", "type_is", "greater_than", "less_than", "length_equals", "length_greater_than", "length_less_than"],
+  duration: ["greater_than", "less_than"], size: ["greater_than", "less_than"],
+};
+const ASSERTION_TARGET_LABELS: Record<AssertionTarget, string> = { status: "状态码", header: "Header", body: "Body", json_path: "JSONPath", duration: "耗时", size: "响应大小" };
+const ASSERTION_OPERATOR_LABELS: Record<AssertionOperator, string> = { equals: "等于", not_equals: "不等于", in: "属于列表", greater_than: "大于", less_than: "小于", contains: "包含", not_contains: "不包含", exists: "存在", not_exists: "不存在", type_is: "类型", length_equals: "数组长度等于", length_greater_than: "数组长度大于", length_less_than: "数组长度小于" };
+function createAssertion(target: AssertionTarget = "status"): Assertion { return { id: crypto.randomUUID(), enabled: true, target, operator: ASSERTION_OPERATORS[target][0], selector: "", expected: "" }; }
+function assertionNeedsSelector(rule: Assertion) { return rule.target === "header" || rule.target === "json_path"; }
+function assertionNeedsExpected(rule: Assertion) { return rule.operator !== "exists" && rule.operator !== "not_exists"; }
+export function assertionValid(rule: Assertion) { return (!assertionNeedsSelector(rule) || Boolean(rule.selector?.trim())) && (!assertionNeedsExpected(rule) || Boolean(rule.expected?.trim())); }
+export function generatedAssertions(preview: string, status: number | null | undefined, headers: Array<[string, string]>): { rules: Assertion[]; warning?: string } {
+  const rules: Assertion[] = status == null ? [] : [{ ...createAssertion("status"), expected: String(status) }];
+  for (const [selector, expected] of headers.slice(0, 50)) rules.push({ ...createAssertion("header"), selector, expected });
+  if (new TextEncoder().encode(preview).length > 1_000_000) return { rules, warning: "响应超过 1 MB，已停止展开 JSON" };
+  let root: unknown; try { root = JSON.parse(preview); } catch { return { rules, warning: "响应不是有效 JSON，仅生成状态码和 Header" }; }
+  let nodes = 0; let truncated = false;
+  const visit = (value: unknown, path: string, pointer: string, depth: number, usePointer = false) => {
+    if (++nodes > 300 || depth > 8) { truncated = true; return; }
+    const selector = usePointer ? pointer : path;
+    if (Array.isArray(value)) { rules.push({ ...createAssertion("json_path"), selector, operator: "length_equals", expected: String(value.length) }); if (value.length) visit(value[0], `${path}[0]`, `${pointer}/0`, depth + 1, usePointer); return; }
+    if (value && typeof value === "object") { for (const [key, child] of Object.entries(value)) { if (nodes > 300) break; const safe = /^[A-Za-z_$][\w$]*$/.test(key); const escaped = key.replace(/~/g, "~0").replace(/\//g, "~1"); visit(child, `${path}.${key}`, `${pointer}/${escaped}`, depth + 1, usePointer || !safe); } return; }
+    rules.push({ ...createAssertion("json_path"), selector, expected: typeof value === "string" ? value : JSON.stringify(value) });
+  };
+  visit(root, "$", "", 0);
+  return { rules, warning: truncated ? "JSON 节点超过预算，已停止继续展开" : undefined };
+}
+
+type DesignedResponseField = { id: string; name: string; type: string; required: boolean; parentId?: string; scope: string; status?: string };
+type DesignedResponse = { status: string; fields: DesignedResponseField[] };
+export function validateDesignedResponse(definition: DesignedResponse, result: HttpRunResult, settings: ProjectResponseValidationSettings): AssertionResultEvent[] {
+  if (!settings.enabled) return [];
+  const out: AssertionResultEvent[] = [];
+  const push = (name: string, passed: boolean, expected?: string, actual?: string, message?: string) => out.push({ ruleId: `design:${definition.status}:${name}`, name, passed, expected, actual, message });
+  if (settings.status) push("接口设计 · HTTP 状态码", String(result.summary.status ?? "") === definition.status, definition.status, String(result.summary.status ?? "—"), String(result.summary.status ?? "") === definition.status ? undefined : "实际状态码与所选返回响应不一致");
+  const headerFields = definition.fields.filter((field) => field.scope === "response.headers" && field.name);
+  if (settings.headers) for (const field of headerFields) { const actual = result.responseMeta?.headers.find(([name]) => name.toLowerCase() === field.name.toLowerCase())?.[1]; push(`接口设计 · Header ${field.name}`, !field.required || actual != null, field.required ? "存在" : "可选", actual ?? "不存在", actual == null && field.required ? "缺少必需 Header" : undefined); }
+  const bodyFields = definition.fields.filter((field) => field.scope === "response.body" && field.name);
+  if ((settings.bodyFormat || settings.bodySchema) && bodyFields.length) {
+    let body: unknown; try { body = JSON.parse(result.preview ?? ""); } catch { push("接口设计 · Body 格式", false, "JSON", result.responseMeta?.contentType ?? "未知", "响应 Body 不是有效 JSON"); return out; }
+    if (settings.bodyFormat) push("接口设计 · Body 格式", true, "JSON", "JSON");
+    if (settings.bodySchema) {
+      const typeOf = (value: unknown) => Array.isArray(value) ? "array" : value === null ? "null" : Number.isInteger(value) ? "integer" : typeof value;
+      const visit = (parent: unknown, parentId: string | undefined, path: string) => {
+        const children = bodyFields.filter((field) => field.parentId === parentId);
+        if (!parent || typeof parent !== "object") { if (children.length) push(`接口设计 · ${path}`, false, "object", typeOf(parent), "父级数据类型不匹配"); return; }
+        for (const field of children) { const container = parent as Record<string, unknown>; const value = container[field.name]; const fieldPath = `${path}.${field.name}`; if (value === undefined) { push(`接口设计 · ${fieldPath}`, !field.required, field.required ? "必需" : "可选", "不存在", field.required ? "缺少必需属性" : undefined); continue; } const passed = field.type === "number" ? typeof value === "number" : field.type === "object" ? Boolean(value && typeof value === "object" && !Array.isArray(value)) : typeOf(value) === field.type; push(`接口设计 · ${fieldPath}`, passed, field.type, typeOf(value), passed ? undefined : "值类型与接口设计不一致"); if (passed && field.type === "object") visit(value, field.id, fieldPath); if (passed && field.type === "array" && Array.isArray(value) && value.length) visit(value[0], field.id, `${fieldPath}[0]`); }
+        if (!settings.allowAdditionalProperties) { const allowed = new Set(children.map((field) => field.name)); for (const name of Object.keys(parent as object)) if (!allowed.has(name)) push(`接口设计 · ${path}.${name}`, false, "未定义字段", "存在", "不允许额外属性"); }
+      };
+      visit(body, undefined, "$");
     }
   }
   return out;
-}
-
-function formatAssertions(list: Assertion[]): string {
-  return list
-    .map((a) => {
-      switch (a.type) {
-        case "status_equals":
-          return `status == ${a.expected}`;
-        case "duration_lt":
-          return `duration < ${a.max_ms}`;
-        case "body_contains":
-          return `body contains ${a.expected}`;
-        case "header_equals":
-          return `header ${a.name} == ${a.expected}`;
-        case "json_path_equals":
-          return `jsonpath ${a.path} == ${a.expected}`;
-        default:
-          return "";
-      }
-    })
-    .filter(Boolean)
-    .join("\n");
 }
 
 function buildAuth(
@@ -679,10 +683,19 @@ export function HttpWorkbench({
   const [preScriptAssetIds,setPreScriptAssetIds]=useState<string[]>([]);
   const [postScriptAssetIds,setPostScriptAssetIds]=useState<string[]>([]);
   const [variablesText, setVariablesText] = useState("");
-  const [assertionsText, setAssertionsText] = useState("");
+  const [assertionRules, setAssertionRules] = useState<Assertion[]>([]);
   const [assertionsEnabled, setAssertionsEnabled] = useState(true);
   const [assertionConfigOpen, setAssertionConfigOpen] = useState(false);
-  const [assertionsDraft, setAssertionsDraft] = useState("");
+  const [assertionsDraft, setAssertionsDraft] = useState<Assertion[]>([]);
+  const [assertionGenerateOpen, setAssertionGenerateOpen] = useState(false);
+  const [generatedRuleSelection, setGeneratedRuleSelection] = useState<Set<string>>(new Set());
+  const [selectedDesignedResponse, setSelectedDesignedResponse] = useState("200");
+  const [responseValidationSettings, setResponseValidationSettings] = useState(DEFAULT_RESPONSE_VALIDATION_SETTINGS);
+  useEffect(() => {
+    const receive = (event: Event) => setResponseValidationSettings((event as CustomEvent<{ value?: ProjectResponseValidationSettings }>).detail?.value ?? DEFAULT_RESPONSE_VALIDATION_SETTINGS);
+    window.addEventListener(RESPONSE_VALIDATION_SETTINGS_EVENT, receive);
+    return () => window.removeEventListener(RESPONSE_VALIDATION_SETTINGS_EVENT, receive);
+  }, []);
   const [authKind, setAuthKind] = useState<AuthKind>("none");
   const [bearerTokenSource, setBearerTokenSource] = useState<BearerTokenSource>("direct");
   const [bearerToken, setBearerToken] = useState("");
@@ -922,9 +935,9 @@ export function HttpWorkbench({
       bodySource: bodyMode === "msgpack" ? messagePackJson : bodyMode === "graphql" ? JSON.stringify({ type: "graphql", query: graphqlQuery, variables: JSON.parse(graphqlVariables || "{}"), operationName: graphqlOperationName.trim() || null }) : bodyMode === "jsonrpc" ? JSON.stringify({ type: "jsonrpc", method: rpcMethod, params: JSON.parse(rpcParams || "{}"), id: rpcId }) : undefined,
       multipart: bodyMode === "multipart" ? multipart.filter((part) => part.enabled && part.name.trim()).map(({ id: _id, enabled: _enabled, description: _description, kind: _kind, valueType: _valueType, typeSelected: _typeSelected, required: _required, ...part }) => part) : [],
       timeoutMs,
-      metadata: requestMetadata,
+      metadata: { ...requestMetadata, __apivoyAssertionSchemaVersion: ASSERTION_SCHEMA_VERSION, __apivoyAssertionsEnabled: assertionsEnabled },
       variables: parseKv(variablesText),
-      assertions: assertionsEnabled ? parseAssertions(assertionsText) : [],
+      assertions: assertionRules,
       auth: buildAuth(authKind, bearerTokenSource, bearerToken, authSecretRef, authUsername, authHeaderName, oauthTokenUrl, oauthScope, oauthAudience, oauthAuthorizationUrl, oauthRedirectUri, oauthCodeRef, oauthVerifierRef),
       followRedirects,
       retryMax,
@@ -976,6 +989,10 @@ export function HttpWorkbench({
   function applyRequest(loaded: HttpWorkbenchRequest) {
     setRequestId(loaded.id);
     setRequestMetadata(loaded.metadata ?? {});
+    const projectId = typeof loaded.metadata?.__apivoyProjectId === "string" ? loaded.metadata.__apivoyProjectId : undefined;
+    setResponseValidationSettings(readResponseValidationSettings(projectId));
+    const definitions = Array.isArray(loaded.metadata?.__apivoyResponseDefinitions) ? loaded.metadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
+    setSelectedDesignedResponse(definitions[0]?.status ?? "200");
     setOpenedCaseParentId(loaded.variables?.__apivoyCaseOf ?? null);
     setOpenedCaseInterfaceName(typeof loaded.metadata?.__apivoyCaseInterfaceName === "string" ? loaded.metadata.__apivoyCaseInterfaceName : loaded.variables?.__apivoyCaseInterfaceName ?? "");
     setSyncCaseResponse(Boolean(loaded.metadata?.__apivoySavedResponse));
@@ -1038,8 +1055,9 @@ export function HttpWorkbench({
     setPreScriptAssetIds(assetIdsFromScripts(loaded.preScripts));
     setPostScriptAssetIds(assetIdsFromScripts(loaded.postScripts));
     setVariablesText(formatKv(loaded.variables));
-    setAssertionsText(formatAssertions(loaded.assertions));
-    setAssertionsEnabled(loaded.assertions.length > 0);
+    const hasNewAssertions = loaded.metadata?.__apivoyAssertionSchemaVersion === ASSERTION_SCHEMA_VERSION;
+    setAssertionRules(hasNewAssertions ? loaded.assertions : []);
+    setAssertionsEnabled(hasNewAssertions ? loaded.metadata?.__apivoyAssertionsEnabled !== false : false);
     const auth = loaded.auth;
     setBearerToken(auth?.kind === "bearer" ? auth.token ?? "" : "");
     setBearerTokenSource(auth?.kind === "bearer" && auth.secret_ref && !auth.token ? "secret_ref" : "direct");
@@ -1116,10 +1134,9 @@ export function HttpWorkbench({
       else { setRpcMethod(value.method ?? ""); setRpcParams(JSON.stringify(value.params ?? {}, null, 2)); setRpcId(value.id == null ? "null" : String(value.id)); }
       setResult(null); setStatusMsg(`已在 HTTP 工作台中载入 ${rpcEnvelope.protocolId === "soap" ? "SOAP" : "JSON-RPC"} 请求`); return;
     }
-    const detail = raw as { request?: HttpWorkbenchRequest; aiAssertions?: string };
+    const detail = raw as { request?: HttpWorkbenchRequest };
     if (!detail?.request) return;
     applyRequest(detail.request);
-    if (detail.aiAssertions) setAssertionsText(detail.aiAssertions);
     setStatusMsg(detail.request.metadata?.__apivoySavedResponse ? "已载入用例及其保存的响应" : "已载入请求，请检查后再发送");
   }, workbenchSessionId);
 
@@ -1202,7 +1219,8 @@ export function HttpWorkbench({
       }
       const request = buildRequest();
       setLastRequest(request);
-      const next = await onSend(request, {
+      const executionRequest = assertionsEnabled ? request : { ...request, assertions: [] };
+      const next = await onSend(executionRequest, {
         onStarted: (id) => setExecutionId(id),
         onChunk: (preview) => setLivePreview((current) => current + preview),
         onEvent: (event) => {
@@ -1217,7 +1235,10 @@ export function HttpWorkbench({
           }
         },
       });
-      setResult(next);
+      const designedResponses = Array.isArray(request.metadata?.__apivoyResponseDefinitions) ? request.metadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
+      const designedResponse = openedCaseParentId ? undefined : designedResponses.find((item) => item.status === selectedDesignedResponse);
+      const designAssertions = designedResponse ? validateDesignedResponse(designedResponse, next, responseValidationSettings) : [];
+      setResult(designAssertions.length ? { ...next, assertions: [...designAssertions, ...(next.assertions ?? [])] } : next);
       setRequestWallMs(Math.round(performance.now() - wallStartedAt));
       if (onListHistory) {
         setHistory(await onListHistory(currentHistoryFilter()));
@@ -1494,22 +1515,35 @@ export function HttpWorkbench({
   const responseTotalBytes = responseHeaderBytes + responseBodyBytes;
   const requestHeaderBytes = requestHeaderSize(lastRequest);
   const requestBodyBytes = requestBodySize(lastRequest);
+  const generated = useMemo(() => result ? generatedAssertions(responsePreview, result.summary.status, result.responseMeta?.headers ?? []) : { rules: [] as Assertion[] }, [result, responsePreview]);
+  const assertionPassed = result?.assertions?.filter((item) => item.passed).length ?? 0;
+  const assertionFailed = result?.assertions?.filter((item) => !item.passed).length ?? 0;
+  const designedResponses = Array.isArray(requestMetadata.__apivoyResponseDefinitions) ? requestMetadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
   const responseMetrics = result && !result.error ? <>
     <strong className="http-status-code">{result.summary.status ?? "—"}</strong>
     <span className="http-metric-popover" tabIndex={0}>{result.summary.durationMs} ms<span className="http-metric-card http-timing-card" role="tooltip"><b>事件 <i>时间</i></b><span className="http-timing-progress-row"><em>前置操作执行</em><span className="http-timing-progress" aria-label="前置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row"><em>接口请求</em><span className="http-timing-progress" aria-label={`接口请求占总耗时 ${Math.round(result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%`}><i style={{ width: `${Math.min(100, result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%` }}/></span><i>{result.summary.durationMs} ms</i></span><span className="http-timing-progress-row"><em>后置操作执行</em><span className="http-timing-progress" aria-label="后置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row http-timing-total"><em>总耗时</em><span className="http-timing-progress" aria-label="总耗时 100%"><i style={{ width: "100%" }}/></span><i>{requestWallMs || result.summary.durationMs} ms</i></span></span></span>
     <span className="http-metric-popover" tabIndex={0}>{formatBytes(responseTotalBytes)}<span className="http-metric-card http-size-card" role="tooltip"><b>↓ 响应大小 <i>{formatBytes(responseTotalBytes)}</i></b><span>Header <i>{formatBytes(responseHeaderBytes)}</i></span><span>Body <i>{formatBytes(responseBodyBytes)}</i></span><hr/><b>↑ 请求大小 <i>{formatBytes(requestSize(lastRequest))}</i></b><span>Header <i>{formatBytes(requestHeaderBytes)}</i></span><span>Body <i>{formatBytes(requestBodyBytes)}</i></span></span></span>
   </> : null;
   const responseHeaderActions = <div className="http-response-header-actions">
-    {!loading && !result ? <label className="http-response-validation-control" title="启用或停用响应校验"><span>校验响应</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
-    {!loading && !result ? <div className="http-assertion-config">
-      <button type="button" className="http-assertion-summary" aria-expanded={assertionConfigOpen} onClick={() => { setAssertionsDraft(assertionsText); setAssertionConfigOpen((open) => !open); }}>
-        <span>配置</span><span className="http-assertion-chevron"><Icon name="chevron"/></span>
+    {!loading && !openedCaseParentId && responseValidationSettings.enabled && designedResponses.length ? <label className="http-response-design-select"><span>校验响应</span><select aria-label="选择接口设计返回响应" value={selectedDesignedResponse} onChange={(event) => setSelectedDesignedResponse(event.target.value)}>{designedResponses.map((item) => <option key={item.status} value={item.status}>{item.status}</option>)}</select></label> : null}
+    {!loading ? <label className="http-response-validation-control" title="启用或停用后置断言"><span>后置断言</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
+    {!loading ? <div className="http-assertion-config">
+      <button type="button" className={`http-assertion-summary${assertionFailed ? " is-fail" : result?.assertions?.length ? " is-pass" : ""}`} aria-expanded={assertionConfigOpen} onClick={() => { setAssertionsDraft(assertionRules.map((item) => ({ ...item }))); setAssertionConfigOpen((open) => !open); }}>
+        <span>{result?.assertions?.length ? `校验 ${result.assertions.length} · 通过 ${assertionPassed} · 失败 ${assertionFailed}` : `规则 ${assertionRules.length}`}</span><span className="http-assertion-chevron"><Icon name="chevron"/></span>
       </button>
       {assertionConfigOpen ? <div className="http-assertion-editor" role="dialog" aria-label="响应校验配置">
-        <strong>响应校验配置</strong>
-        <span>每行一条：status == 200 / body contains … / jsonpath $.a == 1</span>
-        <textarea style={styles.textarea} value={assertionsDraft} onChange={(event) => setAssertionsDraft(event.target.value)} rows={5} spellCheck={false}/>
-        <div className="http-assertion-editor-actions"><button type="button" style={styles.secondaryButton} onClick={() => setAssertionConfigOpen(false)}>取消</button><button type="button" style={styles.primaryButton} onClick={() => { setAssertionsText(assertionsDraft); setAssertionConfigOpen(false); setStatusMsg("响应校验配置已保存"); }}>保存</button></div>
+        <div className="http-assertion-editor-title"><strong>响应校验</strong>{result ? <button type="button" onClick={() => { setAssertionGenerateOpen((open) => !open); setGeneratedRuleSelection(new Set()); }}>从当前响应生成</button> : null}</div>
+        {assertionGenerateOpen ? <div className="http-assertion-generator"><span>{generated.warning ?? "选择要生成的状态码、Header 或 JSON 字段规则"}</span><div>{generated.rules.map((rule) => <label key={rule.id}><input type="checkbox" checked={generatedRuleSelection.has(rule.id)} onChange={(event) => setGeneratedRuleSelection((current) => { const next = new Set(current); event.target.checked ? next.add(rule.id) : next.delete(rule.id); return next; })}/><code>{ASSERTION_TARGET_LABELS[rule.target]} {rule.selector || rule.expected}</code></label>)}</div><button type="button" disabled={!generatedRuleSelection.size} onClick={() => { setAssertionsDraft((current) => [...current, ...generated.rules.filter((rule) => generatedRuleSelection.has(rule.id))]); setAssertionGenerateOpen(false); }}>添加所选规则</button></div> : null}
+        <div className="http-assertion-rules">{assertionsDraft.map((rule, index) => <div className={`http-assertion-rule${assertionValid(rule) ? "" : " is-invalid"}`} key={rule.id}>
+          <label className="http-switch" title="启用此规则"><input type="checkbox" checked={rule.enabled} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, enabled: event.target.checked } : item))}/><span/></label>
+          <select aria-label="校验目标" value={rule.target} onChange={(event) => { const target = event.target.value as AssertionTarget; setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, target, operator: ASSERTION_OPERATORS[target][0], selector: "", expected: "" } : item)); }}>{Object.entries(ASSERTION_TARGET_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+          {assertionNeedsSelector(rule) ? <input aria-label="定位信息" value={rule.selector ?? ""} placeholder={rule.target === "header" ? "Header 名称" : "$.data.id"} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, selector: event.target.value } : item))}/> : null}
+          <select aria-label="比较操作" value={rule.operator} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, operator: event.target.value as AssertionOperator } : item))}>{ASSERTION_OPERATORS[rule.target].map((value) => <option key={value} value={value}>{ASSERTION_OPERATOR_LABELS[value]}</option>)}</select>
+          {assertionNeedsExpected(rule) ? <input aria-label="预期值" value={rule.expected ?? ""} placeholder={rule.operator === "in" ? "200, 201" : "预期值"} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, expected: event.target.value } : item))}/> : null}
+          <div className="http-assertion-rule-actions"><button type="button" title="上移" disabled={!index} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}>↑</button><button type="button" title="下移" disabled={index === assertionsDraft.length - 1} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next; })}>↓</button><button type="button" title="复制" onClick={() => setAssertionsDraft((list) => [...list.slice(0, index + 1), { ...rule, id: crypto.randomUUID() }, ...list.slice(index + 1)])}>⧉</button><button type="button" title="删除" onClick={() => setAssertionsDraft((list) => list.filter((item) => item.id !== rule.id))}>×</button></div>
+        </div>)}</div>
+        <button type="button" className="http-assertion-add" onClick={() => setAssertionsDraft((list) => [...list, createAssertion()])}>＋ 新增规则</button>
+        <div className="http-assertion-editor-actions"><button type="button" style={styles.secondaryButton} onClick={() => setAssertionConfigOpen(false)}>取消</button><button type="button" style={styles.primaryButton} disabled={assertionsDraft.some((rule) => !assertionValid(rule))} onClick={() => { setAssertionRules(assertionsDraft); setAssertionConfigOpen(false); setStatusMsg("响应校验配置已保存"); }}>保存</button></div>
       </div> : null}
     </div> : null}
     {result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null}
@@ -1857,14 +1891,13 @@ export function HttpWorkbench({
               </div>}
               <div className={`http-response-scroll is-${responseTab}`}>
               {responseTab === "console" && <div className="http-response-console">{result.assertions && result.assertions.length > 0 && (
-                <ul style={styles.assertList}>
-                  {result.assertions.map((a, i) => (
-                    <li key={`${a.name}-${i}`} style={a.passed ? styles.assertPass : styles.assertFail}>
-                      {a.passed ? "✓" : "✗"} {a.name}
-                      {a.message ? ` — ${a.message}` : ""}
-                    </li>
-                  ))}
-                </ul>
+                <div className="http-assertion-results">
+                  <strong>校验 {result.assertions.length} · 通过 {assertionPassed} · 失败 {assertionFailed}</strong>
+                  {result.assertions.map((a, i) => { const rule = assertionRules.find((item) => item.id === a.ruleId); return <details key={a.ruleId || `${a.name}-${i}`} open={!a.passed} className={a.passed ? "is-pass" : "is-fail"}>
+                    <summary>{a.passed ? "✓ 通过" : "✗ 失败"} · {a.name}</summary>
+                    <div><span>预期：<code>{a.expected ?? "—"}</code></span><span>实际：<code>{a.actual ?? "—"}</code></span>{a.message ? <span>原因：{a.message}</span> : null}{!a.passed && rule?.target === "json_path" ? <button type="button" onClick={() => { setResponseTab("body"); setResponseSearchOpen(true); setResponseSearch(a.actual || rule.selector || ""); }}>在响应 Body 中定位</button> : null}</div>
+                  </details>; })}
+                </div>
               )}<VirtualList items={scriptConsoleEvents} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="脚本控制台" className="http-timeline" renderItem={({ at, event }) => <div style={styles.timelineRow} className={`http-timeline-event event-${event.type}`}><time>+{timeline.length ? (at - timeline[0].at).toFixed(1) : "0.0"}ms</time><b>{event.type === "log" ? "script_log" : event.type}</b><span>{event.type === "log" ? event.message : event.type === "variables_extracted" ? Object.entries(event.variables).map(([key, value]) => `${key}=${value}`).join(", ") : event.type === "failed" ? event.message : ""}</span></div>} empty={<div className="http-console-empty"><Icon name="code"/><strong>没有脚本输出</strong><span>前置或后置脚本中的 console.log、变量提取和脚本错误会显示在这里。</span></div>} /></div>}
               {responseTab === "headers" && !result.responseMeta?.headers.length && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "headers" && Boolean(result.responseMeta?.headers.length) && <div style={styles.headerTable}>
