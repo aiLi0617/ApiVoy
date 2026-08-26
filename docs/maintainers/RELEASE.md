@@ -1,23 +1,25 @@
-# Release v0.1.0
+# Release v0.2.0
 
 ## Publish (maintainer)
 
-1. Merge OSS readiness changes to `main`.
-2. Ensure all manifests report version `0.1.0`.
-3. Create and push the tag:
+1. Merge the version-bump PR to `main` (this release branch).
+2. Ensure all manifests report version `0.2.0`.
+3. Create and push the tag from `main`:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git checkout main
+git pull origin main
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 4. Wait for the [Release workflow](../../.github/workflows/release.yml) to finish.
 5. Download every platform asset from the **Draft** release and verify checksums.
 6. Manually publish the release when verification passes.
 
-Release notes source: [CHANGELOG.md](../../CHANGELOG.md) or [.github/release-notes/alpha.md](../../.github/release-notes/alpha.md)
+Release notes source: [CHANGELOG.md](../../CHANGELOG.md)
 
-Release title: **ApiVoy v0.1.0 — Explore Every Protocol**
+Release title: **ApiVoy v0.2.0 — Interface lifecycle & workbench polish**
 
 ## Verify downloads
 
@@ -41,7 +43,7 @@ apivoy-cli run examples/collections/httpbin-smoke.json
 
 Install the `.msi` from the release page, launch ApiVoy, send `https://httpbin.org/get` from the HTTP workbench.
 
-WiX/MSI only accepts numeric versions (`major.minor.patch.build`). This release uses `0.1.0`, so MSI bundling is directly compatible.
+WiX/MSI only accepts numeric versions (`major.minor.patch.build`). This release uses `0.2.0`, so MSI bundling is directly compatible.
 
 ## Local build note
 
@@ -52,8 +54,8 @@ Windows developer machines need OpenSSL build tooling (or vendored OpenSSL) for 
 If the tag was pushed before fixes landed, delete the remote tag and draft release, then push the tag again after merging fixes:
 
 ```bash
-git push origin :refs/tags/v0.1.0
-git tag -d v0.1.0
-git tag v0.1.0
-git push origin v0.1.0
+git push origin :refs/tags/v0.2.0
+git tag -d v0.2.0
+git tag v0.2.0
+git push origin v0.2.0
 ```

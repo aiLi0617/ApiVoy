@@ -64,7 +64,7 @@ GraphQL is available via the HTTP workbench GraphQL body mode and a dedicated dr
 
 Releases are built as GitHub Drafts first, then published after maintainer verification.
 
-Current release target: [v0.1.0](https://github.com/aiLi0617/ApiVoy/releases/tag/v0.1.0). Draft assets include:
+Current release target: [v0.2.0](https://github.com/aiLi0617/ApiVoy/releases/tag/v0.2.0). Draft assets include:
 
 - **Windows**: `.msi`
 - **macOS**: `.dmg`

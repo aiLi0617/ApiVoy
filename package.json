@@ -1,7 +1,7 @@
 {
   "name": "apivoy",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ApiVoy — Explore Every Protocol. Local-first multi-protocol API client.",
   "packageManager": "pnpm@10.27.0",
   "scripts": {
