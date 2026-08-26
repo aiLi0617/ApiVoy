@@ -17,6 +17,11 @@ These are dependency-maintenance exceptions, not blanket category ignores. New
 RustSec entries still fail CI. Review the list whenever Tauri, Wry, `tauri-utils`,
 or `urlpattern` changes, and at least once per release cycle.
 
+When `Cargo.lock` changes in a PR, run `cargo audit -D warnings` locally before
+push. Prefer upgrading the transitive crate (for example `cargo update -p h2`)
+over adding ignores. See [PR_REVIEW_CHECKLIST.md](./maintainers/PR_REVIEW_CHECKLIST.md) §1
+and ISS-020.
+
 ## Dependabot
 
 GitHub security updates stay enabled. Version updates are grouped weekly

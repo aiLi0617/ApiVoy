@@ -29,6 +29,9 @@
 | [ISS-016](#iss-016-安装包与私有化工作流漏监听-crates) | 安装包与私有化工作流漏监听 crates | P2 | open | 2026-08-18 |
 | [ISS-017](#iss-017-协议网关默认绑定全接口) | 协议网关默认绑定 0.0.0.0 | P1 | open | 2026-08-18 |
 | [ISS-018](#iss-018-网关-ci-runner-只能执行单条请求) | 网关 CI Runner 只能执行单条请求 | P2 | open | 2026-08-18 |
+| [ISS-019](#iss-019-installer-tools-冒烟断言了错误的-health-service-名) | Installer tools 冒烟断言了错误的 health service 名 | P1 | done | 2026-08-26 |
+| [ISS-020](#iss-020-传递依赖-h2-安全公告拖红-ci-security) | 传递依赖 h2 安全公告拖红 CI security | P1 | done | 2026-08-26 |
+| [ISS-021](#iss-021-codeql-告警未纳入前置审查清单) | CodeQL 告警未纳入前置审查清单 | P1 | done | 2026-08-26 |
 | [UX 走查](./UX_WALKTHROUGH.md) | 功能放置与交互（UX-001–055 已关闭） | P0–P2 | done | 2026-08-12 |
 
 ---
@@ -638,3 +641,109 @@ Gateway CI 接收 collection（或项目包），复用共享 CollectionRunner�
 | 日期 | 说明 |
 |------|------|
 | 2026-08-18 | 建单；状态 open；等级 P2 |
+
+---
+
+## ISS-019 Installer tools 冒烟断言了错误的 health service 名
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | done |
+| **模块** | `.github/workflows/installer-lifecycle.yml` / Local Agent `/health` |
+| **记录日期** | 2026-08-26 |
+| **关联** | [PR_REVIEW_CHECKLIST.md](./maintainers/PR_REVIEW_CHECKLIST.md) §3、`apps/local-agent` |
+
+### 问题
+
+`tools` job 编译与安装成功后，用 `grep` / PowerShell 断言 health 含 `apivoy-local-agent`。实际 JSON 为 `"service":"apivoy-agent"`（crate 包名 ≠ 二进制名 ≠ health 字段）。三平台 tools 全红，易被误判为 Agent 起不来。
+
+### 理想状态
+
+契约单一：文档、冒烟、工作流都断言 `apivoy-agent`；改字段时同步清单 §3。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **已做** | 修正 installer-lifecycle Unix/Windows 断言；SMOKE_CHECKLIST 写明期望字段；审查清单 §3 前置 |
+| **验证** | tools job 在 health 就绪后应通过字段断言 |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-26 | 建单并修复；状态 done |
+
+---
+
+## ISS-020 传递依赖 h2 安全公告拖红 CI security
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | done |
+| **模块** | `Cargo.lock` / CI `security` / `cargo audit` |
+| **记录日期** | 2026-08-26 |
+| **关联** | `RUSTSEC-2026-0258`、[DEPENDENCY_SECURITY.md](./DEPENDENCY_SECURITY.md)、审查清单 §1 |
+
+### 问题
+
+`h2 0.4.15`（经 `reqwest`/`hyper`）触发 `RUSTSEC-2026-0258`，`cargo audit -D warnings` 失败，聚合 job `CI` 变红。业务代码未改也会被 lockfile 拖红。
+
+### 理想状态
+
+改 Rust 依赖或 lockfile 时本地先跑 `cargo audit`；能升级则升级，不把新 advisory 默默加入 ignore。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **已做** | `cargo update -p h2 --precise 0.4.16`；审查清单要求触及 lockfile 时本地 audit |
+| **验证** | `cargo audit -D warnings` 通过；CI `security` 绿 |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-26 | 建单并修复；状态 done |
+
+---
+
+## ISS-021 CodeQL 告警未纳入前置审查清单
+
+| 字段 | 内容 |
+|------|------|
+| **等级** | P1 |
+| **状态** | done |
+| **模块** | `packages/ui` / `packages/import-export` / GitHub CodeQL |
+| **记录日期** | 2026-08-26 |
+| **关联** | [PR_REVIEW_CHECKLIST.md](./maintainers/PR_REVIEW_CHECKLIST.md) §2 |
+
+### 问题
+
+PR 上 Analyze 子任务全绿，但 CodeQL 门禁因「new alerts」失败。本轮典型项：
+
+- `DOMParser.parseFromString` → client XSS（TCP XML 校验）
+- 链式 HTML 实体解码 → double-escaping
+- OpenAPI `{var}` 正则替换 → polynomial ReDoS
+- `setAtPath` 写入 `__proto__` 等 → prototype pollution
+
+这些本可在审查阶段按模式扫出，却拖到 PR Checks。
+
+### 理想状态
+
+UI/导入/路径写入变更按审查清单 §2 自查；Codex/维护者审查引用同一清单；新「只在 CodeQL 才发现」的模式补回清单。
+
+### 处理说明
+
+| 项 | 说明 |
+|----|------|
+| **已做** | 修复上述四处实现；新增 `docs/maintainers/PR_REVIEW_CHECKLIST.md`；PR 模板与 CONTRIBUTING/AGENTS 引用 |
+| **验证** | 相关单测通过；等待 CodeQL 门禁对新 commit 转绿 |
+
+### 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-08-26 | 建单、修复并落审查清单；状态 done |
