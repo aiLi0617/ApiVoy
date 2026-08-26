@@ -114,6 +114,15 @@ export interface InterfaceCaseSummary {
 }
 export interface InterfaceCaseRunOutcome { passed: boolean; error?: string; status?: number | null; durationMs?: number; body?: string | null; headers?: Array<[string, string]> }
 
+export type InterfaceCaseCategory = "positive" | "negative" | "boundary" | "security" | "other";
+export function interfaceCaseCategory(metadata?: Record<string, unknown>): InterfaceCaseCategory {
+  const value = metadata?.__apivoyCaseGroup;
+  if (value == null || value === "") return "positive";
+  return ["positive", "negative", "boundary", "security"].includes(String(value))
+    ? String(value) as InterfaceCaseCategory
+    : "other";
+}
+
 export interface ApiDefinition {
   id: string;
   projectId: string;
@@ -374,7 +383,7 @@ function InterfaceCasesPanel({ requestId, cases, onOpenCase, onSaveCase, onDelet
   const [category, setCategory] = useState<"all" | "positive" | "negative" | "boundary" | "security" | "other">("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [drawer, setDrawer] = useState<InterfaceCaseSummary | "new" | null>(null);
-  const [draft, setDraft] = useState({ name: "", group: "未分组", tags: "" });
+  const [draft, setDraft] = useState({ name: "", group: "positive", tags: "" });
   const [results, setResults] = useState<Record<string, "running" | "passed" | "failed">>({});
   const [runDetails, setRunDetails] = useState<Record<string, InterfaceCaseRunOutcome>>({});
   const [previewTab, setPreviewTab] = useState<"params" | "body" | "headers" | "auth" | "pre" | "post" | "settings">("body");
@@ -386,7 +395,7 @@ function InterfaceCasesPanel({ requestId, cases, onOpenCase, onSaveCase, onDelet
   const previewLoadId = useRef(0);
   useEffect(() => {
     if (!drawer || drawer === "new") return;
-    setDraft({ name: drawer.name, group: String(drawer.metadata?.__apivoyCaseGroup ?? "未分组"), tags: Array.isArray(drawer.metadata?.__apivoyCaseTags) ? drawer.metadata.__apivoyCaseTags.join(", ") : "" });
+    setDraft({ name: drawer.name, group: interfaceCaseCategory(drawer.metadata), tags: Array.isArray(drawer.metadata?.__apivoyCaseTags) ? drawer.metadata.__apivoyCaseTags.join(", ") : "" });
   }, [drawer]);
   useEffect(() => {
     const updateTags = (event: Event) => {
@@ -399,15 +408,12 @@ function InterfaceCasesPanel({ requestId, cases, onOpenCase, onSaveCase, onDelet
   }, [cases, onSaveCase]);
   const normalized = query.trim().toLocaleLowerCase();
   const items = cases ?? [];
-  const categoryOf = (item: InterfaceCaseSummary) => {
-    const value = String(item.metadata?.__apivoyCaseGroup ?? "other");
-    return ["positive", "negative", "boundary", "security"].includes(value) ? value : "other";
-  };
+  const categoryOf = (item: InterfaceCaseSummary) => interfaceCaseCategory(item.metadata);
   const categories = [["all", "全部"], ["positive", "正向"], ["negative", "负向"], ["boundary", "边界值"], ["security", "安全性"], ["other", "其他"]] as const;
   const visibleCases = items.filter((item) => (category === "all" || categoryOf(item) === category) && (!normalized || `${item.name} ${item.metadata?.__apivoyCaseGroup ?? ""} ${(item.metadata?.__apivoyCaseTags as string[] | undefined)?.join(" ") ?? ""}`.toLocaleLowerCase().includes(normalized)));
-  function edit(item: InterfaceCaseSummary | "new") { setDrawer(item); setDraft(item === "new" ? { name: "", group: "未分组", tags: "" } : { name: item.name, group: String(item.metadata?.__apivoyCaseGroup ?? "未分组"), tags: Array.isArray(item.metadata?.__apivoyCaseTags) ? item.metadata.__apivoyCaseTags.join(", ") : "" }); }
+  function edit(item: InterfaceCaseSummary | "new") { setDrawer(item); setDraft(item === "new" ? { name: "", group: "positive", tags: "" } : { name: item.name, group: interfaceCaseCategory(item.metadata), tags: Array.isArray(item.metadata?.__apivoyCaseTags) ? item.metadata.__apivoyCaseTags.join(", ") : "" }); }
   async function run(ids: string[]) { if (!ids.length || busy) return; setBusy(true); setResults((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, "running"])) })); try { const next = await onRunCases?.(ids) ?? Object.fromEntries(ids.map((id) => [id, { passed: false, error: "当前执行端不可用" }])); setRunDetails((current) => ({ ...current, ...next })); setResults((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, next[id]?.passed ? "passed" : "failed"])) })); } finally { setBusy(false); } }
-  async function saveInline(item: InterfaceCaseSummary, patch: Partial<{ name: string; group: string; tags: string[] }>) { await onSaveCase?.(item.id, { name: patch.name ?? item.name, group: patch.group ?? String(item.metadata?.__apivoyCaseGroup ?? "未分组"), tags: patch.tags ?? (Array.isArray(item.metadata?.__apivoyCaseTags) ? item.metadata.__apivoyCaseTags.filter((tag): tag is string => typeof tag === "string") : []) }); }
+  async function saveInline(item: InterfaceCaseSummary, patch: Partial<{ name: string; group: string; tags: string[] }>) { await onSaveCase?.(item.id, { name: patch.name ?? item.name, group: patch.group ?? interfaceCaseCategory(item.metadata), tags: patch.tags ?? (Array.isArray(item.metadata?.__apivoyCaseTags) ? item.metadata.__apivoyCaseTags.filter((tag): tag is string => typeof tag === "string") : []) }); }
   async function togglePreview(item: InterfaceCaseSummary) { const loadId = ++previewLoadId.current; if (expandedId === item.id) { setExpandedId(null); setPreviewRequest(null); return; } setExpandedId(item.id); setPreviewRequest(null); const request = await onLoadCase?.(item.id) ?? null; if (previewLoadId.current === loadId) setPreviewRequest(request); }
   function caseForRow(row: HTMLElement | null): InterfaceCaseSummary | undefined { if (!row) return undefined; const rows = Array.from(row.parentElement?.parentElement?.querySelectorAll<HTMLElement>(".interface-case-table-row") ?? []); return visibleCases[rows.indexOf(row)]; }
   return <section className="interface-cases-panel" aria-label="测试用例">

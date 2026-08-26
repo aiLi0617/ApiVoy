@@ -186,9 +186,19 @@ test("switches theme and keeps visible keyboard focus", async ({ page }) => {
 test("keeps project settings separate from application settings", async ({ page }) => {
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-project-settings")));
   const projectSettings = page.getByRole("dialog", { name: "项目设置" });
-  await expect(projectSettings).toContainText("项目级");
-  await expect(projectSettings).toContainText("环境与变量");
-  await projectSettings.getByRole("button", { name: "完成" }).click();
+  await expect(projectSettings).toContainText("通用设置");
+  await expect(projectSettings).toContainText("项目资源");
+  await projectSettings.getByRole("button", { name: "响应校验设置" }).click();
+  await expect(projectSettings).toContainText("模块功能开关");
+  await expect(projectSettings).toContainText("“接口运行”和“调试用例”里的校验响应");
+  await expect(projectSettings).toContainText("Object 对象允许额外字段");
+  const footerBox = await projectSettings.locator(".settings-dialog-footer").evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { height: bounds.height, width: bounds.width };
+  });
+  expect(footerBox.height).toBeLessThan(80);
+  expect(footerBox.width).toBeGreaterThan(footerBox.height * 4);
+  await projectSettings.getByRole("button", { name: "取消" }).click();
 
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-settings")));
   const applicationSettings = page.locator(".settings-dialog").filter({ hasText: /软件级|Application-wide/ });

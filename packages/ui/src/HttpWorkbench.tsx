@@ -1237,7 +1237,7 @@ export function HttpWorkbench({
       });
       const designedResponses = Array.isArray(request.metadata?.__apivoyResponseDefinitions) ? request.metadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
       const designedResponse = openedCaseParentId ? undefined : designedResponses.find((item) => item.status === selectedDesignedResponse);
-      const designAssertions = designedResponse ? validateDesignedResponse(designedResponse, next, responseValidationSettings) : [];
+      const designAssertions = assertionsEnabled && designedResponse ? validateDesignedResponse(designedResponse, next, responseValidationSettings) : [];
       setResult(designAssertions.length ? { ...next, assertions: [...designAssertions, ...(next.assertions ?? [])] } : next);
       setRequestWallMs(Math.round(performance.now() - wallStartedAt));
       if (onListHistory) {
@@ -1519,18 +1519,18 @@ export function HttpWorkbench({
   const assertionPassed = result?.assertions?.filter((item) => item.passed).length ?? 0;
   const assertionFailed = result?.assertions?.filter((item) => !item.passed).length ?? 0;
   const designedResponses = Array.isArray(requestMetadata.__apivoyResponseDefinitions) ? requestMetadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
+  const displayedResponses = designedResponses.length ? designedResponses : [{ status: selectedDesignedResponse || "200", fields: [] }];
   const responseMetrics = result && !result.error ? <>
     <strong className="http-status-code">{result.summary.status ?? "—"}</strong>
     <span className="http-metric-popover" tabIndex={0}>{result.summary.durationMs} ms<span className="http-metric-card http-timing-card" role="tooltip"><b>事件 <i>时间</i></b><span className="http-timing-progress-row"><em>前置操作执行</em><span className="http-timing-progress" aria-label="前置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row"><em>接口请求</em><span className="http-timing-progress" aria-label={`接口请求占总耗时 ${Math.round(result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%`}><i style={{ width: `${Math.min(100, result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%` }}/></span><i>{result.summary.durationMs} ms</i></span><span className="http-timing-progress-row"><em>后置操作执行</em><span className="http-timing-progress" aria-label="后置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row http-timing-total"><em>总耗时</em><span className="http-timing-progress" aria-label="总耗时 100%"><i style={{ width: "100%" }}/></span><i>{requestWallMs || result.summary.durationMs} ms</i></span></span></span>
     <span className="http-metric-popover" tabIndex={0}>{formatBytes(responseTotalBytes)}<span className="http-metric-card http-size-card" role="tooltip"><b>↓ 响应大小 <i>{formatBytes(responseTotalBytes)}</i></b><span>Header <i>{formatBytes(responseHeaderBytes)}</i></span><span>Body <i>{formatBytes(responseBodyBytes)}</i></span><hr/><b>↑ 请求大小 <i>{formatBytes(requestSize(lastRequest))}</i></b><span>Header <i>{formatBytes(requestHeaderBytes)}</i></span><span>Body <i>{formatBytes(requestBodyBytes)}</i></span></span></span>
   </> : null;
   const responseHeaderActions = <div className="http-response-header-actions">
-    {!loading && !openedCaseParentId && responseValidationSettings.enabled && designedResponses.length ? <label className="http-response-design-select"><span>校验响应</span><select aria-label="选择接口设计返回响应" value={selectedDesignedResponse} onChange={(event) => setSelectedDesignedResponse(event.target.value)}>{designedResponses.map((item) => <option key={item.status} value={item.status}>{item.status}</option>)}</select></label> : null}
-    {!loading ? <label className="http-response-validation-control" title="启用或停用后置断言"><span>后置断言</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
-    {!loading ? <div className="http-assertion-config">
-      <button type="button" className={`http-assertion-summary${assertionFailed ? " is-fail" : result?.assertions?.length ? " is-pass" : ""}`} aria-expanded={assertionConfigOpen} onClick={() => { setAssertionsDraft(assertionRules.map((item) => ({ ...item }))); setAssertionConfigOpen((open) => !open); }}>
-        <span>{result?.assertions?.length ? `校验 ${result.assertions.length} · 通过 ${assertionPassed} · 失败 ${assertionFailed}` : `规则 ${assertionRules.length}`}</span><span className="http-assertion-chevron"><Icon name="chevron"/></span>
-      </button>
+    {!loading ? <label className="http-response-validation-control" title="启用或停用响应校验"><span>校验响应</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
+    {!loading && !openedCaseParentId ? <select className={`http-response-status-select${assertionFailed ? " is-fail" : result?.assertions?.length ? " is-pass" : ""}`} aria-label="选择接口设计返回响应" value={selectedDesignedResponse || "200"} onChange={(event) => setSelectedDesignedResponse(event.target.value)}>
+      {displayedResponses.map((item) => { const status = item.status; const label = `${Number(status) >= 200 && Number(status) < 300 ? "成功" : "响应"} (${status})`; return <option key={status} value={status}>{label}</option>; })}
+    </select> : null}
+    {false ? <div>
       {assertionConfigOpen ? <div className="http-assertion-editor" role="dialog" aria-label="响应校验配置">
         <div className="http-assertion-editor-title"><strong>响应校验</strong>{result ? <button type="button" onClick={() => { setAssertionGenerateOpen((open) => !open); setGeneratedRuleSelection(new Set()); }}>从当前响应生成</button> : null}</div>
         {assertionGenerateOpen ? <div className="http-assertion-generator"><span>{generated.warning ?? "选择要生成的状态码、Header 或 JSON 字段规则"}</span><div>{generated.rules.map((rule) => <label key={rule.id}><input type="checkbox" checked={generatedRuleSelection.has(rule.id)} onChange={(event) => setGeneratedRuleSelection((current) => { const next = new Set(current); event.target.checked ? next.add(rule.id) : next.delete(rule.id); return next; })}/><code>{ASSERTION_TARGET_LABELS[rule.target]} {rule.selector || rule.expected}</code></label>)}</div><button type="button" disabled={!generatedRuleSelection.size} onClick={() => { setAssertionsDraft((current) => [...current, ...generated.rules.filter((rule) => generatedRuleSelection.has(rule.id))]); setAssertionGenerateOpen(false); }}>添加所选规则</button></div> : null}
