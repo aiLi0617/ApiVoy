@@ -74,7 +74,7 @@ function clearInvalidWorkbenchHash() {
 }
 function initialWorkbenchSessions(tabs: WorkbenchTab[], sessionId: string): WorkbenchSession[] {
   const routeId = resolveInitialWorkbenchId(tabs, typeof window === "undefined" ? "" : window.location.hash);
-  if (routeId === "__new") return [];
+  if (routeId === "__new") return [createProjectOverviewSession(sessionId)];
   if (routeId === "__project") return [createNewPageSession(sessionId)];
   const tab = tabs.find((item) => item.id === routeId);
   return [{ id: sessionId, workbenchId: routeId, title: translateWorkbench(routeId, tab?.label ?? routeId) }];
@@ -382,20 +382,18 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     setCurlImportOpen(false);
     queueMicrotask(() => window.dispatchEvent(new CustomEvent("apivoy-hydrate-request", { detail: hydrate })));
   }
-  function enterProjectNewPage() {
+  function enterProjectEmptySession() {
     window.dispatchEvent(new CustomEvent("apivoy-project-resources"));
-    const session = createNewPageSession(crypto.randomUUID());
-    setSessions((current) => current.some((item) => item.id === activeSession?.id)
-      ? current.map((item) => item.id === activeSession?.id ? session : item)
-      : [...current, session]);
-    setActiveSessionId(session.id);
+    setSessions([]);
+    setActiveSessionId("");
     setPickerOpen(false);
+    setTabsMoreOpen(false);
   }
   function renderHomePage(sessionId: string) {
     const visibleProjects = projects.filter((project) => project.name.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()));
     const openProject = (projectId: string) => {
       onSelectProject?.(projectId);
-      enterProjectNewPage();
+      enterProjectEmptySession();
     };
     const openCreateProject = () => { setProjectName(""); setProjectCreateError(""); setProjectDialogOpen(true); };
     const openProjectAction = (kind: "rename" | "clone" | "delete", project: { id: string; name: string }) => {
@@ -423,7 +421,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
         </article>)}
         <button type="button" className="project-card project-card-create" onClick={openCreateProject}><span className="project-create-icon"><Icon name="plus"/></span><strong>创建新项目</strong><p>从空项目开始，或导入已有 API 定义</p></button>
       </div>
-      {projectDialogOpen ? <div className="dialog-backdrop" role="presentation" onMouseDown={() => !projectCreateBusy && setProjectDialogOpen(false)}><div className="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-create-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="project-create-title">新建项目</h2><p>项目用于隔离资源、环境和运行配置。</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}><Icon name="close"/></button></header><label><span>项目名称</span><input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="请输入项目名称"/></label>{projectCreateError ? <p className="project-create-error" role="alert">{projectCreateError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}>取消</button><button type="button" className="ui-button primary" disabled={projectCreateBusy || !projectName.trim()} onClick={async () => { if (!onCreateProject) return; setProjectCreateBusy(true); setProjectCreateError(""); try { await onCreateProject(projectName.trim()); setProjectDialogOpen(false); setProjectName(""); enterProjectNewPage(); } catch (error) { setProjectCreateError(error instanceof Error ? error.message : String(error)); } finally { setProjectCreateBusy(false); } }}>{projectCreateBusy ? "创建中…" : "创建项目"}</button></footer></div></div> : null}
+      {projectDialogOpen ? <div className="dialog-backdrop" role="presentation" onMouseDown={() => !projectCreateBusy && setProjectDialogOpen(false)}><div className="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-create-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="project-create-title">新建项目</h2><p>项目用于隔离资源、环境和运行配置。</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}><Icon name="close"/></button></header><label><span>项目名称</span><input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="请输入项目名称"/></label>{projectCreateError ? <p className="project-create-error" role="alert">{projectCreateError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}>取消</button><button type="button" className="ui-button primary" disabled={projectCreateBusy || !projectName.trim()} onClick={async () => { if (!onCreateProject) return; setProjectCreateBusy(true); setProjectCreateError(""); try { await onCreateProject(projectName.trim()); setProjectDialogOpen(false); setProjectName(""); enterProjectEmptySession(); } catch (error) { setProjectCreateError(error instanceof Error ? error.message : String(error)); } finally { setProjectCreateBusy(false); } }}>{projectCreateBusy ? "创建中…" : "创建项目"}</button></footer></div></div> : null}
       {projectAction ? <div className="dialog-backdrop" role="presentation" onMouseDown={() => !projectActionBusy && setProjectAction(null)}><div className="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-action-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="project-action-title">{projectAction.kind === "rename" ? "修改项目名称" : projectAction.kind === "clone" ? "克隆项目" : "删除项目"}</h2><p>{projectAction.kind === "delete" ? `删除“${projectAction.originalName}”后，其中的集合和请求也会被删除。` : projectAction.kind === "clone" ? "将复制项目中的集合层级和全部请求。" : "修改后会同步更新项目入口和项目导航。"}</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectActionBusy} onClick={() => setProjectAction(null)}><Icon name="close"/></button></header>{projectAction.kind !== "delete" ? <label><span>项目名称</span><input autoFocus value={projectActionName} onChange={(event) => setProjectActionName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectActionName.trim()) void runProjectAction(); }}/></label> : null}{projectActionError ? <p className="project-create-error" role="alert">{projectActionError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectActionBusy} onClick={() => setProjectAction(null)}>取消</button><button type="button" className={`ui-button ${projectAction.kind === "delete" ? "danger" : "primary"}`} disabled={projectActionBusy || (projectAction.kind !== "delete" && !projectActionName.trim())} onClick={() => void runProjectAction()}>{projectActionBusy ? "处理中…" : projectAction.kind === "delete" ? "确认删除" : projectAction.kind === "clone" ? "创建副本" : "保存"}</button></footer></div></div> : null}
     </main>;
   }
