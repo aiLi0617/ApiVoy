@@ -120,12 +120,62 @@ export function sanitizeHttpRequestForPersistence(request: HttpWorkbenchRequest)
 
 export function requestNameFromUrl(value: string): string {
   const target = value.trim();
-  if (!target) return "未命名接口";
+  if (!target) return "";
   try {
     return new URL(target, "http://apivoy.local").pathname || "/";
   } catch {
-    return target.split(/[?#]/, 1)[0] || "未命名接口";
+    return target.split(/[?#]/, 1)[0] || "";
   }
+}
+
+export function resolveDefaultSaveCollectionId(
+  collections: Array<{ id: string; parentId?: string | null }>,
+  preferredId: string,
+): string {
+  return collections.find((collection) => collection.id === "default-collection")?.id
+    ?? collections.find((collection) => collection.id === preferredId)?.id
+    ?? collections.find((collection) => !collection.parentId)?.id
+    ?? collections[0]?.id
+    ?? "";
+}
+
+export function flattenSaveCollections<T extends { id: string; parentId?: string | null }>(
+  collections: T[],
+): Array<{ collection: T; depth: number }> {
+  const result: Array<{ collection: T; depth: number }> = [];
+  const visited = new Set<string>();
+  const ids = new Set(collections.map((collection) => collection.id));
+  const append = (collection: T, depth: number) => {
+    if (visited.has(collection.id)) return;
+    visited.add(collection.id);
+    result.push({ collection, depth });
+    collections.filter((candidate) => candidate.parentId === collection.id).forEach((child) => append(child, depth + 1));
+  };
+  collections.filter((collection) => !collection.parentId || !ids.has(collection.parentId)).forEach((root) => append(root, 0));
+  collections.forEach((collection) => append(collection, 0));
+  return result;
+}
+
+function SaveDirectoryBranch({ collections, parentId, depth, selectedId, expandedIds, onSelect, onToggle }: {
+  collections: Array<{ id: string; name: string; parentId?: string | null }>;
+  parentId: string | null;
+  depth: number;
+  selectedId: string;
+  expandedIds: Set<string>;
+  onSelect: (id: string) => void;
+  onToggle: (id: string, expanded: boolean) => void;
+}) {
+  return <>{collections.filter((item) => (item.parentId ?? null) === parentId).map((collection) => {
+    const hasChildren = collections.some((item) => item.parentId === collection.id);
+    const expanded = hasChildren && expandedIds.has(collection.id);
+    return <div className="save-interface-tree-branch" role="none" key={collection.id}>
+      <div className={`save-interface-tree-row${selectedId === collection.id ? " is-selected" : ""}`} role="treeitem" aria-selected={selectedId === collection.id} aria-expanded={hasChildren ? expanded : undefined} style={{ "--save-depth": depth } as CSSProperties}>
+        {hasChildren ? <button type="button" className={`save-interface-tree-toggle${expanded ? " is-expanded" : ""}`} aria-label={`${expanded ? "收起" : "展开"} ${collection.name}`} onClick={() => onToggle(collection.id, !expanded)}><Icon name="chevron"/></button> : <span className="save-interface-tree-toggle-placeholder" aria-hidden="true"/>}
+        <button type="button" className="save-interface-tree-select" onClick={() => onSelect(collection.id)}><Icon name="folder"/><span>{collection.name}</span></button>
+      </div>
+      {expanded ? <SaveDirectoryBranch collections={collections} parentId={collection.id} depth={depth + 1} selectedId={selectedId} expandedIds={expandedIds} onSelect={onSelect} onToggle={onToggle}/> : null}
+    </div>;
+  })}</>;
 }
 
 export const CASE_NAME_PRESETS = ["成功", "失败", "记录不存在", "数据为空", "缺少参数", "参数有误", "已登录", "未登录"] as const;
@@ -417,6 +467,11 @@ export interface HttpWorkbenchProps {
   onTitleChange?: (title: string) => void;
   onCancel?: (executionId: string) => Promise<void>;
   onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
+  onSaveToCollection?: (request: HttpWorkbenchRequest, collectionId: string) => Promise<string | void>;
+  onCreateCollection?: (parentId: string | null, name: string, moduleId?: string) => Promise<{ id: string; name: string; parentId?: string | null }>;
+  saveCollections?: Array<{ id: string; name: string; parentId?: string | null; moduleId?: string }>;
+  saveModules?: Array<{ id: string; name: string; isDefault: boolean }>;
+  defaultSaveCollectionId?: string;
   onSaveAsCase?: (request: HttpWorkbenchRequest) => Promise<void>;
   onUpdateInterface?: (request: HttpWorkbenchRequest) => Promise<void>;
   onPutSecret?: (name: string, value: string) => Promise<void>;
@@ -631,6 +686,11 @@ export function HttpWorkbench({
   onTitleChange,
   onCancel,
   onSave,
+  onSaveToCollection,
+  onCreateCollection,
+  saveCollections = [],
+  saveModules = [],
+  defaultSaveCollectionId = "",
   onSaveAsCase,
   onUpdateInterface,
   onPutSecret,
@@ -648,6 +708,17 @@ export function HttpWorkbench({
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [requestId, setRequestId] = useState<string | undefined>();
+  const [saveInterfaceDraft, setSaveInterfaceDraft] = useState<{ request: HttpWorkbenchRequest; saveDefinition: boolean } | null>(null);
+  const [saveInterfaceName, setSaveInterfaceName] = useState("");
+  const [saveCollectionId, setSaveCollectionId] = useState("");
+  const [saveModuleId, setSaveModuleId] = useState("");
+  const [saveDirectoryOpen, setSaveDirectoryOpen] = useState(false);
+  const [expandedSaveModules, setExpandedSaveModules] = useState<Set<string>>(() => new Set());
+  const [expandedSaveCollections, setExpandedSaveCollections] = useState<Set<string>>(() => new Set());
+  const [saveInterfaceBusy, setSaveInterfaceBusy] = useState(false);
+  const [newCollectionOpen, setNewCollectionOpen] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [newCollectionParentId, setNewCollectionParentId] = useState("");
   const [method, setMethod] = useState<string>("GET");
   const [url, setUrl] = useState("");
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createHeaderRow()]);
@@ -1104,6 +1175,16 @@ export function HttpWorkbench({
     }
   }, [externalRequest]);
 
+  useEffect(() => {
+    const markRequestDeleted = (event: Event) => {
+      const deletedId = (event as CustomEvent<{ requestId?: string }>).detail?.requestId;
+      if (!deletedId) return;
+      setRequestId((current) => current === deletedId ? undefined : current);
+    };
+    window.addEventListener("apivoy-request-deleted", markRequestDeleted);
+    return () => window.removeEventListener("apivoy-request-deleted", markRequestDeleted);
+  }, []);
+
   useWorkbenchHydration("http", (raw) => {
     const savedRequest = httpRequestFromHydration(raw);
     if (savedRequest) {
@@ -1268,10 +1349,21 @@ export function HttpWorkbench({
     }
   }
 
-  async function handleSave() {
+  async function handleSave(saveDefinition = false) {
     if (!onSave || !validateParameterNames()) return;
     try {
       const request = buildRequest();
+      if (!requestId && onSaveToCollection) {
+        const defaultModule = saveModules.find((module) => module.isDefault) ?? saveModules[0];
+        setSaveInterfaceDraft({ request, saveDefinition });
+        setSaveInterfaceName(request.name?.trim() || name.trim());
+        setSaveCollectionId(resolveDefaultSaveCollectionId(saveCollections, defaultSaveCollectionId));
+        setSaveModuleId(defaultModule?.id ?? "");
+        setExpandedSaveModules(defaultModule ? new Set([defaultModule.id]) : new Set());
+        setExpandedSaveCollections(new Set(saveCollections.filter((collection) => saveCollections.some((child) => child.parentId === collection.id)).map((collection) => collection.id)));
+        setSaveDirectoryOpen(false);
+        return;
+      }
       if (!openedCaseParentId) request.metadata = { ...(request.metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: captureHttpInterfaceStructure(request) };
       const responseSnapshot = syncCaseResponse && openedCaseParentId && result && hasResponseResult ? {
         status: result.summary.status ?? null,
@@ -1287,6 +1379,7 @@ export function HttpWorkbench({
       await onSave(sanitizeHttpRequestForPersistence(request));
       if (!name.trim()) setName(request.name ?? "");
       setStatusMsg("请求已保存到本地库");
+      if (saveDefinition) window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId: request.id } }));
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
     }
@@ -1525,6 +1618,13 @@ export function HttpWorkbench({
     <span className="http-metric-popover" tabIndex={0}>{result.summary.durationMs} ms<span className="http-metric-card http-timing-card" role="tooltip"><b>事件 <i>时间</i></b><span className="http-timing-progress-row"><em>前置操作执行</em><span className="http-timing-progress" aria-label="前置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row"><em>接口请求</em><span className="http-timing-progress" aria-label={`接口请求占总耗时 ${Math.round(result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%`}><i style={{ width: `${Math.min(100, result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%` }}/></span><i>{result.summary.durationMs} ms</i></span><span className="http-timing-progress-row"><em>后置操作执行</em><span className="http-timing-progress" aria-label="后置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row http-timing-total"><em>总耗时</em><span className="http-timing-progress" aria-label="总耗时 100%"><i style={{ width: "100%" }}/></span><i>{requestWallMs || result.summary.durationMs} ms</i></span></span></span>
     <span className="http-metric-popover" tabIndex={0}>{formatBytes(responseTotalBytes)}<span className="http-metric-card http-size-card" role="tooltip"><b>↓ 响应大小 <i>{formatBytes(responseTotalBytes)}</i></b><span>Header <i>{formatBytes(responseHeaderBytes)}</i></span><span>Body <i>{formatBytes(responseBodyBytes)}</i></span><hr/><b>↑ 请求大小 <i>{formatBytes(requestSize(lastRequest))}</i></b><span>Header <i>{formatBytes(requestHeaderBytes)}</i></span><span>Body <i>{formatBytes(requestBodyBytes)}</i></span></span></span>
   </> : null;
+  const displayedSaveModules = saveModules.length
+    ? saveModules
+    : [{ id: "default-module", name: "默认模块", isDefault: true }];
+  const selectedSaveModule = displayedSaveModules.find((module) => module.id === saveModuleId)
+    ?? displayedSaveModules.find((module) => module.isDefault)
+    ?? displayedSaveModules[0];
+  const selectedSaveCollection = saveCollections.find((collection) => collection.id === saveCollectionId);
   const responseHeaderActions = <div className="http-response-header-actions">
     {!loading ? <label className="http-response-validation-control" title="启用或停用响应校验"><span>校验响应</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
     {!loading && !openedCaseParentId ? <select className={`http-response-status-select${assertionFailed ? " is-fail" : result?.assertions?.length ? " is-pass" : ""}`} aria-label="选择接口设计返回响应" value={selectedDesignedResponse || "200"} onChange={(event) => setSelectedDesignedResponse(event.target.value)}>
@@ -1558,18 +1658,18 @@ export function HttpWorkbench({
       </select>
       <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="接口路径" spellCheck={false} disabled={loading} /></label>
       {lifecycleTab === "definition" ? <>
-        <button type="button" className="http-send-button" style={styles.button} disabled={!url.trim()} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId } }))}><Icon name="archive"/>保存</button>
+        <button type="button" className="http-send-button" style={styles.button} disabled={loading} onClick={() => void handleSave(true)}><Icon name="archive"/>保存</button>
         <button type="button" className="http-save-button" style={styles.secondaryButton} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-lifecycle-tab", { detail: { sessionId: workbenchSessionId, tab: "debug" } }))}><Icon name="send"/>调试</button>
       </> : <>
-        <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
+        <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading && (!onCancel || !executionId)} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
           <Icon name={loading ? "close" : "send"}/>{loading ? t("action.cancel") : t("action.send")}
         </button>
       {onSave && <div className="http-save-split" ref={saveMenuRef}>
-        <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => void handleSave()}><Icon name="archive"/>{t("action.save")}</button>
+        <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading} onClick={() => void handleSave()}><Icon name="archive"/>{t("action.save")}</button>
         {openedCaseParentId ? <label className="http-save-response-sync" title="勾选后，点击保存时同步当前响应">
           <input type="checkbox" aria-label="同步保存响应" checked={syncCaseResponse} disabled={loading} onChange={(event) => setSyncCaseResponse(event.target.checked)}/>
         </label> : onSaveAsCase ? <>
-          <button type="button" className="http-save-menu-trigger" aria-label="更多保存方式" aria-haspopup="menu" aria-expanded={saveMenuOpen} disabled={loading || !url.trim()} onClick={() => setSaveMenuOpen((open) => !open)}><Icon name="chevron"/></button>
+          <button type="button" className="http-save-menu-trigger" aria-label="更多保存方式" aria-haspopup="menu" aria-expanded={saveMenuOpen} disabled={loading} onClick={() => setSaveMenuOpen((open) => !open)}><Icon name="chevron"/></button>
           {saveMenuOpen ? <div className="http-save-menu" role="menu" aria-label="保存方式">
             <button type="button" role="menuitem" onClick={() => openCaseDialog("debug")}><Icon name="copy"/><span>保存为用例</span></button>
           </div> : null}
@@ -1580,7 +1680,7 @@ export function HttpWorkbench({
   </div>;
 
   return (
-    <>{caseDialogOpen ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !caseSaving && setCaseDialogOpen(false)}>
+    <>{saveInterfaceDraft ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !saveInterfaceBusy && setSaveInterfaceDraft(null)}><form className="save-interface-dialog" role="dialog" aria-modal="true" aria-labelledby="save-interface-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!saveInterfaceName.trim() || !saveCollectionId || !onSaveToCollection) return; setSaveInterfaceBusy(true); try { const request = { ...saveInterfaceDraft.request, name: saveInterfaceName.trim() }; const savedId = await onSaveToCollection(sanitizeHttpRequestForPersistence(request), saveCollectionId); const persistedId = savedId || request.id; setName(request.name); setRequestId(persistedId); onTitleChange?.(request.name); setStatusMsg("请求已保存到本地库"); const shouldSaveDefinition = saveInterfaceDraft.saveDefinition; setSaveInterfaceDraft(null); if (shouldSaveDefinition) window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId: persistedId } })); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="save-interface-title">保存接口</h2><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}><Icon name="close"/></button></header><div className="save-interface-fields"><label><span>名称 <i>*</i></span><input className="save-interface-name-input" autoFocus required value={saveInterfaceName} onChange={(event) => setSaveInterfaceName(event.target.value)} /></label><fieldset><legend>目录 <i>*</i></legend><div className={`save-interface-directory-picker${saveDirectoryOpen ? " is-open" : ""}`}><button type="button" className="save-interface-directory-trigger" role="combobox" aria-label="目录" aria-haspopup="tree" aria-expanded={saveDirectoryOpen} onClick={() => setSaveDirectoryOpen((open) => !open)}><Icon name="folder"/><span>{selectedSaveCollection?.name ?? "请选择目录"}</span><Icon name="chevron"/></button>{saveDirectoryOpen ? <div className="save-interface-directory-tree" role="tree" aria-label="选择保存目录">{displayedSaveModules.map((module) => { const moduleCollections = saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === module.id : module.isDefault); const moduleExpanded = expandedSaveModules.has(module.id); const rootCollection = moduleCollections.find((collection) => !collection.parentId) ?? moduleCollections[0]; return <div className="save-interface-module-group" role="group" key={module.id}><div className="save-interface-module-row" role="treeitem" aria-expanded={moduleExpanded}><button type="button" className="save-interface-tree-toggle" aria-label={moduleExpanded ? `收起${module.name}` : `展开${module.name}`} onClick={() => setExpandedSaveModules((current) => { const next = new Set(current); next.has(module.id) ? next.delete(module.id) : next.add(module.id); return next; })}><Icon name="chevron"/></button><button type="button" className="save-interface-tree-select" onClick={() => { setSaveModuleId(module.id); if (rootCollection) { setSaveCollectionId(rootCollection.id); setSaveDirectoryOpen(false); } }}><Icon name="folder"/><span>{module.name}</span></button></div>{moduleExpanded ? <SaveDirectoryBranch collections={moduleCollections} parentId={null} depth={0} selectedId={saveCollectionId} expandedIds={expandedSaveCollections} onSelect={(collectionId) => { setSaveModuleId(module.id); setSaveCollectionId(collectionId); setSaveDirectoryOpen(false); }} onToggle={(collectionId, expanded) => setExpandedSaveCollections((current) => { const next = new Set(current); expanded ? next.add(collectionId) : next.delete(collectionId); return next; })}/> : null}</div>; })}{!saveCollections.length ? <p>当前模块暂无目录，请先新建目录。</p> : null}<button type="button" className="save-interface-new-directory" onClick={() => { setNewCollectionName(""); setNewCollectionParentId(""); setNewCollectionOpen(true); }}><Icon name="plus"/>新建目录</button></div> : null}</div></fieldset></div><footer><button type="button" className="ui-button secondary" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !saveInterfaceName.trim() || !saveCollectionId}>{saveInterfaceBusy ? "保存中…" : "保存"}</button></footer></form>{newCollectionOpen ? <div className="save-interface-nested-backdrop" role="presentation" onMouseDown={() => setNewCollectionOpen(false)}><form className="save-interface-new-dialog" role="dialog" aria-modal="true" aria-labelledby="new-save-directory-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!newCollectionName.trim() || !onCreateCollection) return; setSaveInterfaceBusy(true); try { const created = await onCreateCollection(newCollectionParentId || null, newCollectionName.trim(), saveModuleId || selectedSaveModule?.id); setSaveCollectionId(created.id); setNewCollectionOpen(false); setSaveDirectoryOpen(false); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="new-save-directory-title">新建目录</h2><button type="button" className="ui-icon-button" aria-label="关闭" onClick={() => setNewCollectionOpen(false)}><Icon name="close"/></button></header><label><span>名称 <i>*</i></span><input autoFocus value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)}/></label><label><span>父级目录 <i>*</i></span><select value={newCollectionParentId} onChange={(event) => setNewCollectionParentId(event.target.value)}><option value="">{selectedSaveModule?.name ?? "模块根目录"}</option>{saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === selectedSaveModule?.id : selectedSaveModule?.isDefault).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label><footer><button type="button" className="ui-button secondary" onClick={() => setNewCollectionOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !newCollectionName.trim()}>{saveInterfaceBusy ? "创建中…" : "创建"}</button></footer></form></div> : null}</div>, document.body) : null}{caseDialogOpen ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !caseSaving && setCaseDialogOpen(false)}>
       <form className="case-save-dialog" role="dialog" aria-modal="true" aria-labelledby="case-save-title" onSubmit={(event) => { event.preventDefault(); void saveAsCase(); }} onMouseDown={(event) => event.stopPropagation()}>
         <header><div><h2 id="case-save-title">保存为用例</h2></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={caseSaving} onClick={() => setCaseDialogOpen(false)}><Icon name="close"/></button></header>
         <div className="case-save-fields">

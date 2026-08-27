@@ -31,6 +31,9 @@ export interface WorkbenchDeckProps {
   onOpenProjectInNewWindow?: (projectId: string) => void;
   definitionClient?: InterfaceDefinitionClient;
   onCreateHttpInterface?: (request: HttpWorkbenchRequest, projectId: string, collectionId: string) => Promise<void>;
+  saveCollections?: Array<{ id: string; projectId: string; name: string; parentId?: string | null; moduleId?: string }>;
+  saveModules?: Array<{ id: string; projectId: string; name: string; isDefault: boolean }>;
+  onCreateSaveCollection?: (projectId: string, parentId: string | null, name: string, moduleId?: string) => Promise<{ id: string; name: string; parentId?: string | null }>;
   onLoadHttpInterface?: (requestId: string) => Promise<HttpWorkbenchRequest | null>;
   interfaceCases?: Array<InterfaceCaseSummary & { parentId: string }>;
   onDeleteHttpInterface?: (requestId: string) => Promise<void>;
@@ -107,7 +110,7 @@ function openDebugTab(sessionId: string) {
   })));
 }
 
-export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow, definitionClient, onCreateHttpInterface, onLoadHttpInterface, interfaceCases = [], onDeleteHttpInterface }: WorkbenchDeckProps) {
+export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow, definitionClient, onCreateHttpInterface, saveCollections, saveModules, onCreateSaveCollection, onLoadHttpInterface, interfaceCases = [], onDeleteHttpInterface }: WorkbenchDeckProps) {
   const items = Children.toArray(children); const { t } = useI18n();
   const active = useAppStore((state) => state.activeWorkbench); const setActive = useAppStore((state) => state.setActiveWorkbench);
   const favorites = useAppStore((state) => state.favoriteWorkbenches); const recent = useAppStore((state) => state.recentWorkbenches);
@@ -146,6 +149,18 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     const activeTab = tabScrollRef.current?.querySelector<HTMLElement>(".workbench-tab.is-active");
     activeTab?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
   }, [activeSessionId, sessions.length]);
+
+  useEffect(() => {
+    const markRequestDeleted = (event: Event) => {
+      const deletedId = (event as CustomEvent<{ requestId?: string }>).detail?.requestId;
+      if (!deletedId) return;
+      setSessions((current) => current.map((session) => session.requestId === deletedId
+        ? { ...session, requestId: undefined }
+        : session));
+    };
+    window.addEventListener("apivoy-request-deleted", markRequestDeleted);
+    return () => window.removeEventListener("apivoy-request-deleted", markRequestDeleted);
+  }, []);
 
   function activateSession(session: WorkbenchSession, writeHash = true) {
     setActiveSessionId(session.id);
@@ -468,17 +483,17 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
       const sendCase = isValidElement(source) ? (source as ReactElement<{ onSend?: HttpWorkbenchProps["onSend"] }>).props.onSend : undefined;
       const runCases = onLoadHttpInterface && sendCase ? async (caseIds: string[]): Promise<Record<string, InterfaceCaseRunOutcome>> => Object.fromEntries(await Promise.all(caseIds.map(async (id) => { const request = await onLoadHttpInterface(id); if (!request) return [id, { passed: false, error: "用例不存在" }] as const; const result = await sendCase(request); return [id, { passed: !result.error, error: result.error, status: result.summary.status ?? null, durationMs: result.summary.durationMs, body: result.preview, headers: result.responseMeta?.headers ?? [] }] as const; }))) : undefined;
       const deleteCase = onDeleteHttpInterface ?? (async (caseId: string) => { window.dispatchEvent(new CustomEvent("apivoy-delete-test-case", { detail: { caseId } })); });
-      return <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} definitionClient={definitionClient} caseMode={Boolean(session.caseParentId)} caseInterfaceName={session.caseInterfaceName} caseName={caseName} cases={cases} onOpenCase={openCase} onSaveCase={saveCase} onDeleteCase={deleteCase} onDuplicateCase={duplicateCase} onRunCases={runCases} onRunRequest={sendCase} onCopyCurl={copyCurl} onLoadCase={onLoadHttpInterface}>{content}</InterfaceLifecycleShell>;
+      return <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} isSaved={Boolean(session.requestId)} definitionClient={definitionClient} caseMode={Boolean(session.caseParentId)} caseInterfaceName={session.caseInterfaceName} caseName={caseName} cases={cases} onOpenCase={openCase} onSaveCase={saveCase} onDeleteCase={deleteCase} onDuplicateCase={duplicateCase} onRunCases={runCases} onRunRequest={sendCase} onCopyCurl={copyCurl} onLoadCase={onLoadHttpInterface}>{content}</InterfaceLifecycleShell>;
     };
     const sourceWithSaveIdentity = isValidElement(source) ? (() => {
       const element = source as ReactElement<{ onSave?: (request: Record<string, unknown>) => Promise<void>; onSaveAsCase?: (request: Record<string, unknown>) => Promise<void>; onUpdateInterface?: (request: Record<string, unknown>) => Promise<void> }>;
       const onSave = element.props.onSave;
       if (!onSave) return element;
       const requestId = session.requestId ?? session.id;
-      return cloneElement(element, { onSave: (request) => onSave({ ...request, id: requestId }), onSaveAsCase: (request) => onSave({ ...request, id: crypto.randomUUID(), name: String(request.name || session.title + " - 成功用例"), variables: { ...((request.variables as Record<string, string> | undefined) ?? {}), __apivoyCaseOf: requestId, __apivoyCaseInterfaceName: session.title.replace(/^[A-Z]+\s+/, "") } }), onUpdateInterface: session.caseParentId ? (request) => onSave({ ...request, id: session.caseParentId }) : undefined });
+      return cloneElement(element, { onSave: async (request) => { await onSave({ ...request, id: requestId }); setSessions((current) => current.map((item) => item.id === session.id ? { ...item, requestId } : item)); }, onSaveAsCase: (request) => onSave({ ...request, id: crypto.randomUUID(), name: String(request.name || session.title + " - 成功用例"), variables: { ...((request.variables as Record<string, string> | undefined) ?? {}), __apivoyCaseOf: requestId, __apivoyCaseInterfaceName: session.title.replace(/^[A-Z]+\s+/, "") } }), onUpdateInterface: session.caseParentId ? (request) => onSave({ ...request, id: session.caseParentId }) : undefined });
     })() : source;
     if (session.workbenchId === "http" && isValidElement(source)) {
-      const item = cloneElement(sourceWithSaveIdentity as ReactElement<{ onTitleChange?: (title: string) => void; toolbarTargetId?: string; commandbarTargetId?: string; workbenchSessionId?: string }>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, commandbarTargetId: `interface-commandbar-${session.id}`, onTitleChange: (title: string) => updateSessionTitle(session.id, session.caseInterfaceName ? `${session.caseInterfaceName}（${title.replace(/^[A-Z]+\s+/, "")}）` : title) });
+      const item = cloneElement(sourceWithSaveIdentity as ReactElement<HttpWorkbenchProps>, { key: session.id, workbenchSessionId: session.id, toolbarTargetId: `workbench-context-${session.id}`, commandbarTargetId: `interface-commandbar-${session.id}`, saveCollections: saveCollections?.filter((collection) => collection.projectId === selectedProjectId), saveModules: saveModules?.filter((module) => module.projectId === selectedProjectId), defaultSaveCollectionId: (saveTargetLabel ?? "").split(" / ")[1] ?? "", onSaveToCollection: onCreateHttpInterface && selectedProjectId ? async (request, collectionId) => { const requestId = session.requestId ?? session.id; await onCreateHttpInterface({ ...request, id: requestId }, selectedProjectId, collectionId); setSessions((current) => current.map((item) => item.id === session.id ? { ...item, requestId } : item)); return requestId; } : undefined, onCreateCollection: onCreateSaveCollection && selectedProjectId ? (parentId, name, moduleId) => onCreateSaveCollection(selectedProjectId, parentId, name, moduleId) : undefined, onTitleChange: (title: string) => updateSessionTitle(session.id, session.caseInterfaceName ? `${session.caseInterfaceName}（${title.replace(/^[A-Z]+\s+/, "")}）` : title) });
       return lifecycle(item);
     }
     if ((session.workbenchId === "websocket" || session.workbenchId === "sse" || session.workbenchId === "tcp" || session.workbenchId === "udp" || session.workbenchId === "grpc") && isValidElement(source)) {

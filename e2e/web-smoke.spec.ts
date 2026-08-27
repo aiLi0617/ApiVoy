@@ -14,13 +14,14 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/#workbench=http");
 });
 
-test("starts with zero tabs and the default new-page content", async ({ page }) => {
+test("starts with zero tabs and the project overview", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator(".workbench-tabs")).toBeVisible();
+  await expect(page.locator(".workbench-tabs")).toHaveCount(0);
   await expect(page.locator(".workbench-tab")).toHaveCount(0);
-  await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(0);
-  await expect(page.locator(".workbench-home")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "从这里开始探索接口" })).toBeVisible();
+  await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(1);
+  await expect(page.getByRole("main", { name: "项目" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
 });
 
 test("opens the grouped protocol workspace without horizontal overflow", async ({ page }) => {

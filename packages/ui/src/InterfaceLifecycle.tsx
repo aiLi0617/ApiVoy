@@ -4,6 +4,7 @@ import { CodeEditor } from "./CodeEditor";
 import { HttpWorkbench, type HttpWorkbenchRequest } from "./HttpWorkbench";
 import { readWorkbenchDraft } from "./draftRecovery";
 import { peekHydrate, stashHydrate } from "./openRequestPipeline";
+import { RESPONSE_BODY_TYPES, normalizeResponseBodyType, readResponseComponents, type ResponseBodyType } from "./responseComponents";
 
 export type InterfaceLifecycleTab =
   | "debug"
@@ -44,6 +45,16 @@ const PROTOCOL_LIFECYCLE: Record<string, InterfaceLifecycleTab[]> = {
 
 export function lifecycleTabsFor(workbenchId: string): InterfaceLifecycleTab[] {
   return PROTOCOL_LIFECYCLE[workbenchId] ?? [];
+}
+
+export function visibleLifecycleTabsFor(workbenchId: string, isSaved: boolean): InterfaceLifecycleTab[] {
+  const tabs = lifecycleTabsFor(workbenchId);
+  const visible = isSaved ? tabs : tabs.filter((tab) => tab !== "examples" && tab !== "mock");
+  return [...visible].sort((left, right) => {
+    if (left === "docs" && right === "examples") return -1;
+    if (left === "examples" && right === "docs") return 1;
+    return 0;
+  });
 }
 
 const EMPTY_COPY: Record<
@@ -87,6 +98,7 @@ export interface InterfaceLifecycleShellProps {
   children: ReactNode;
   projectId?: string;
   requestId?: string;
+  isSaved?: boolean;
   definitionClient?: InterfaceDefinitionClient;
   /** Saved cases are runnable configurations, not interface lifecycle roots. */
   caseMode?: boolean;
@@ -259,6 +271,7 @@ export function InterfaceLifecycleShell({
   children,
   projectId,
   requestId,
+  isSaved = true,
   definitionClient,
   caseMode = false,
   caseInterfaceName,
@@ -273,7 +286,7 @@ export function InterfaceLifecycleShell({
   onLoadCase,
   onRunRequest,
 }: InterfaceLifecycleShellProps) {
-  const availableTabs = lifecycleTabsFor(workbenchId);
+  const availableTabs = visibleLifecycleTabsFor(workbenchId, isSaved);
   const [activeTab, setActiveTab] = useState<InterfaceLifecycleTab>("debug");
   const client = definitionClient ?? agentDefinitionClient();
   const pendingDebugHydrate =
@@ -422,7 +435,7 @@ function InterfaceCasesPanel({ requestId, cases, onOpenCase, onSaveCase, onDelet
       <div className="interface-cases-actions">
         {items.length ? <label className="interface-cases-search"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、分组或标签" aria-label="搜索测试用例"/></label> : null}
         {items.length ? selected.length ? <button type="button" className="ui-button secondary" disabled={busy} onClick={() => void run(selected)}><Icon name="bolt"/>运行选中</button> : <button type="button" className="ui-button secondary" disabled={busy} onClick={() => void run(items.map((item) => item.id))}><Icon name="send"/>全部运行</button> : null}
-        <button type="button" className="ui-button primary" onClick={() => edit("new")}><Icon name="plus"/>添加测试用例</button>
+        {items.length ? <button type="button" className="ui-button primary" onClick={() => edit("new")}><Icon name="plus"/>添加测试用例</button> : null}
       </div>
     </header>
     {visibleCases.length ? <div className="interface-case-table" role="table" aria-label="测试用例列表" onClick={(event) => { const target = event.target as HTMLElement; if (target.closest("button,input,select")) return; const item = caseForRow(target.closest<HTMLElement>(".interface-case-table-row")); if (item) void togglePreview(item); }}>
@@ -517,6 +530,81 @@ export interface DefinitionField {
   parentId?: string;
   scope: DefinitionScope;
   status?: string;
+  responseId?: string;
+}
+export interface ResponseDefinition {
+  id: string;
+  name: string;
+  statusCode: string;
+  bodyType: ResponseBodyType;
+  contentType: string;
+  componentId?: string;
+  referenceMode?: "linked" | "detached";
+}
+
+export function definitionAreaCount(
+  area: "request" | "response",
+  fields: DefinitionField[],
+  responses: ResponseDefinition[],
+): number {
+  return area === "response"
+    ? responses.length
+    : fields.filter((field) => field.scope.startsWith("request.")).length;
+}
+
+const HTTP_RESPONSE_STATUS_OPTIONS = [
+  ["100", "继续"], ["101", "切换协议"], ["102", "处理中"], ["103", "早期提示"],
+  ["200", "成功"], ["201", "已创建"], ["202", "已接受"], ["203", "非权威信息"], ["204", "无内容"], ["205", "重置内容"], ["206", "部分内容"], ["207", "多状态"], ["208", "已报告"], ["226", "IM 已使用"],
+  ["300", "多种选择"], ["301", "永久移动"], ["302", "临时重定向"], ["303", "参见其他位置"], ["304", "未修改"], ["305", "使用代理"], ["307", "临时重定向"], ["308", "永久重定向"],
+  ["400", "请求错误"], ["401", "未授权"], ["402", "需要付款"], ["403", "禁止访问"], ["404", "未找到"], ["405", "方法不允许"], ["406", "不可接受"], ["407", "需要代理认证"], ["408", "请求超时"], ["409", "冲突"], ["410", "已删除"], ["411", "需要长度"], ["412", "前置条件失败"], ["413", "内容过大"], ["414", "URI 过长"], ["415", "不支持的媒体类型"], ["416", "范围不可满足"], ["417", "预期失败"], ["418", "我是茶壶"], ["421", "请求被误导"], ["422", "无法处理的内容"], ["423", "已锁定"], ["424", "依赖失败"], ["425", "过早"], ["426", "需要升级"], ["428", "需要前置条件"], ["429", "请求过多"], ["431", "请求头字段过大"], ["451", "因法律原因不可用"],
+  ["500", "服务器内部错误"], ["501", "尚未实现"], ["502", "错误网关"], ["503", "服务不可用"], ["504", "网关超时"], ["505", "HTTP 版本不受支持"], ["506", "变体也参与协商"], ["507", "存储空间不足"], ["508", "检测到循环"], ["510", "未扩展"], ["511", "需要网络认证"],
+] as const;
+
+const HTTP_STATUS_EXPLANATIONS: Record<string, string> = {
+  "100": "服务器已收到请求头，客户端可以继续发送请求体。",
+  "101": "服务器同意客户端请求，并将连接切换到指定协议。",
+  "102": "服务器正在处理请求，但暂时还没有最终响应。",
+  "103": "服务器提前返回部分响应头，便于客户端预加载资源。",
+  "200": "请求已成功处理，并返回预期结果。",
+  "201": "请求已成功处理，并创建了新的资源。",
+  "202": "请求已被接受，但处理尚未完成。",
+  "204": "请求已成功处理，但响应不包含正文。",
+  "301": "资源已永久移动，后续请求应使用新的地址。",
+  "302": "资源暂时位于其他地址，客户端可临时重定向。",
+  "304": "资源没有变化，客户端可以继续使用缓存。",
+  "400": "服务器无法理解或处理当前请求。",
+  "401": "请求缺少有效的身份认证信息。",
+  "403": "服务器理解请求，但拒绝执行。",
+  "404": "服务器找不到请求的资源。",
+  "409": "请求与资源的当前状态发生冲突。",
+  "422": "请求格式正确，但内容无法被处理。",
+  "429": "请求过于频繁，客户端应稍后重试。",
+  "500": "服务器处理请求时发生了未预期的内部错误。",
+  "502": "网关从上游服务器收到了无效响应。",
+  "503": "服务当前不可用，通常是临时过载或维护。",
+  "504": "网关等待上游服务器响应超时。",
+};
+
+function httpStatusClassExplanation(group: string) {
+  return group === "1" ? "1XX 信息响应：请求已收到，服务器将继续处理。" : group === "2" ? "2XX 成功响应：请求已被服务器成功接收和处理。" : group === "3" ? "3XX 重定向响应：客户端需要采取进一步操作。" : group === "4" ? "4XX 客户端错误：请求本身存在问题或无权访问。" : "5XX 服务器错误：服务器处理有效请求时发生错误。";
+}
+
+function httpStatusExplanation(code: string, label: string) {
+  return HTTP_STATUS_EXPLANATIONS[code] ?? `${code} ${label}：${httpStatusClassExplanation(code[0] ?? "5")}`;
+}
+
+function defaultResponseDefinition(statusCode = "200"): ResponseDefinition {
+  return { id: crypto.randomUUID(), name: statusCode.startsWith("2") ? "成功" : "未命名响应", statusCode, bodyType: "json", contentType: "application/json" };
+}
+
+function parseResponseDefinitions(content: string, fields: DefinitionField[]): ResponseDefinition[] {
+  const source = content.match(/^x-apivoy-responses:\s*(\[.*\])\s*$/m)?.[1];
+  if (source) try {
+    const parsed = JSON.parse(source) as ResponseDefinition[];
+    if (Array.isArray(parsed) && parsed.length) return parsed.map((response) => ({ ...response, bodyType: normalizeResponseBodyType((response as ResponseDefinition & { bodyType?: unknown }).bodyType) }));
+  } catch { /* Fall back to legacy status-based definitions. */ }
+  const statuses = [...new Set(fields.filter((field) => field.scope.startsWith("response.")).map((field) => field.status || "200"))];
+  return (statuses.length ? statuses : ["200"]).map((statusCode) => defaultResponseDefinition(statusCode));
 }
 function definitionScopeSupportsChildren(scope: DefinitionScope): boolean {
   return scope === "request.body" || scope === "response.body";
@@ -1092,6 +1180,7 @@ export function mergeDesignIntoHttpDraft(
   draft: HttpDebugDraft,
   fields: DefinitionField[],
   bodyMode: BodyDesignMode = "json",
+  responses?: ResponseDefinition[],
 ): HttpDebugDraft {
   const designedStatuses = [...new Set(fields.filter((field) => field.scope.startsWith("response.")).map((field) => field.status || "200"))];
   const responseStatuses = designedStatuses.length ? designedStatuses : ["200"];
@@ -1100,7 +1189,7 @@ export function mergeDesignIntoHttpDraft(
     headers: draft.headers.map((header) => [...header] as [string, string]),
     metadata: {
       ...(draft.metadata ?? {}),
-      __apivoyResponseDefinitions: responseStatuses.map((status) => ({ status, fields: fields.filter((field) => field.scope.startsWith("response.") && (field.status || "200") === status) })),
+      __apivoyResponseDefinitions: responses?.length ? responses.map((response) => ({ ...response, status: response.statusCode, fields: fields.filter((field) => field.scope.startsWith("response.") && (field.responseId ? field.responseId === response.id : (field.status || "200") === response.statusCode)) })) : responseStatuses.map((status) => ({ status, fields: fields.filter((field) => field.scope.startsWith("response.") && (field.status || "200") === status) })),
     },
   };
   const url = new URL(draft.url || "/", "http://apivoy.local");
@@ -1231,6 +1320,7 @@ function syncDesignToDebug(
   bodyMode: BodyDesignMode,
   security?: SecurityDesignConfig,
   projectId?: string,
+  responses?: ResponseDefinition[],
 ) {
   if (workbenchId !== "http") return;
   const draft = readWorkbenchDraft<HttpDebugDraft>("http") ?? {
@@ -1248,7 +1338,7 @@ function syncDesignToDebug(
     proxy: null,
     tlsVerify: true,
   };
-  const request = mergeDesignIntoHttpDraft(draft, fields, bodyMode);
+  const request = mergeDesignIntoHttpDraft(draft, fields, bodyMode, responses);
   request.metadata = { ...(request.metadata ?? {}), __apivoyProjectId: projectId };
   if (security) {
     const existingAuth = request.auth && typeof request.auth === "object" ? request.auth as Record<string, unknown> : {};
@@ -1275,6 +1365,7 @@ function fieldsToDefinition(
   openApiVersion: OpenApiVersion = "3.1",
   bodyMode: BodyDesignMode = "none",
   security: SecurityDesignConfig = DEFAULT_SECURITY_DESIGN,
+  responses?: ResponseDefinition[],
 ): string {
   const liveHttpDraft = protocol === "http" ? readWorkbenchDraft<HttpDebugDraft>("http") : null;
   const liveMethod = liveHttpDraft?.method?.toLowerCase() || "get";
@@ -1322,7 +1413,8 @@ function fieldsToDefinition(
     }${indent}properties:\n${roots.map((field) => `${indent}  ${field.name || "field"}:\n${renderSchemaField(field, `${indent}    `)}`).join("\n")}`;
   };
   const visualFieldsExtension = `x-apivoy-visual-fields: ${JSON.stringify(fields)}\n`;
-  const securityExtension = `x-apivoy-security: ${JSON.stringify(security)}\n`;
+  const responseDefinitions = responses?.length ? responses : parseResponseDefinitions("", fields);
+  const securityExtension = `x-apivoy-security: ${JSON.stringify(security)}\nx-apivoy-responses: ${JSON.stringify(responseDefinitions)}\n`;
   const params = fields.filter(
     (field) =>
       field.scope === "request.params" ||
@@ -1418,6 +1510,7 @@ function DefinitionPanel({
   const [definitionId, setDefinitionId] = useState("");
   const [content, setContent] = useState("");
   const [fields, setFields] = useState<DefinitionField[]>([]);
+  const [responses, setResponses] = useState<ResponseDefinition[]>([defaultResponseDefinition()]);
   const [openApiVersion, setOpenApiVersion] = useState<OpenApiVersion>("3.1");
   const [bodyMode, setBodyMode] = useState<BodyDesignMode>("none");
   const [security, setSecurity] = useState<SecurityDesignConfig>({ ...DEFAULT_SECURITY_DESIGN });
@@ -1448,11 +1541,17 @@ function DefinitionPanel({
     const liveDraft = workbenchId === "http" ? readWorkbenchDraft<HttpDebugDraft>("http") : null;
     const inferredFields = !current && liveDraft ? definitionFieldsFromHttpDraft(liveDraft) : [];
     const inferredBodyMode: BodyDesignMode = liveDraft?.body?.trim() ? "json" : "none";
-    const nextContent = current?.content ?? (inferredFields.length ? fieldsToDefinition(inferredFields, workbenchId, "3.1", inferredBodyMode) : "");
-    const nextFields = inferredFields.length ? inferredFields : parseDefinitionFields(nextContent, workbenchId);
+    const defaultComponents = !current ? readResponseComponents(projectId).filter((item) => item.addToNewInterfaces) : [];
+    const currentFields = current ? parseDefinitionFields(current.content, workbenchId) : inferredFields;
+    const initialResponses = current ? parseResponseDefinitions(current.content, currentFields) : defaultComponents.length ? defaultComponents.map((item) => ({ id: crypto.randomUUID(), name: item.name, statusCode: item.statusCode || "200", bodyType: item.bodyType, contentType: item.contentType, componentId: item.id, referenceMode: "linked" as const })) : [defaultResponseDefinition()];
+    const defaultComponentFields = defaultComponents.flatMap((component, index) => Array.isArray(component.fields) ? component.fields.filter((field): field is DefinitionField => Boolean(field && typeof field === "object")).map((field) => ({ ...field, id: crypto.randomUUID(), parentId: undefined, scope: field.scope?.startsWith("response.") ? field.scope : "response.body" as DefinitionScope, status: initialResponses[index]?.statusCode || "200", responseId: initialResponses[index]?.id })) : []);
+    const initialFields = [...inferredFields, ...defaultComponentFields];
+    const nextContent = current?.content ?? (initialFields.length || defaultComponents.length ? fieldsToDefinition(initialFields, workbenchId, "3.1", inferredBodyMode, DEFAULT_SECURITY_DESIGN, initialResponses) : "");
+    const nextFields = initialFields.length ? initialFields : parseDefinitionFields(nextContent, workbenchId);
     setDefinitionId(current?.id ?? "");
     setContent(nextContent);
-    setFields(nextFields);
+    setResponses(initialResponses);
+    setFields(nextFields.map((field) => field.scope.startsWith("response.") && !field.responseId ? { ...field, responseId: initialResponses.find((item) => item.statusCode === (field.status || "200"))?.id } : field));
     setSecurity(parseSecurityDesign(nextContent));
     setBodyMode(
       (nextContent.match(/^\s*x-apivoy-body-mode:\s*([\w-]+)/m)?.[1] as
@@ -1462,7 +1561,7 @@ function DefinitionPanel({
     lastVisualContent.current = nextContent;
     if (workbenchId === "http")
       setOpenApiVersion(detectOpenApiVersion(nextContent));
-    if (workbenchId === "http") syncDesignToDebug(workbenchId, nextFields, (nextContent.match(/^\s*x-apivoy-body-mode:\s*([\w-]+)/m)?.[1] as BodyDesignMode | undefined) ?? inferredBodyMode, parseSecurityDesign(nextContent), projectId);
+    if (workbenchId === "http") syncDesignToDebug(workbenchId, nextFields, (nextContent.match(/^\s*x-apivoy-body-mode:\s*([\w-]+)/m)?.[1] as BodyDesignMode | undefined) ?? inferredBodyMode, parseSecurityDesign(nextContent), projectId, initialResponses);
   }
   useEffect(() => {
     void reload().catch((error) =>
@@ -1481,10 +1580,16 @@ function DefinitionPanel({
         bodyMode,
         security,
         projectId,
+        responses,
       );
   }, [lastSavedAt]);
   async function saveDefinition() {
-    const issues = validateDefinitionSource(content, workbenchId);
+    const definitionContent = content.trim() ? content : fieldsToDefinition(fields, workbenchId, openApiVersion, bodyMode, security, responses);
+    if (!content.trim()) {
+      setContent(definitionContent);
+      lastVisualContent.current = definitionContent;
+    }
+    const issues = validateDefinitionSource(definitionContent, workbenchId);
     setParseIssues(issues);
     const error = issues.find((issue) => issue.severity === "error");
     if (error) {
@@ -1503,7 +1608,7 @@ function DefinitionPanel({
         name: `${title} 定义`,
         format: FORMAT_BY_PROTOCOL[workbenchId] ?? workbenchId,
         fileName: FILE_BY_PROTOCOL[workbenchId] ?? `${workbenchId}.txt`,
-        content,
+        content: definitionContent,
       });
       setDefinitionId(saved.id);
       setLastSavedAt(saved.updatedAt || new Date().toISOString());
@@ -1545,7 +1650,7 @@ function DefinitionPanel({
   useEffect(() => {
     const save = (event: Event) => {
       const detail = (event as CustomEvent<{ requestId?: string }>).detail;
-      if (detail?.requestId === requestId && !busy && content.trim()) void saveDefinition();
+      if (detail?.requestId === requestId && !busy) void saveDefinition();
     };
     window.addEventListener("apivoy-save-interface-definition", save);
     return () => window.removeEventListener("apivoy-save-interface-definition", save);
@@ -1557,6 +1662,7 @@ function DefinitionPanel({
       openApiVersion,
       bodyMode,
       security,
+      responses,
     );
     visualFieldCache.set(
       generated,
@@ -1565,12 +1671,12 @@ function DefinitionPanel({
     setFields(next);
     setContent(generated);
     lastVisualContent.current = generated;
-    syncDesignToDebug(workbenchId, next, bodyMode, security, projectId);
+    syncDesignToDebug(workbenchId, next, bodyMode, security, projectId, responses);
   }
   function changeOpenApiVersion(next: OpenApiVersion) {
     setOpenApiVersion(next);
     if (fields.length) {
-      const generated = fieldsToDefinition(fields, workbenchId, next, bodyMode, security);
+      const generated = fieldsToDefinition(fields, workbenchId, next, bodyMode, security, responses);
       visualFieldCache.set(
         generated,
         fields.map((field) => ({ ...field })),
@@ -1592,6 +1698,7 @@ function DefinitionPanel({
       openApiVersion,
       next,
       security,
+      responses,
     );
     visualFieldCache.set(
       generated,
@@ -1599,18 +1706,18 @@ function DefinitionPanel({
     );
     setContent(generated);
     lastVisualContent.current = generated;
-    syncDesignToDebug(workbenchId, fields, next, security, projectId);
+    syncDesignToDebug(workbenchId, fields, next, security, projectId, responses);
     setMessage(
       `请求 Body 已切换为 ${BODY_DESIGN_MODES.find((item) => item.id === next)?.label ?? next}`,
     );
   }
   function changeSecurity(next: SecurityDesignConfig) {
     setSecurity(next);
-    const generated = fieldsToDefinition(fields, workbenchId, openApiVersion, bodyMode, next);
+    const generated = fieldsToDefinition(fields, workbenchId, openApiVersion, bodyMode, next, responses);
     visualFieldCache.set(generated, fields.map((field) => ({ ...field })));
     setContent(generated);
     lastVisualContent.current = generated;
-    syncDesignToDebug(workbenchId, fields, bodyMode, next, projectId);
+    syncDesignToDebug(workbenchId, fields, bodyMode, next, projectId, responses);
   }
   function validateSource(showSuccess = true): DefinitionParseIssue[] {
     const issues = validateDefinitionSource(content, workbenchId);
@@ -1646,6 +1753,7 @@ function DefinitionPanel({
         ? fields
         : parseDefinitionFields(content, workbenchId);
     setFields(next);
+    setResponses(parseResponseDefinitions(content, next));
     lastVisualContent.current = content;
     sourceBaseline.current = content;
     sourceDirty.current = false;
@@ -1745,7 +1853,9 @@ function DefinitionPanel({
             if (file)
               void file.text().then((value) => {
                 setContent(value);
-                setFields(parseDefinitionFields(value, workbenchId));
+                const importedFields = parseDefinitionFields(value, workbenchId);
+                setFields(importedFields);
+                setResponses(parseResponseDefinitions(value, importedFields));
                 if (workbenchId === "http")
                   setOpenApiVersion(detectOpenApiVersion(value));
                 setMessage(
@@ -1816,11 +1926,20 @@ function DefinitionPanel({
           ) : (
             <VisualDefinitionEditor
               fields={fields}
+              responses={responses}
+              projectId={projectId}
               bodyMode={bodyMode}
               security={security}
               onSecurityChange={changeSecurity}
               onBodyModeChange={changeBodyMode}
               onChange={updateFields}
+              onResponsesChange={(nextResponses) => {
+                setResponses(nextResponses);
+                const generated = fieldsToDefinition(fields, workbenchId, openApiVersion, bodyMode, security, nextResponses);
+                setContent(generated);
+                lastVisualContent.current = generated;
+                syncDesignToDebug(workbenchId, fields, bodyMode, security, projectId, nextResponses);
+              }}
             />
           )}
         </div>
@@ -1829,7 +1948,7 @@ function DefinitionPanel({
             onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
             onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeStructure(event.clientX); }}
             onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); const step = event.shiftKey ? 40 : 12; const max = Math.max(240, (workspaceRef.current?.clientWidth ?? 560) - 320); setStructureWidth((width) => Math.min(max, Math.max(240, width + (event.key === "ArrowLeft" ? step : -step)))); }} />
-          <StructurePanel fields={structureFields} />
+          <StructurePanel fields={structureFields} responses={responses} />
         </> : null}
       </div>
       <div className="interface-definition-feedback">
@@ -1860,18 +1979,24 @@ const SCOPE_LABELS: Array<[DefinitionScope, string]> = [
 
 function VisualDefinitionEditor({
   fields,
+  responses,
+  projectId,
   bodyMode,
   security,
   onSecurityChange,
   onBodyModeChange,
   onChange,
+  onResponsesChange,
 }: {
   fields: DefinitionField[];
+  responses: ResponseDefinition[];
+  projectId: string;
   bodyMode: BodyDesignMode;
   security: SecurityDesignConfig;
   onSecurityChange: (security: SecurityDesignConfig) => void;
   onBodyModeChange: (mode: BodyDesignMode) => void;
   onChange: (fields: DefinitionField[]) => void;
+  onResponsesChange: (responses: ResponseDefinition[]) => void;
 }) {
   const [area, setArea] = useState<"request" | "response" | "security">(
     "request",
@@ -1882,10 +2007,18 @@ function VisualDefinitionEditor({
   const [responsePart, setResponsePart] = useState<
     "headers" | "cookies" | "body"
   >("body");
-  const [status, setStatus] = useState("200");
-  const [newStatus, setNewStatus] = useState("");
-  const [responseStatuses, setResponseStatuses] = useState<string[]>(["200"]);
+  const [selectedResponseId, setSelectedResponseId] = useState(() => responses[0]?.id ?? "");
+  const [responseAddMenuOpen, setResponseAddMenuOpen] = useState(false);
+  const [blankResponseDialogOpen, setBlankResponseDialogOpen] = useState(false);
+  const [blankResponseDraft, setBlankResponseDraft] = useState({ statusCode: "200", name: "成功", bodyType: "json" as ResponseBodyType });
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const [activeStatusIndex, setActiveStatusIndex] = useState(0);
+  const [componentQuery, setComponentQuery] = useState("");
+  const [draggedResponseId, setDraggedResponseId] = useState<string | null>(null);
   const [draftFieldId, setDraftFieldId] = useState(() => crypto.randomUUID());
+  const selectedResponse = responses.find((item) => item.id === selectedResponseId) ?? responses[0];
+  const status = selectedResponse?.statusCode ?? "200";
+  useEffect(() => { if (!responses.some((item) => item.id === selectedResponseId)) setSelectedResponseId(responses[0]?.id ?? ""); }, [responses, selectedResponseId]);
   function update(id: string, patch: Partial<DefinitionField>) {
     if (id === draftFieldId) {
       const committedId = draftFieldId;
@@ -1901,6 +2034,7 @@ function VisualDefinitionEditor({
           example: "",
           scope,
           status: responseScope ? status : undefined,
+          responseId: responseScope ? selectedResponse?.id : undefined,
           ...patch,
         },
       ]);
@@ -1944,6 +2078,7 @@ function VisualDefinitionEditor({
         example: "",
         scope: parent.scope,
         status: parent.status,
+        responseId: parent.responseId,
       },
     ]);
   }
@@ -1956,7 +2091,7 @@ function VisualDefinitionEditor({
       : fields.filter(
           (field) =>
             field.scope === scope &&
-            (!responseScope || (field.status || "200") === status),
+            (!responseScope || (field.responseId ? field.responseId === selectedResponse?.id : (field.status || "200") === status)),
         );
   const visible: Array<{ field: DefinitionField; depth: number }> = [];
   const appendBranch = (parentId: string | undefined, depth: number) =>
@@ -1973,14 +2108,17 @@ function VisualDefinitionEditor({
         appendBranch(field.id, depth + 1);
       });
   appendBranch(undefined, 0);
-  const fieldResponseStatuses = fields
-    .filter((field) => field.scope.startsWith("response."))
-    .map((field) => field.status || "200");
-  useEffect(() => {
-    setResponseStatuses((current) => [...new Set([...current, "200", ...fieldResponseStatuses])]);
-  }, [fieldResponseStatuses.join("\u0000")]);
-  const normalizedNewStatus = newStatus.trim();
-  const validNewStatus = /^(?:[1-5]\d{2}|default)$/i.test(normalizedNewStatus);
+  const normalizedBlankStatus = blankResponseDraft.statusCode.trim();
+  const validBlankStatus = /^\d{1,9}$/.test(normalizedBlankStatus);
+  const responseComponents = readResponseComponents(projectId).filter((component) => !componentQuery.trim() || `${component.name} ${component.statusCode ?? ""}`.toLocaleLowerCase().includes(componentQuery.trim().toLocaleLowerCase()));
+  const addComponentResponse = (component: ReturnType<typeof readResponseComponents>[number]) => {
+    const response: ResponseDefinition = { id: crypto.randomUUID(), name: component.name, statusCode: component.statusCode || "200", bodyType: component.bodyType, contentType: component.contentType, componentId: component.id, referenceMode: "linked" };
+    const componentFields = Array.isArray(component.fields) ? component.fields.filter((field): field is DefinitionField => Boolean(field && typeof field === "object")).map((field) => ({ ...field, id: crypto.randomUUID(), parentId: undefined, scope: field.scope?.startsWith("response.") ? field.scope : "response.body" as DefinitionScope, status: response.statusCode, responseId: response.id })) : [];
+    onResponsesChange([...responses, response]);
+    if (componentFields.length) onChange([...fields, ...componentFields]);
+    setSelectedResponseId(response.id);
+    setResponseAddMenuOpen(false);
+  };
   const requestTabs = [
     ["params", "参数"],
     ["headers", "Headers"],
@@ -2007,12 +2145,7 @@ function VisualDefinitionEditor({
           onClick={() => setArea("request")}
         >
           请求
-          <small>
-            {
-              fields.filter((field) => field.scope.startsWith("request."))
-                .length
-            }
-          </small>
+          <small>{definitionAreaCount("request", fields, responses)}</small>
         </button>
         <button
           type="button"
@@ -2022,12 +2155,7 @@ function VisualDefinitionEditor({
           onClick={() => setArea("response")}
         >
           响应
-          <small>
-            {
-              fields.filter((field) => field.scope.startsWith("response."))
-                .length
-            }
-          </small>
+          <small>{definitionAreaCount("response", fields, responses)}</small>
         </button>
         <button
           type="button"
@@ -2041,62 +2169,36 @@ function VisualDefinitionEditor({
       </div>
       {area === "response" ? (
         <div className="interface-response-scenes" aria-label="响应场景">
-          {responseStatuses.map((item) => (
+          {responses.map((item) => (
             <button
               type="button"
-              key={item}
-              className={status === item ? "is-active" : ""}
-              onClick={() => setStatus(item)}
+              key={item.id}
+              draggable
+              className={selectedResponse?.id === item.id ? "is-active" : ""}
+              onClick={() => setSelectedResponseId(item.id)}
+              onDragStart={() => setDraggedResponseId(item.id)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => { if (!draggedResponseId || draggedResponseId === item.id) return; const source = responses.findIndex((response) => response.id === draggedResponseId); const target = responses.findIndex((response) => response.id === item.id); if (source < 0 || target < 0) return; const next = [...responses]; const [moved] = next.splice(source, 1); next.splice(target, 0, moved); onResponsesChange(next); setDraggedResponseId(null); }}
             >
-              <b>{item}</b>
-              <span>
-                {item.startsWith("2")
-                  ? "成功"
-                  : item === "400"
-                    ? "参数错误"
-                    : item === "401"
-                      ? "未授权"
-                      : item === "404"
-                        ? "未找到"
-                        : item.startsWith("5")
-                          ? "服务异常"
-                          : "响应"}
-              </span>
+              <Icon name="menu" />
+              <b>{item.statusCode || "—"}</b>
+              <span>{item.name || "未命名响应"}</span>
+              <small>{RESPONSE_BODY_TYPES.find((type) => type.id === item.bodyType)?.label}</small>
             </button>
           ))}
-          <label>
-            <input
-              aria-label="新增响应状态码"
-              value={newStatus}
-              onChange={(event) => setNewStatus(event.target.value.replace(/\s/g, ""))}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || !validNewStatus) return;
-                event.preventDefault();
-                const next = normalizedNewStatus.toLowerCase() === "default" ? "default" : normalizedNewStatus;
-                setResponseStatuses((items) => items.includes(next) ? items : [...items, next]);
-                setStatus(next);
-                setNewStatus("");
-              }}
-              aria-invalid={Boolean(normalizedNewStatus) && !validNewStatus}
-              title={normalizedNewStatus && !validNewStatus ? "请输入 100–599，或 default" : "支持 100–599 和 default"}
-              placeholder="如 201、400"
-              inputMode="numeric"
-            />
-            <button
-              type="button"
-              disabled={!validNewStatus}
-              onClick={() => {
-                const next = normalizedNewStatus.toLowerCase() === "default" ? "default" : normalizedNewStatus;
-                setResponseStatuses((items) => items.includes(next) ? items : [...items, next]);
-                setStatus(next);
-                setNewStatus("");
-              }}
-            >
-              + 新响应
-            </button>
-          </label>
+          <div className="interface-response-add">
+            <button type="button" className="interface-response-add-trigger" aria-expanded={responseAddMenuOpen} onClick={() => setResponseAddMenuOpen((open) => !open)}><Icon name="plus"/>添加</button>
+            {responseAddMenuOpen ? <div className="interface-response-component-picker" role="menu">
+              <button type="button" className="interface-response-add-blank" role="menuitem" onClick={() => { setBlankResponseDraft({ statusCode: "200", name: "成功", bodyType: "json" }); setResponseAddMenuOpen(false); setBlankResponseDialogOpen(true); }}>添加空白响应</button>
+              {readResponseComponents(projectId).length > 6 ? <input autoFocus type="search" value={componentQuery} onChange={(event) => setComponentQuery(event.target.value)} placeholder="搜索响应组件"/> : null}
+              <div className="interface-response-component-options">{responseComponents.map((component) => <button type="button" role="menuitem" key={component.id} onClick={() => addComponentResponse(component)}><span className="interface-response-component-icon">R</span><span className="interface-response-component-label">{component.name || "未命名响应"}<small>({component.statusCode || "未设置"})</small></span>{responses.some((item) => item.componentId === component.id) ? <em>已添加</em> : null}</button>)}</div>
+              <button type="button" className="interface-response-create-component" role="menuitem" onClick={() => { setResponseAddMenuOpen(false); window.dispatchEvent(new CustomEvent("apivoy-open-project-settings", { detail: "responses" })); }}><Icon name="plus"/>新建响应组件</button>
+            </div> : null}
+          </div>
         </div>
       ) : null}
+      {area === "response" && selectedResponse ? <section className="interface-response-detail"><h3><b>{selectedResponse.statusCode || "—"}</b> {selectedResponse.name || "未命名响应"}</h3><div className="interface-response-meta"><label><span>HTTP 状态码：</span><input aria-label="HTTP 状态码" value={selectedResponse.statusCode} onChange={(event) => { const statusCode = event.target.value; onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, statusCode } : item)); onChange(fields.map((field) => field.responseId === selectedResponse.id ? { ...field, status: statusCode } : field)); }}/></label><label><span>名称：</span><input aria-label="响应名称" value={selectedResponse.name} onChange={(event) => onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, name: event.target.value } : item))}/></label><label><span>内容格式：</span><select aria-label="内容格式" value={selectedResponse.bodyType} onChange={(event) => { const bodyType = event.target.value as ResponseBodyType; onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, bodyType, contentType: RESPONSE_BODY_TYPES.find((type) => type.id === bodyType)?.contentType ?? "" } : item)); }}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><span className="interface-response-content-type">{selectedResponse.contentType || "无 Content-Type"}</span>{responses.length > 1 ? <button type="button" className="ui-icon-button compact" aria-label="删除当前响应" onClick={() => { onResponsesChange(responses.filter((item) => item.id !== selectedResponse.id)); onChange(fields.filter((field) => field.responseId !== selectedResponse.id)); }}><Icon name="trash"/></button> : null}</div></section> : null}
+      {blankResponseDialogOpen ? <div className="dialog-backdrop interface-add-response-backdrop" role="presentation" onMouseDown={() => setBlankResponseDialogOpen(false)}><form className="interface-add-response-dialog" role="dialog" aria-modal="true" aria-labelledby="add-response-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); if (!validBlankStatus) return; const bodyType = blankResponseDraft.bodyType; const response: ResponseDefinition = { id: crypto.randomUUID(), name: blankResponseDraft.name.trim(), statusCode: normalizedBlankStatus, bodyType, contentType: RESPONSE_BODY_TYPES.find((item) => item.id === bodyType)?.contentType ?? "" }; onResponsesChange([...responses, response]); setSelectedResponseId(response.id); setBlankResponseDialogOpen(false); }}><header><h2 id="add-response-title">添加响应</h2><button type="button" className="ui-icon-button" aria-label="关闭添加响应" onClick={() => setBlankResponseDialogOpen(false)}><Icon name="close"/></button></header><div className="interface-add-response-fields"><label><span>HTTP 状态码 <em>*</em></span><div className="http-status-combobox"><input autoFocus required type="text" inputMode="numeric" minLength={1} maxLength={9} pattern="[0-9]{1,9}" role="combobox" aria-autocomplete="list" aria-controls="http-response-status-options" aria-expanded={statusPickerOpen} aria-activedescendant={statusPickerOpen ? `http-status-${HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]?.[0]}` : undefined} value={blankResponseDraft.statusCode} onClick={() => setStatusPickerOpen(true)} onBlur={() => setStatusPickerOpen(false)} onChange={(event) => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: event.target.value.replace(/\D/g, "").slice(0, 9) })); }} onKeyDown={(event) => { if (event.key === "Escape") { setStatusPickerOpen(false); return; } if (statusPickerOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; setActiveStatusIndex((index) => (index + delta + HTTP_RESPONSE_STATUS_OPTIONS.length) % HTTP_RESPONSE_STATUS_OPTIONS.length); return; } if (event.key === "Enter" && statusPickerOpen) { event.preventDefault(); const option = HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]; if (option) setBlankResponseDraft((draft) => ({ ...draft, statusCode: option[0], name: option[1] })); setStatusPickerOpen(false); }}} aria-invalid={!validBlankStatus} title="请输入 1–9 位数字"/>{statusPickerOpen ? <div id="http-response-status-options" className="http-status-options" role="listbox">{(["1", "2", "3", "4", "5"] as const).map((group) => <div className={`http-status-group status-${group}xx`} key={group}>{HTTP_RESPONSE_STATUS_OPTIONS.map(([code, label], index) => code.startsWith(group) ? <button id={`http-status-${code}`} type="button" role="option" aria-selected={blankResponseDraft.statusCode === code} className={activeStatusIndex === index ? "is-active" : ""} key={code} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveStatusIndex(index)} onClick={() => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: code, name: label })); setStatusPickerOpen(false); }}><b>{code}</b><span>{label}</span><i className="http-status-info" data-tooltip={httpStatusExplanation(code, label)} aria-label={`${code} 协议说明`}>i</i></button> : null)}<div className="http-status-class"><b>{group}XX</b><span>{group === "1" ? "信息" : group === "2" ? "成功" : group === "3" ? "重定向" : group === "4" ? "客户端错误" : "服务器错误"}</span><i className="http-status-info" data-tooltip={httpStatusClassExplanation(group)} aria-label={`${group}XX 协议说明`}>i</i></div></div>)}</div> : null}</div><small>可选择标准状态码，也可输入 1–9 位数字。</small></label><label><span>名称</span><input value={blankResponseDraft.name} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, name: event.target.value }))}/></label><label><span>内容格式</span><select value={blankResponseDraft.bodyType} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, bodyType: event.target.value as ResponseBodyType }))}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div><footer><button type="button" className="ui-button secondary" onClick={() => setBlankResponseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={!validBlankStatus}>确定</button></footer></form></div> : null}
       {area !== "security" ? (
         <div
           className="interface-contract-nav"
@@ -2109,7 +2211,7 @@ function VisualDefinitionEditor({
               const count = fields.filter(
                 (field) =>
                   field.scope === tabScope &&
-                  (area !== "response" || (field.status || "200") === status),
+                  (area !== "response" || (field.responseId ? field.responseId === selectedResponse?.id : (field.status || "200") === status)),
               ).length;
               return (
                 <button
@@ -2255,7 +2357,7 @@ function VisualDefinitionEditor({
   );
 }
 
-function StructurePanel({ fields }: { fields: DefinitionField[] }) {
+function StructurePanel({ fields, responses }: { fields: DefinitionField[]; responses: ResponseDefinition[] }) {
   const renderFields = (items: DefinitionField[], parentId?: string, depth = 0): ReactNode => items
     .filter((field) => field.parentId === parentId)
     .map((field) => {
@@ -2270,14 +2372,12 @@ function StructurePanel({ fields }: { fields: DefinitionField[] }) {
         {children.length ? <div role="group">{renderFields(items, field.id, depth + 1)}</div> : null}
       </div>;
     });
-  const renderScope = (scope: DefinitionScope, label: string, status?: string) => {
-    const scoped = fields.filter((field) => field.scope === scope && (!status || (field.status || "200") === status));
+  const renderScope = (scope: DefinitionScope, label: string, response?: ResponseDefinition) => {
+    const scoped = fields.filter((field) => field.scope === scope && (!response || (field.responseId ? field.responseId === response.id : (field.status || "200") === response.statusCode)));
     if (!scoped.length) return null;
-    return <details className="interface-structure-group" open key={`${scope}-${status ?? ""}`}><summary><span>{label}</span><small>{scoped.length}</small></summary><div role="group">{renderFields(scoped)}</div></details>;
+    return <details className="interface-structure-group" open key={`${scope}-${response?.id ?? ""}`}><summary><span>{label}</span><small>{scoped.length}</small></summary><div role="group">{renderFields(scoped)}</div></details>;
   };
   const requestCount = fields.filter((field) => field.scope.startsWith("request.")).length;
-  const responseCount = fields.filter((field) => field.scope.startsWith("response.")).length;
-  const responseStatuses = [...new Set(fields.filter((field) => field.scope.startsWith("response.")).map((field) => field.status || "200"))];
   const responseStatusMeta = (value: string) => {
     if (value === "default") return { tone: "default", label: "默认响应" };
     if (value.startsWith("2")) return { tone: "success", label: "成功响应" };
@@ -2295,7 +2395,7 @@ function StructurePanel({ fields }: { fields: DefinitionField[] }) {
       </header>
       <div className="interface-structure-tree" role="tree">
         {requestCount ? <details className="interface-structure-section" open><summary><Icon name="send" /><strong>请求</strong><small>{requestCount}</small></summary><div>{renderScope("request.params", "Query / Path 参数")}{renderScope("request.headers", "Headers")}{renderScope("request.cookies", "Cookies")}{renderScope("request.body", "Body")}</div></details> : null}
-        {responseCount ? <details className="interface-structure-section" open><summary><Icon name="archive" /><strong>响应</strong><small>{responseCount}</small></summary><div>{responseStatuses.map((status) => { const meta = responseStatusMeta(status); return <details className={`interface-structure-status is-${meta.tone}`} open key={status}><summary><b>{status}</b><span>{meta.label}</span></summary><div>{renderScope("response.headers", "Headers", status)}{renderScope("response.cookies", "Cookies", status)}{renderScope("response.body", "Body", status)}</div></details>; })}</div></details> : null}
+        {responses.length ? <details className="interface-structure-section" open><summary><Icon name="archive" /><strong>响应</strong><small>{responses.length}</small></summary><div>{responses.map((response) => { const meta = responseStatusMeta(response.statusCode); return <details className={`interface-structure-status is-${meta.tone}`} open key={response.id}><summary><b>{response.statusCode || "—"}</b><span>{response.name || meta.label}</span><small>{RESPONSE_BODY_TYPES.find((item) => item.id === response.bodyType)?.label}</small></summary><div>{renderScope("response.headers", "Headers", response)}{renderScope("response.cookies", "Cookies", response)}{response.bodyType !== "none" ? renderScope("response.body", `Body · ${RESPONSE_BODY_TYPES.find((item) => item.id === response.bodyType)?.label ?? response.bodyType}`, response) : null}</div></details>; })}</div></details> : null}
         {!fields.length ? (
           <p>保存或导入定义后，这里会展示请求、响应和错误结构。</p>
         ) : null}
@@ -2476,7 +2576,7 @@ function DocumentPreviewPanel({
   const requestFields = fields.filter((field) => field.scope.startsWith("request."));
   const requestParameterFields = requestFields.filter((field) => field.scope !== "request.body");
   const responseFields = fields.filter((field) => field.scope.startsWith("response."));
-  const responseStatuses = [...new Set(responseFields.map((field) => field.status || "200"))];
+  const responses = parseResponseDefinitions(definition.content, fields);
   const requestBodyFields = requestFields.filter((field) => field.scope === "request.body");
   const requestBodyExample = buildDocumentObjectExample(requestBodyFields);
   return (
@@ -2484,7 +2584,6 @@ function DocumentPreviewPanel({
       <header className="interface-document-toolbar">
         <div>
           <strong>文档预览</strong>
-          <span>只读 · 与接口设计同步</span>
         </div>
         <div>
           <button
@@ -2548,13 +2647,13 @@ function DocumentPreviewPanel({
 
         <section className="interface-document-section" aria-labelledby="document-responses-title">
           <h2 id="document-responses-title">响应</h2>
-          {responseStatuses.length ? responseStatuses.map((status) => {
-            const statusFields = responseFields.filter((field) => (field.status || "200") === status);
-            return <div className="interface-document-response" key={status}>
-              <header><code>{status}</code><span>{status.startsWith("2") ? "成功响应" : "响应"}</span></header>
+          {responses.length ? responses.map((response) => {
+            const statusFields = responseFields.filter((field) => field.responseId ? field.responseId === response.id : (field.status || "200") === response.statusCode);
+            return <div className="interface-document-response" key={response.id}>
+              <header><code>{response.statusCode || "—"}</code><span>{response.name || "未命名响应"} · {RESPONSE_BODY_TYPES.find((item) => item.id === response.bodyType)?.label}</span></header>
               <div className="interface-document-response-content">
-                <DocumentFieldTable fields={statusFields} />
-                <DocumentCodeExample title="响应体" language="application/json" value={JSON.stringify(buildDocumentObjectExample(statusFields.filter((field) => field.scope === "response.body")), null, 2)} />
+                {statusFields.length ? <DocumentFieldTable fields={statusFields} /> : <p className="interface-document-empty">此响应尚未定义字段。</p>}
+                {response.bodyType !== "none" ? <DocumentCodeExample title={`响应体 · ${response.contentType || response.bodyType}`} language={response.contentType || "text/plain"} value={JSON.stringify(buildDocumentObjectExample(statusFields.filter((field) => field.scope === "response.body")), null, 2)} /> : null}
               </div>
             </div>;
           }) : <p className="interface-document-empty">此端点尚未定义响应模型。</p>}

@@ -10,6 +10,7 @@ import { CollaborationHub, type CollaborationTab } from "./CollaborationHub";
 import { EnvironmentEditor, type EnvironmentEditorProps } from "./EnvironmentEditor";
 import { useDialogFocus } from "./useDialogFocus";
 import { DEFAULT_RESPONSE_VALIDATION_SETTINGS, readResponseValidationSettings, writeResponseValidationSettings, type ProjectResponseValidationSettings } from "./responseValidationSettings";
+import { RESPONSE_BODY_TYPES, createResponseComponent, readResponseComponents, writeResponseComponents, type ResponseComponent, type ResponseBodyType } from "./responseComponents";
 
 export interface AppShellProps {
   title?: string;
@@ -48,15 +49,46 @@ function EnvironmentVariablesDialog({ open, onClose, environment }: { open: bool
   </div></div>;
 }
 
-function ProjectSettingsDialog({ open, onClose, projectId, projectName }: { open: boolean; onClose: () => void; projectId?: string; projectName?: string }) {
+type ProjectSettingsCategory = "basic" | "resources" | "responses" | "validation" | "tools";
+
+function ResponseComponentCard({ component, index, onChange, onRemove }: { component: ResponseComponent; index: number; onChange: (next: ResponseComponent) => void; onRemove: () => void }) {
+  const [schemaError, setSchemaError] = useState("");
+  const bodyFieldId = useId();
+  const update = (patch: Partial<ResponseComponent>) => onChange({ ...component, ...patch });
+  const componentLabel = component.name.trim() || `组件 ${index + 1}`;
+
+  return <article className="project-response-component-card">
+    <header className="project-response-component-card-header">
+      <span className="project-response-component-index" aria-hidden="true">{index + 1}</span>
+      <label className="project-response-component-name"><span>组件名称</span><input aria-label="响应组件名称" value={component.name} placeholder="例如：成功响应" onChange={(event) => update({ name: event.target.value })}/></label>
+      <button type="button" className="ui-icon-button compact project-response-component-remove" aria-label={`删除 ${componentLabel}`} title={`删除 ${componentLabel}`} onClick={onRemove}><Icon name="trash"/></button>
+    </header>
+    <div className="project-response-component-main">
+      <label><span>状态码 <small>可选</small></span><input aria-label={`${componentLabel} 状态码`} inputMode="numeric" value={component.statusCode ?? ""} placeholder="例如 200" onChange={(event) => update({ statusCode: event.target.value })}/></label>
+      <label><span>Body 类型</span><select aria-label={`${componentLabel} Body 类型`} value={component.bodyType} onChange={(event) => { const bodyType = event.target.value as ResponseBodyType; update({ bodyType, contentType: RESPONSE_BODY_TYPES.find((item) => item.id === bodyType)?.contentType ?? "" }); }}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+      <label><span>Content-Type <small>可编辑</small></span><input aria-label={`${componentLabel} Content-Type`} value={component.contentType} placeholder="例如 application/json" onChange={(event) => update({ contentType: event.target.value })}/></label>
+    </div>
+    <label className={`project-response-component-schema${schemaError ? " has-error" : ""}`} htmlFor={bodyFieldId}>
+      <span>Body 字段 <small>JSON 数组，可选</small></span>
+      <textarea id={bodyFieldId} aria-describedby={schemaError ? `${bodyFieldId}-error` : undefined} aria-invalid={Boolean(schemaError)} defaultValue={component.fields?.length ? JSON.stringify(component.fields, null, 2) : ""} placeholder={'[\n  { "name": "data", "type": "object" }\n]'} onChange={(event) => { event.currentTarget.setCustomValidity(""); setSchemaError(""); }} onBlur={(event) => { try { const value = event.target.value.trim() ? JSON.parse(event.target.value) as unknown : []; if (!Array.isArray(value)) throw new Error(); update({ fields: value }); setSchemaError(""); event.currentTarget.setCustomValidity(""); } catch { const message = "请输入有效的 JSON 数组"; setSchemaError(message); event.currentTarget.setCustomValidity(message); } }}/>
+      {schemaError ? <small id={`${bodyFieldId}-error`} className="project-response-component-error" role="alert">{schemaError}</small> : <small className="project-response-component-hint">用于描述响应结构，并在接口设计中快速复用。</small>}
+    </label>
+    <footer className="project-response-component-actions">
+      <label className="project-response-component-default"><input type="checkbox" checked={component.addToNewInterfaces} onChange={(event) => update({ addToNewInterfaces: event.target.checked })}/><span><strong>新增接口时默认添加</strong><small>创建接口后自动引用此响应组件</small></span></label>
+    </footer>
+  </article>;
+}
+
+function ProjectSettingsDialog({ open, onClose, projectId, projectName, initialCategory = "basic" }: { open: boolean; onClose: () => void; projectId?: string; projectName?: string; initialCategory?: ProjectSettingsCategory }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [validation, setValidation] = useState<ProjectResponseValidationSettings>(DEFAULT_RESPONSE_VALIDATION_SETTINGS);
-  const [category, setCategory] = useState<"basic" | "resources" | "validation" | "tools">("basic");
+  const [responseComponents, setResponseComponents] = useState<ResponseComponent[]>([]);
+  const [category, setCategory] = useState<ProjectSettingsCategory>("basic");
   const [saved, setSaved] = useState(false);
   useDialogFocus(open, dialogRef, onClose, closeRef);
-  useEffect(() => { if (open) { setValidation(readResponseValidationSettings(projectId)); setCategory("basic"); setSaved(false); } }, [open, projectId]);
+  useEffect(() => { if (open) { setValidation(readResponseValidationSettings(projectId)); setResponseComponents(readResponseComponents(projectId)); setCategory(initialCategory); setSaved(false); } }, [initialCategory, open, projectId]);
   if (!open) return null;
   const openProjectFeature = (eventName: string, detail?: string) => {
     onClose();
@@ -64,16 +96,17 @@ function ProjectSettingsDialog({ open, onClose, projectId, projectName }: { open
   };
   return <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}><div ref={dialogRef} className="settings-dialog project-settings-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
     <div className="project-settings-layout">
-      <aside className="project-settings-sidebar"><header><h2 id={titleId}>项目设置</h2><span><Icon name="gitBranch"/>{projectName ?? "当前项目"}</span></header><nav className="project-settings-nav" aria-label="项目设置分类"><section><h3><Icon name="settings"/>通用设置</h3><button type="button" className={category === "basic" ? "is-active" : ""} aria-current={category === "basic" ? "page" : undefined} onClick={() => setCategory("basic")}>基本设置</button></section><section><h3><Icon name="bolt"/>功能设置</h3><button type="button" className={category === "tools" ? "is-active" : ""} onClick={() => setCategory("tools")}>接口功能设置</button><button type="button" className={category === "validation" ? "is-active" : ""} aria-current={category === "validation" ? "page" : undefined} onClick={() => setCategory("validation")}>响应校验设置</button></section><section><h3><Icon name="archive"/>项目资源</h3><button type="button" className={category === "resources" ? "is-active" : ""} aria-current={category === "resources" ? "page" : undefined} onClick={() => setCategory("resources")}>环境与变量</button><button type="button" className={category === "resources" ? "is-active" : ""} onClick={() => setCategory("resources")}>项目脚本</button></section></nav></aside>
+      <aside className="project-settings-sidebar"><header><h2 id={titleId}>项目设置</h2><span><Icon name="gitBranch"/>{projectName ?? "当前项目"}</span></header><nav className="project-settings-nav" aria-label="项目设置分类"><section><h3><Icon name="settings"/>通用设置</h3><button type="button" className={category === "basic" ? "is-active" : ""} aria-current={category === "basic" ? "page" : undefined} onClick={() => setCategory("basic")}>基本设置</button></section><section><h3><Icon name="bolt"/>功能设置</h3><button type="button" className={category === "tools" ? "is-active" : ""} onClick={() => setCategory("tools")}>接口功能设置</button><button type="button" className={category === "validation" ? "is-active" : ""} aria-current={category === "validation" ? "page" : undefined} onClick={() => setCategory("validation")}>响应校验设置</button></section><section><h3><Icon name="archive"/>项目资源</h3><button type="button" className={category === "responses" ? "is-active" : ""} aria-current={category === "responses" ? "page" : undefined} onClick={() => setCategory("responses")}>响应组件</button><button type="button" className={category === "resources" ? "is-active" : ""} aria-current={category === "resources" ? "page" : undefined} onClick={() => setCategory("resources")}>环境与变量</button><button type="button" className={category === "resources" ? "is-active" : ""} onClick={() => setCategory("resources")}>项目脚本</button></section></nav></aside>
       <main className="project-settings-main">
         <button ref={closeRef} type="button" className="ui-icon-button project-settings-close" aria-label="关闭项目设置" onClick={onClose}><Icon name="close"/></button>
         {category === "basic" ? <section className="project-settings-page"><header><h3>基本设置</h3></header><h4>基本信息</h4><div className="project-basic-card"><div><strong>项目名称</strong><span>{projectName ?? "未命名项目"}</span></div><div><strong>项目 ID</strong><span>{projectId ?? "—"}</span></div><div><strong>项目语言</strong><span>简体中文</span></div></div><h4>项目操作</h4><div className="project-setting-links"><article><Icon name="archive"/><div><strong>克隆项目</strong><span>克隆项目到当前团队或其他团队。</span></div><button type="button" className="ui-button secondary">克隆项目</button></article></div></section> : null}
         {category === "resources" ? <section className="project-settings-page"><header><h3>项目资源</h3><p>管理仅作用于当前项目的环境和公共执行资源。</p></header><div className="project-setting-links"><article><Icon name="menu"/><div><strong>环境与变量</strong><span>项目请求共享的环境变量与 Secret 引用。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-environment")}>管理</button></article><article><Icon name="code"/><div><strong>项目脚本</strong><span>维护可复用的前置与后置操作。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-open-script-library")}>管理</button></article></div></section> : null}
+        {category === "responses" ? <section className="project-settings-page project-response-components-page"><header><div><h3>响应组件</h3><p>集中维护可复用的状态码、内容类型与 Body 结构。</p></div><button type="button" className="ui-button primary" onClick={() => { setSaved(false); setResponseComponents((items) => [...items, createResponseComponent(items.length)]); }}><Icon name="plus"/>新建组件</button></header><div className="project-response-component-list">{responseComponents.map((component, index) => <ResponseComponentCard key={component.id} component={component} index={index} onChange={(next) => { setSaved(false); setResponseComponents((items) => items.map((item) => item.id === component.id ? next : item)); }} onRemove={() => { setSaved(false); setResponseComponents((items) => items.filter((item) => item.id !== component.id)); }}/>)}</div>{!responseComponents.length ? <div className="interface-document-empty">暂无响应组件，创建后可在接口设计中快速引用。</div> : null}</section> : null}
         {category === "validation" ? <section className="project-settings-page project-validation-page"><header><h3>响应校验设置</h3></header><h4>模块功能开关</h4><div className="project-validation-rows">{([['interfaceRun','“接口运行”和“调试用例”里的校验响应','开启后，“接口管理”模块的“运行”、“接口调试用例”界面会显示“校验响应”功能'],['singleCase','“单接口用例”里的校验响应','开启后，“单接口用例”界面会显示“校验响应”功能'],['testScenario','“测试场景”里的校验响应','开启后，“自动化测试”模块的“测试步骤”界面会显示“校验响应”功能']] as const).map(([key,label,description]) => <div className="project-setting-row" key={key}><div><strong>{label}</strong><span>{description}</span></div><label className="http-switch"><input type="checkbox" checked={validation[key]} onChange={(event) => { setSaved(false); setValidation((current) => ({ ...current, [key]: event.target.checked, ...(key === "interfaceRun" ? { enabled: event.target.checked } : {}) })); }}/><span/></label></div>)}</div><h4>校验内容</h4><div className="project-validation-rows">{([['status','校验响应 HTTP 状态码','校验响应时，检查实际响应的状态码是否与接口文档里定义的状态码一致'],['headers','校验响应 Headers','校验响应时，检查接口设计中声明的必需响应头'],['bodyFormat','校验响应 Body 的数据格式','校验响应时，检查 JSON 等响应格式能否正确解析'],['bodySchema','校验响应 Body 的数据结构','校验响应时，检查实际响应的 Body 数据结构是否与接口文档中定义的数据结构一致']] as const).map(([key,label,description]) => <div className="project-setting-row" key={key}><div><strong>{label}</strong><span>{description}</span></div><label className="http-switch"><input type="checkbox" checked={validation[key]} onChange={(event) => { setSaved(false); setValidation((current) => ({ ...current, [key]: event.target.checked })); }}/><span/></label></div>)}<div className={`project-setting-row project-setting-row-nested${validation.bodySchema ? "" : " is-disabled"}`}><div><strong>Object 对象允许额外字段</strong><span>当接口文档的返回响应里 Object 类型的字段未配置“额外字段”时，允许实际响应的数据有额外字段</span></div><label className="http-switch"><input type="checkbox" disabled={!validation.bodySchema} checked={validation.allowAdditionalProperties} onChange={(event) => { setSaved(false); setValidation((current) => ({ ...current, allowAdditionalProperties: event.target.checked })); }}/><span/></label></div></div></section> : null}
         {category === "tools" ? <section className="project-settings-page"><header><h3>项目工具</h3><p>进入当前项目的批量运行与模拟服务。</p></header><div className="project-setting-links"><article><Icon name="send"/><div><strong>集合运行</strong><span>批量执行当前项目中的请求集合。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "runner")}>打开</button></article><article><Icon name="archive"/><div><strong>Mock</strong><span>管理当前项目的 Mock 定义。</span></div><button type="button" className="ui-button secondary" onClick={() => openProjectFeature("apivoy-select-workbench", "mock")}>打开</button></article></div></section> : null}
       </main>
     </div>
-    <footer className="settings-dialog-footer"><span className="settings-scope-note">{saved ? "项目设置已保存" : "这些设置仅作用于当前项目。"}</span><button type="button" className="ui-button secondary" onClick={onClose}>取消</button><button type="button" className="ui-button primary" disabled={!projectId} onClick={() => { if (projectId) { writeResponseValidationSettings(projectId, validation); setSaved(true); } }}>保存</button></footer>
+    <footer className="settings-dialog-footer"><span className="settings-scope-note">{saved ? "项目设置已保存" : "这些设置仅作用于当前项目。"}</span><button type="button" className="ui-button secondary" onClick={onClose}>取消</button><button type="button" className="ui-button primary" disabled={!projectId} onClick={() => { if (projectId) { writeResponseValidationSettings(projectId, validation); writeResponseComponents(projectId, responseComponents); setSaved(true); } }}>保存</button></footer>
   </div></div>;
 }
 
@@ -83,6 +116,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+  const [projectSettingsCategory, setProjectSettingsCategory] = useState<ProjectSettingsCategory>("basic");
   const [environmentOpen, setEnvironmentOpen] = useState(false);
   const [collaborationOpen, setCollaborationOpen] = useState(false);
   const [collaborationTab, setCollaborationTab] = useState<CollaborationTab>("team");
@@ -207,10 +241,12 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
       setCollaborationOpen(false);
       setEnvironmentOpen(true);
     };
-    const openProjectSettingsEvent = () => {
+    const openProjectSettingsEvent = (event: Event) => {
       setPaletteOpen(false);
       setSettingsOpen(false);
       setCollaborationOpen(false);
+      const requestedCategory = (event as CustomEvent<ProjectSettingsCategory>).detail;
+      setProjectSettingsCategory(requestedCategory === "responses" ? "responses" : "basic");
       setProjectSettingsOpen(true);
     };
     window.addEventListener("apivoy-open-collaboration", openCollaboration);
@@ -313,7 +349,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
         <button type="button" className={projectModule === "runner" ? "is-active" : undefined} onClick={() => { setProjectModule("runner"); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "runner" })); }}><Icon name="send"/><span>运行集合</span></button>
         <button type="button" className={projectModule === "mock" ? "is-active" : undefined} onClick={() => { setProjectModule("mock"); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "mock" })); }}><Icon name="archive"/><span>Mock</span></button>
         <button type="button" className={projectModule === "automation" ? "is-active" : undefined} onClick={() => { setProjectModule("automation"); const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.set("view", "automation"); params.delete("workbench"); history.replaceState(null, "", `#${params}`); }}><Icon name="bolt"/><span>自动化</span></button>
-        <button type="button" className="project-module-settings" onClick={() => { setPaletteOpen(false); setSettingsOpen(false); setProjectSettingsOpen(true); }}><Icon name="sliders"/><span>项目设置</span></button>
+        <button type="button" className="project-module-settings" onClick={() => { setPaletteOpen(false); setSettingsOpen(false); setProjectSettingsCategory("basic"); setProjectSettingsOpen(true); }}><Icon name="sliders"/><span>项目设置</span></button>
         <div className="project-rail-brand" aria-label={title}><span className="brand-mark"><BrandMark /></span><strong>{title}</strong></div>
       </nav> : null}
       {explorer && showExplorer ? <button type="button" className="explorer-backdrop" aria-label={t("shell.explorer.close")} onClick={toggleExplorer} /> : null}
@@ -330,7 +366,7 @@ export function AppShell({ title = "ApiVoy", channelLabel, children, explorer, s
       {workbenchCommands.length === 0 && actions.length === 0 ? <div className="command-empty">{t("command.empty")}</div> : null}
     </div></div></div> : null}
     <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} channelLabel={channelLabel} />
-    <ProjectSettingsDialog open={projectSettingsOpen} onClose={() => setProjectSettingsOpen(false)} projectId={projectContext?.selectedProjectId} projectName={projectContext?.projects.find((project) => project.id === projectContext.selectedProjectId)?.name}/>
+    <ProjectSettingsDialog open={projectSettingsOpen} onClose={() => setProjectSettingsOpen(false)} projectId={projectContext?.selectedProjectId} projectName={projectContext?.projects.find((project) => project.id === projectContext.selectedProjectId)?.name} initialCategory={projectSettingsCategory}/>
     <EnvironmentVariablesDialog open={environmentOpen} onClose={() => setEnvironmentOpen(false)} environment={environment}/>
     {collaboration ? <CollaborationHub open={collaborationOpen} onClose={() => setCollaborationOpen(false)} initialTab={collaborationTab} team={collaboration.team} comments={collaboration.comments} sso={collaboration.sso} /> : null}
   </div></FeedbackProvider>;

@@ -4,22 +4,24 @@
 
 ApiVoy is a local-first multi-protocol API debugging client.
 
-## Required validation
+## Validation strategy
 
-For TypeScript changes:
+During implementation:
 
-- `pnpm typecheck`
-- `pnpm test`
+- Run the smallest relevant test or package-level typecheck after changes.
+- Do not rerun unchanged full-workspace suites after every edit.
+- Group related edits before validation.
 
-For Rust changes:
+Before completing the task, run the applicable full validation once:
 
-- `cargo test --workspace --locked`
-- `cargo clippy --workspace --all-targets --locked -- -D warnings`
-
-For UI changes:
-
-- Attach screenshots
-- Run browser smoke tests (`pnpm test:e2e`)
+- TypeScript changes: `pnpm typecheck` and `pnpm test`.
+- Rust changes: `cargo test --workspace --locked` and
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- UI changes: attach screenshots and run browser smoke tests (`pnpm test:e2e`)
+  after the UI is stable.
+- Documentation-only changes do not require code tests.
+- If final full validation has passed and subsequent edits do not affect code,
+  do not rerun it.
 
 ## Security rules
 
