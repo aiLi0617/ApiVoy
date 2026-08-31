@@ -334,7 +334,7 @@ async fn execute_request(
 
     scope.request = request.variables.clone();
     envelope.variables = request.variables.clone();
-    envelope.assertions = request.assertions.into_iter().map(Into::into).collect();
+    envelope.assertions = request.assertions;
     envelope.environment_ref = Some(env_id.to_string());
     envelope.auth_ref = request.auth.map(Into::into);
 
@@ -646,7 +646,7 @@ async fn save_request(
 ) -> Result<StoredRequest, String> {
     let mut envelope = build_envelope(&request);
     envelope.variables = request.variables;
-    envelope.assertions = request.assertions.into_iter().map(Into::into).collect();
+    envelope.assertions = request.assertions;
     envelope.auth_ref = request.auth.map(Into::into);
     state
         .store
