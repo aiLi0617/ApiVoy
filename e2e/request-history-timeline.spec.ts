@@ -42,7 +42,12 @@ test("manages history tabs, links existing interfaces, and saves debug cases", a
   await expect(page.getByRole("button", { name: "打开接口 用户详情接口" })).toBeVisible();
   await expect(page.locator(".http-request-name-field")).toBeHidden();
   await expect(page.locator(".http-history-sent-at")).toContainText("用户详情接口");
-  await expect(page.locator(".http-history-sent-at")).toContainText("2026/8/31 15:12:00");
+  const expectedSentAt = await page.evaluate(
+    (iso) => new Date(iso).toLocaleString("zh-CN", { hour12: false }),
+    records[0].startedAt,
+  );
+  await expect(page.locator(".http-history-sent-at time")).toHaveAttribute("dateTime", records[0].startedAt);
+  await expect(page.locator(".http-history-sent-at")).toContainText(expectedSentAt);
   await page.screenshot({ path: "output/playwright/request-history-timeline/linked-interface-detail.png", fullPage: true });
 
   await page.locator(".request-history-item").nth(1).click();
