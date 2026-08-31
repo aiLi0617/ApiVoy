@@ -42,5 +42,19 @@ Before completing the task, run the applicable full validation once:
 - Add regression tests for bug fixes.
 - Preserve backward compatibility for workspace files where possible.
 
+## UI icon rules
+
+- Use Lucide through the shared `@apivoy/ui` icon abstraction for product UI;
+  do not add another general-purpose icon library or page-local SVG copy.
+- Use official SVG assets or Simple Icons only for third-party brand marks. Keep
+  the ApiVoy product mark in the repository-owned brand assets.
+- Do not use emoji or font glyphs such as `•••`, `↑`, `×`, or `✓` as interactive
+  control icons. Protocol payload or traffic-direction symbols may remain text
+  when they are data rather than controls.
+- Icon-only controls require an accessible name; decorative icons must be hidden
+  from assistive technology.
+- Follow the sizing, stroke, naming, exception, and migration rules in
+  [docs/UI_UX_DESIGN_SYSTEM.md](docs/UI_UX_DESIGN_SYSTEM.md#6-图标系统).
+
 See [docs/maintainers/CODEX_WORKFLOWS.md](docs/maintainers/CODEX_WORKFLOWS.md) for planned Codex maintainer workflows.
 See [docs/maintainers/PR_REVIEW_CHECKLIST.md](docs/maintainers/PR_REVIEW_CHECKLIST.md) for front-loaded review checks.

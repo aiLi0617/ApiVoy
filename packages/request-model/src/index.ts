@@ -182,6 +182,27 @@ export type ExecutionEvent =
   | { type: "failed"; code: string; message: string }
   | { type: "cancelled"; reason?: string | null };
 
+/**
+ * Keeps the final response preview without confusing an empty response body
+ * with an absent preview. This applies to every protocol using ExecutionEvent.
+ */
+export function reduceCompletedResponsePreview(
+  current: string | null,
+  event: ExecutionEvent,
+): string | null {
+  if (event.type === "response_chunk" && event.done && event.preview != null) {
+    return event.preview;
+  }
+  return current;
+}
+
+/** Selects a protocol response preview while preserving a valid empty body. */
+export function selectResponsePreview(
+  ...candidates: Array<string | null | undefined>
+): string | null {
+  return candidates.find((candidate): candidate is string => candidate != null) ?? null;
+}
+
 export interface CreateHttpRequestOptions {
   name?: string;
   url: string;

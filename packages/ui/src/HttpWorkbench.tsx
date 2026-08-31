@@ -14,6 +14,7 @@ import type {
 } from "@apivoy/request-model";
 import { Icon } from "./Icons";
 import { CodeEditor } from "./CodeEditor";
+import { CodeGenerator } from "./CodeGenerator";
 import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
 import { VirtualList } from "./VirtualList";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
@@ -24,8 +25,8 @@ import ts from "typescript";
 import { listEnvironmentResources } from "./agentResources";
 import { useI18n } from "./i18n";
 import { alignRequestToInterface, captureHttpInterfaceStructure, diffHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY, readInterfaceStructureMetadata } from "./interfaceStructureV2";
-import { HttpRequestResponseView } from "./HttpRequestResponseView";
 import { DEFAULT_RESPONSE_VALIDATION_SETTINGS, readResponseValidationSettings, RESPONSE_VALIDATION_SETTINGS_EVENT, type ProjectResponseValidationSettings } from "./responseValidationSettings";
+import { validateDesignedResponse, type DesignedResponse } from "./designedResponseValidator";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 type BearerTokenSource = "direct" | "secret_ref";
@@ -406,6 +407,16 @@ function requestBodySize(request: HttpWorkbenchRequest | null): number {
   return new TextEncoder().encode(request?.body ?? "").length;
 }
 
+export function HttpLiveRequestView({ request }: { request: HttpWorkbenchRequest }) {
+  const contentType = request.headers.find(([header]) => header.toLowerCase() === "content-type")?.[1] ?? formatBytes(requestBodySize(request));
+  return <div className="http-live-request">
+    <section className="http-live-url-section"><h4>请求 URL:</h4><div className="http-request-summary" data-method={request.method.toUpperCase()}><strong>{request.method}</strong><code title={request.url}>{request.url}</code></div></section>
+    <section className="http-live-data-section"><h4>Header:</h4><div className="http-request-data" role="table" aria-label="实时请求 Header">{request.headers.length ? <><div className="http-request-data-heading" role="row"><strong role="columnheader">名称</strong><span role="columnheader">值</span></div>{request.headers.map(([name, value], index) => <div role="row" key={`${name}-${index}`}><strong role="cell">{name}</strong><span role="cell">{value}</span></div>)}</> : <p>（空）</p>}</div></section>
+    <section className="http-live-data-section"><h4>Body <span>{contentType}</span></h4><pre className={`http-request-body${request.body ? "" : " is-empty"}`}>{request.body || "（空）"}</pre></section>
+    <section className="http-live-code-section"><CodeGenerator request={request}/></section>
+  </div>;
+}
+
 function responseHeaderSize(meta: ResponseMeta | null | undefined): number {
   return meta?.headers.reduce((size, [name, value]) => size + new TextEncoder().encode(`${name}: ${value}\r\n`).length, 0) ?? 0;
 }
@@ -466,7 +477,7 @@ export interface HttpWorkbenchProps {
   onSend: (request: HttpWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>;
   onTitleChange?: (title: string) => void;
   onCancel?: (executionId: string) => Promise<void>;
-  onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
+  onSave?: (request: HttpWorkbenchRequest, result?: HttpRunResult | null) => Promise<void>;
   onSaveToCollection?: (request: HttpWorkbenchRequest, collectionId: string) => Promise<string | void>;
   onCreateCollection?: (parentId: string | null, name: string, moduleId?: string) => Promise<{ id: string; name: string; parentId?: string | null }>;
   saveCollections?: Array<{ id: string; name: string; parentId?: string | null; moduleId?: string }>;
@@ -481,6 +492,11 @@ export interface HttpWorkbenchProps {
   onListHistory?: (filter?: HistoryFilter) => Promise<HistoryItem[]>;
   onReplayHistory?: (id: string) => Promise<HttpWorkbenchRequest | RequestEnvelope | null>;
   externalRequest?: HttpWorkbenchRequest | null;
+  initialResult?: HttpRunResult | null;
+  historyStartedAt?: string;
+  historyInterfaceName?: string;
+  onOpenHistoryInterface?: () => void;
+  saveActionLabel?: string;
   environments?: Array<{ id: string; name: string }>;
   defaultEnvironmentId?: string;
   toolbarTargetId?: string;
@@ -620,32 +636,7 @@ export function generatedAssertions(preview: string, status: number | null | und
   return { rules, warning: truncated ? "JSON 节点超过预算，已停止继续展开" : undefined };
 }
 
-type DesignedResponseField = { id: string; name: string; type: string; required: boolean; parentId?: string; scope: string; status?: string };
-type DesignedResponse = { status: string; fields: DesignedResponseField[] };
-export function validateDesignedResponse(definition: DesignedResponse, result: HttpRunResult, settings: ProjectResponseValidationSettings): AssertionResultEvent[] {
-  if (!settings.enabled) return [];
-  const out: AssertionResultEvent[] = [];
-  const push = (name: string, passed: boolean, expected?: string, actual?: string, message?: string) => out.push({ ruleId: `design:${definition.status}:${name}`, name, passed, expected, actual, message });
-  if (settings.status) push("接口设计 · HTTP 状态码", String(result.summary.status ?? "") === definition.status, definition.status, String(result.summary.status ?? "—"), String(result.summary.status ?? "") === definition.status ? undefined : "实际状态码与所选返回响应不一致");
-  const headerFields = definition.fields.filter((field) => field.scope === "response.headers" && field.name);
-  if (settings.headers) for (const field of headerFields) { const actual = result.responseMeta?.headers.find(([name]) => name.toLowerCase() === field.name.toLowerCase())?.[1]; push(`接口设计 · Header ${field.name}`, !field.required || actual != null, field.required ? "存在" : "可选", actual ?? "不存在", actual == null && field.required ? "缺少必需 Header" : undefined); }
-  const bodyFields = definition.fields.filter((field) => field.scope === "response.body" && field.name);
-  if ((settings.bodyFormat || settings.bodySchema) && bodyFields.length) {
-    let body: unknown; try { body = JSON.parse(result.preview ?? ""); } catch { push("接口设计 · Body 格式", false, "JSON", result.responseMeta?.contentType ?? "未知", "响应 Body 不是有效 JSON"); return out; }
-    if (settings.bodyFormat) push("接口设计 · Body 格式", true, "JSON", "JSON");
-    if (settings.bodySchema) {
-      const typeOf = (value: unknown) => Array.isArray(value) ? "array" : value === null ? "null" : Number.isInteger(value) ? "integer" : typeof value;
-      const visit = (parent: unknown, parentId: string | undefined, path: string) => {
-        const children = bodyFields.filter((field) => field.parentId === parentId);
-        if (!parent || typeof parent !== "object") { if (children.length) push(`接口设计 · ${path}`, false, "object", typeOf(parent), "父级数据类型不匹配"); return; }
-        for (const field of children) { const container = parent as Record<string, unknown>; const value = container[field.name]; const fieldPath = `${path}.${field.name}`; if (value === undefined) { push(`接口设计 · ${fieldPath}`, !field.required, field.required ? "必需" : "可选", "不存在", field.required ? "缺少必需属性" : undefined); continue; } const passed = field.type === "number" ? typeof value === "number" : field.type === "object" ? Boolean(value && typeof value === "object" && !Array.isArray(value)) : typeOf(value) === field.type; push(`接口设计 · ${fieldPath}`, passed, field.type, typeOf(value), passed ? undefined : "值类型与接口设计不一致"); if (passed && field.type === "object") visit(value, field.id, fieldPath); if (passed && field.type === "array" && Array.isArray(value) && value.length) visit(value[0], field.id, `${fieldPath}[0]`); }
-        if (!settings.allowAdditionalProperties) { const allowed = new Set(children.map((field) => field.name)); for (const name of Object.keys(parent as object)) if (!allowed.has(name)) push(`接口设计 · ${path}.${name}`, false, "未定义字段", "存在", "不允许额外属性"); }
-      };
-      visit(body, undefined, "$");
-    }
-  }
-  return out;
-}
+export { validateDesignedResponse } from "./designedResponseValidator";
 
 function buildAuth(
   kind: AuthKind,
@@ -697,6 +688,11 @@ export function HttpWorkbench({
   onListHistory,
   onReplayHistory,
   externalRequest,
+  initialResult,
+  historyStartedAt,
+  historyInterfaceName,
+  onOpenHistoryInterface,
+  saveActionLabel,
   environments = DEFAULT_ENVIRONMENTS,
   defaultEnvironmentId = "default-env",
   toolbarTargetId,
@@ -1165,6 +1161,7 @@ export function HttpWorkbench({
   useEffect(() => {
     if (externalRequest) {
       applyRequest(externalRequest);
+      setResult(initialResult ?? null);
       setStatusMsg("已打开集合中的请求");
     } else {
       const draft = readWorkbenchDraft<HttpWorkbenchRequest>("http");
@@ -1173,7 +1170,7 @@ export function HttpWorkbench({
         setStatusMsg("已恢复上次未完成的 HTTP 草稿");
       }
     }
-  }, [externalRequest]);
+  }, [externalRequest, initialResult]);
 
   useEffect(() => {
     const markRequestDeleted = (event: Event) => {
@@ -1300,7 +1297,9 @@ export function HttpWorkbench({
       }
       const request = buildRequest();
       setLastRequest(request);
-      const executionRequest = assertionsEnabled ? request : { ...request, assertions: [] };
+      const validationContext = request.metadata?.__apivoyCaseType === "test" ? "singleCase" : "interfaceRun";
+      const validationEnabled = assertionsEnabled && responseValidationSettings[validationContext];
+      const executionRequest = validationEnabled ? request : { ...request, assertions: [] };
       const next = await onSend(executionRequest, {
         onStarted: (id) => setExecutionId(id),
         onChunk: (preview) => setLivePreview((current) => current + preview),
@@ -1317,9 +1316,10 @@ export function HttpWorkbench({
         },
       });
       const designedResponses = Array.isArray(request.metadata?.__apivoyResponseDefinitions) ? request.metadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
-      const designedResponse = openedCaseParentId ? undefined : designedResponses.find((item) => item.status === selectedDesignedResponse);
-      const designAssertions = assertionsEnabled && designedResponse ? validateDesignedResponse(designedResponse, next, responseValidationSettings) : [];
-      setResult(designAssertions.length ? { ...next, assertions: [...designAssertions, ...(next.assertions ?? [])] } : next);
+      const designedResponse = designedResponses.find((item) => item.status === selectedDesignedResponse) ?? designedResponses[0];
+      const designAssertions = validationEnabled && designedResponse ? validateDesignedResponse(designedResponse, next, responseValidationSettings) : [];
+      const combinedAssertions = designAssertions.length ? [...designAssertions, ...(next.assertions ?? [])] : next.assertions;
+      setResult(combinedAssertions ? { ...next, assertions: combinedAssertions } : next);
       setRequestWallMs(Math.round(performance.now() - wallStartedAt));
       if (onListHistory) {
         setHistory(await onListHistory(currentHistoryFilter()));
@@ -1376,7 +1376,7 @@ export function HttpWorkbench({
         request.metadata = { ...(request.metadata ?? {}), __apivoySavedResponse: responseSnapshot, ...(lastRequest ? { __apivoySavedActualRequest: snapshotActualRequest(lastRequest) } : {}) };
         setRequestMetadata(request.metadata);
       }
-      await onSave(sanitizeHttpRequestForPersistence(request));
+      await onSave(sanitizeHttpRequestForPersistence(request), result);
       if (!name.trim()) setName(request.name ?? "");
       setStatusMsg("请求已保存到本地库");
       if (saveDefinition) window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId: request.id } }));
@@ -1611,10 +1611,15 @@ export function HttpWorkbench({
   const generated = useMemo(() => result ? generatedAssertions(responsePreview, result.summary.status, result.responseMeta?.headers ?? []) : { rules: [] as Assertion[] }, [result, responsePreview]);
   const assertionPassed = result?.assertions?.filter((item) => item.passed).length ?? 0;
   const assertionFailed = result?.assertions?.filter((item) => !item.passed).length ?? 0;
+  const responseStatus = result?.summary.status ?? 0;
+  const responseStatusTone = responseStatus >= 100 && responseStatus < 600 ? ` status-${Math.floor(responseStatus / 100)}xx` : "";
+  const validationContext = requestMetadata.__apivoyCaseType === "test" ? "singleCase" : "interfaceRun";
+  const validationFeatureEnabled = responseValidationSettings[validationContext];
+  const responseValidationActive = validationFeatureEnabled && assertionsEnabled;
   const designedResponses = Array.isArray(requestMetadata.__apivoyResponseDefinitions) ? requestMetadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
   const displayedResponses = designedResponses.length ? designedResponses : [{ status: selectedDesignedResponse || "200", fields: [] }];
   const responseMetrics = result && !result.error ? <>
-    <strong className="http-status-code">{result.summary.status ?? "—"}</strong>
+    <strong className={`http-status-code${responseStatusTone}`}>{result.summary.status ?? "—"}</strong>
     <span className="http-metric-popover" tabIndex={0}>{result.summary.durationMs} ms<span className="http-metric-card http-timing-card" role="tooltip"><b>事件 <i>时间</i></b><span className="http-timing-progress-row"><em>前置操作执行</em><span className="http-timing-progress" aria-label="前置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row"><em>接口请求</em><span className="http-timing-progress" aria-label={`接口请求占总耗时 ${Math.round(result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%`}><i style={{ width: `${Math.min(100, result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%` }}/></span><i>{result.summary.durationMs} ms</i></span><span className="http-timing-progress-row"><em>后置操作执行</em><span className="http-timing-progress" aria-label="后置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row http-timing-total"><em>总耗时</em><span className="http-timing-progress" aria-label="总耗时 100%"><i style={{ width: "100%" }}/></span><i>{requestWallMs || result.summary.durationMs} ms</i></span></span></span>
     <span className="http-metric-popover" tabIndex={0}>{formatBytes(responseTotalBytes)}<span className="http-metric-card http-size-card" role="tooltip"><b>↓ 响应大小 <i>{formatBytes(responseTotalBytes)}</i></b><span>Header <i>{formatBytes(responseHeaderBytes)}</i></span><span>Body <i>{formatBytes(responseBodyBytes)}</i></span><hr/><b>↑ 请求大小 <i>{formatBytes(requestSize(lastRequest))}</i></b><span>Header <i>{formatBytes(requestHeaderBytes)}</i></span><span>Body <i>{formatBytes(requestBodyBytes)}</i></span></span></span>
   </> : null;
@@ -1625,11 +1630,13 @@ export function HttpWorkbench({
     ?? displayedSaveModules.find((module) => module.isDefault)
     ?? displayedSaveModules[0];
   const selectedSaveCollection = saveCollections.find((collection) => collection.id === saveCollectionId);
-  const responseHeaderActions = <div className="http-response-header-actions">
+  const responseValidationActions = validationFeatureEnabled ? <div className="http-response-validation-actions">
     {!loading ? <label className="http-response-validation-control" title="启用或停用响应校验"><span>校验响应</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
-    {!loading && !openedCaseParentId ? <select className={`http-response-status-select${assertionFailed ? " is-fail" : result?.assertions?.length ? " is-pass" : ""}`} aria-label="选择接口设计返回响应" value={selectedDesignedResponse || "200"} onChange={(event) => setSelectedDesignedResponse(event.target.value)}>
+    {!loading && assertionsEnabled && !openedCaseParentId ? <select className={`http-response-status-select${assertionFailed ? " is-fail" : result?.assertions?.length ? " is-pass" : ""}`} aria-label="选择接口设计返回响应" value={selectedDesignedResponse || "200"} onChange={(event) => setSelectedDesignedResponse(event.target.value)}>
       {displayedResponses.map((item) => { const status = item.status; const label = `${Number(status) >= 200 && Number(status) < 300 ? "成功" : "响应"} (${status})`; return <option key={status} value={status}>{label}</option>; })}
     </select> : null}
+  </div> : null;
+  const responseHeaderActions = <div className="http-response-header-actions">
     {false ? <div>
       {assertionConfigOpen ? <div className="http-assertion-editor" role="dialog" aria-label="响应校验配置">
         <div className="http-assertion-editor-title"><strong>响应校验</strong>{result ? <button type="button" onClick={() => { setAssertionGenerateOpen((open) => !open); setGeneratedRuleSelection(new Set()); }}>从当前响应生成</button> : null}</div>
@@ -1647,6 +1654,17 @@ export function HttpWorkbench({
       </div> : null}
     </div> : null}
     {result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null}
+    {responseValidationActions}
+  </div>;
+  const responseMetricsActions = result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null;
+  const responseValidationPanel = <div className="http-response-validation-panel">
+    {result?.assertions?.length ? <div className="http-assertion-results">
+      <div className="http-validation-summary"><strong>校验结果</strong><div><span>共 {result.assertions.length}</span><span className="is-pass">通过 {assertionPassed}</span><span className={assertionFailed ? "is-fail" : ""}>失败 {assertionFailed}</span></div></div>
+      {result.assertions.map((assertion, index) => { const rule = assertionRules.find((item) => item.id === assertion.ruleId); return <details key={assertion.ruleId || `${assertion.name}-${index}`} open={!assertion.passed} className={assertion.passed ? "is-pass" : "is-fail"}>
+        <summary><span className="http-validation-state" aria-hidden="true">{assertion.passed ? "✓" : "×"}</span><span className="http-validation-name">{assertion.name}</span><span className="http-validation-status">{assertion.passed ? "通过" : "失败"}</span></summary>
+        <div className="http-validation-details"><div><span>预期值</span><code>{assertion.expected ?? "—"}</code></div><div><span>实际值</span><code>{assertion.actual ?? "—"}</code></div>{assertion.message ? <div className="http-validation-reason"><span>失败原因</span><p>{assertion.message}</p></div> : null}{!assertion.passed && rule?.target === "json_path" ? <button type="button" onClick={() => { setResponseTab("body"); setResponseSearchOpen(true); setResponseSearch(assertion.actual || rule.selector || ""); }}>在响应 Body 中定位</button> : null}</div>
+      </details>; })}
+    </div> : <div className="http-validation-empty"><strong>校验响应</strong><span>{assertionsEnabled ? "发送请求后将在这里显示校验结果" : "响应校验已关闭"}</span></div>}
   </div>;
   const environmentControl = <div className="http-environment-select"><select aria-label="请求环境" value={environmentRef} onChange={(event)=>setEnvironmentRef(event.target.value)} disabled={loading}>{environmentOptions.map((environment)=><option key={environment.id} value={environment.id}>{environment.name}{environment.id===defaultEnvironmentId?" · 默认":""}</option>)}</select><button type="button" className="http-environment-manage" aria-label="编辑环境变量" title="编辑环境变量" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-environment"))}><Icon name="menu"/></button></div>;
 
@@ -1665,7 +1683,7 @@ export function HttpWorkbench({
           <Icon name={loading ? "close" : "send"}/>{loading ? t("action.cancel") : t("action.send")}
         </button>
       {onSave && <div className="http-save-split" ref={saveMenuRef}>
-        <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading} onClick={() => void handleSave()}><Icon name="archive"/>{t("action.save")}</button>
+        <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading} onClick={() => void handleSave()}><Icon name="archive"/>{saveActionLabel ?? t("action.save")}</button>
         {openedCaseParentId ? <label className="http-save-response-sync" title="勾选后，点击保存时同步当前响应">
           <input type="checkbox" aria-label="同步保存响应" checked={syncCaseResponse} disabled={loading} onChange={(event) => setSyncCaseResponse(event.target.checked)}/>
         </label> : onSaveAsCase ? <>
@@ -1703,7 +1721,8 @@ export function HttpWorkbench({
     </div>, document.body) : null}{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}{commandbarTarget ? createPortal(requestCommandbar, commandbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={embeddedPreview ? undefined : statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
       <div className={`http-workbench-layout${commandbarTarget || embeddedPreview ? " has-external-commandbar" : ""}${embeddedPreview ? " is-embedded-preview" : ""}`}>
       {commandbarTarget || embeddedPreview ? null : requestCommandbar}
-      <div className="http-workbench-split">
+      {historyStartedAt ? <div className="http-history-sent-at">{historyInterfaceName && onOpenHistoryInterface ? <button type="button" className="http-history-interface-link" aria-label={"\u6253\u5f00\u63a5\u53e3 " + historyInterfaceName} onClick={onOpenHistoryInterface}><Icon name="folder"/><span>{historyInterfaceName}</span></button> : null}<span className="http-history-time"><Icon name="activity"/><span>{"\u5386\u53f2\u53d1\u9001\u65f6\u95f4"}</span><time dateTime={historyStartedAt}>{new Date(historyStartedAt).toLocaleString("zh-CN", { hour12: false })}</time></span></div> : null}
+      <div className={`http-workbench-split${responseValidationActive && result ? " has-response-validation" : ""}`}>
       <SplitPane id={embeddedPreview ? "http-test-case-preview" : "http-workbench"} direction="vertical" fixedDirection={fixedSplitDirection ?? (embeddedPreview ? "horizontal" : undefined)} minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
       {(() => {
         const paramDifferenceCount = caseStructureState?.differences.filter((item) => item.field.location === "query").length ?? 0;
@@ -1939,7 +1958,7 @@ export function HttpWorkbench({
         </div>
       )}
 
-      </div>} secondary={<div className="http-response-pane">
+      </div>} secondary={<div className={`http-response-validation-layout${responseValidationActive && result ? "" : " is-disabled"}`}><SplitPane id="http-response-validation" fixedDirection="horizontal" showCollapseControl={false} secondaryCollapsedMeta={assertionFailed ? <span className="is-fail">× 失败</span> : result?.assertions?.length ? <span className="is-pass">✓ 通过</span> : null} minPrimary={280} minSecondary={220} primaryLabel="返回响应" secondaryLabel="校验响应" primaryActions={responseValidationActive && result ? responseMetricsActions : undefined} secondaryActions={responseValidationActive && result ? responseValidationActions : undefined} primary={<div className="http-response-pane">
       {!result && !loading ? <div className="response-empty"><span className="response-empty-icon">↗</span><strong>{t("response.waitingTitle")}</strong><p>{t("response.waitingBody")}</p></div> : null}
 
       {loading && livePreview && <div className="http-response-content"><div style={styles.responseHeader}><strong>响应流正在接收…</strong><span>{new TextEncoder().encode(livePreview).length} bytes</span></div><pre className="http-response-body">{prettyPreview(livePreview).slice(0, 10000)}</pre></div>}
@@ -1990,15 +2009,7 @@ export function HttpWorkbench({
                   </div>
               </div>}
               <div className={`http-response-scroll is-${responseTab}`}>
-              {responseTab === "console" && <div className="http-response-console">{result.assertions && result.assertions.length > 0 && (
-                <div className="http-assertion-results">
-                  <strong>校验 {result.assertions.length} · 通过 {assertionPassed} · 失败 {assertionFailed}</strong>
-                  {result.assertions.map((a, i) => { const rule = assertionRules.find((item) => item.id === a.ruleId); return <details key={a.ruleId || `${a.name}-${i}`} open={!a.passed} className={a.passed ? "is-pass" : "is-fail"}>
-                    <summary>{a.passed ? "✓ 通过" : "✗ 失败"} · {a.name}</summary>
-                    <div><span>预期：<code>{a.expected ?? "—"}</code></span><span>实际：<code>{a.actual ?? "—"}</code></span>{a.message ? <span>原因：{a.message}</span> : null}{!a.passed && rule?.target === "json_path" ? <button type="button" onClick={() => { setResponseTab("body"); setResponseSearchOpen(true); setResponseSearch(a.actual || rule.selector || ""); }}>在响应 Body 中定位</button> : null}</div>
-                  </details>; })}
-                </div>
-              )}<VirtualList items={scriptConsoleEvents} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="脚本控制台" className="http-timeline" renderItem={({ at, event }) => <div style={styles.timelineRow} className={`http-timeline-event event-${event.type}`}><time>+{timeline.length ? (at - timeline[0].at).toFixed(1) : "0.0"}ms</time><b>{event.type === "log" ? "script_log" : event.type}</b><span>{event.type === "log" ? event.message : event.type === "variables_extracted" ? Object.entries(event.variables).map(([key, value]) => `${key}=${value}`).join(", ") : event.type === "failed" ? event.message : ""}</span></div>} empty={<div className="http-console-empty"><Icon name="code"/><strong>没有脚本输出</strong><span>前置或后置脚本中的 console.log、变量提取和脚本错误会显示在这里。</span></div>} /></div>}
+              {responseTab === "console" && <div className="http-response-console"><VirtualList items={scriptConsoleEvents} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="脚本控制台" className="http-timeline" renderItem={({ at, event }) => <div style={styles.timelineRow} className={`http-timeline-event event-${event.type}`}><time>+{timeline.length ? (at - timeline[0].at).toFixed(1) : "0.0"}ms</time><b>{event.type === "log" ? "script_log" : event.type}</b><span>{event.type === "log" ? event.message : event.type === "variables_extracted" ? Object.entries(event.variables).map(([key, value]) => `${key}=${value}`).join(", ") : event.type === "failed" ? event.message : ""}</span></div>} empty={<div className="http-console-empty"><Icon name="code"/><strong>没有脚本输出</strong><span>前置或后置脚本中的 console.log、变量提取和脚本错误会显示在这里。</span></div>} /></div>}
               {responseTab === "headers" && !result.responseMeta?.headers.length && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "headers" && Boolean(result.responseMeta?.headers.length) && <div style={styles.headerTable}>
                 <div style={styles.headerSummary}><span>{result.responseMeta?.contentType ?? "未知 Content-Type"}</span><span>预估 {result.responseMeta?.sizeHint ?? result.summary.bytesReceived} bytes</span></div>
@@ -2006,7 +2017,7 @@ export function HttpWorkbench({
               </div>}
               {responseTab === "cookies" && responseCookies.length === 0 && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "cookies" && responseCookies.length > 0 && <div style={styles.headerTable}>{responseCookies.map((cookie, index) => <div key={index} style={styles.headerRow}><strong>{cookie.split("=", 1)[0]}</strong><span>{cookie}</span></div>)}</div>}
-              {responseTab === "request" && (lastRequest ? <HttpRequestResponseView request={lastRequest} result={{ passed: !result.error, error: result.error, status: result.summary.status, durationMs: result.summary.durationMs, body: result.preview, headers: result.responseMeta?.headers ?? [] }}/> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
+              {responseTab === "request" && (lastRequest ? <HttpLiveRequestView request={lastRequest}/> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
               {responseTab === "body" && !responseHasBody && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "body" && responseHasBody && responseView === "table" && responseTable && <div style={styles.jsonTableWrap}><table style={styles.jsonTable}><thead><tr>{responseTable.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{responseTable.rows.slice(0, 1000).map((row, index) => <tr key={index}>{responseTable.columns.map((column) => <td key={column}>{typeof row[column] === "object" ? JSON.stringify(row[column]) : String(row[column] ?? "")}</td>)}</tr>)}</tbody></table>{responseTable.rows.length > 1000 && <div style={styles.muted}>仅显示前 1000 行，共 {responseTable.rows.length} 行。</div>}</div>}
               {responseTab === "body" && responseHasBody && responseView === "preview" && responsePreviewKind === "html" && <iframe className="http-response-html-preview" title="HTML 响应预览" sandbox="allow-forms allow-modals allow-popups" srcDoc={decodedResponse}/>}
@@ -2020,7 +2031,7 @@ export function HttpWorkbench({
           )}
         </div>
       )}
-      </div>}/>
+      </div>} secondary={responseValidationPanel}/></div>}/>
       </div>
       </div>
     </WorkbenchFrame></>

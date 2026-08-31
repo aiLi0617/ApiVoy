@@ -56,7 +56,6 @@ export interface WorkspaceExplorerProps {
   onSwapCollections: (first: CollectionRecord, second: CollectionRecord) => Promise<void>;
   onMoveRequest: (id: string, projectId: string, collectionId: string) => Promise<void>;
   onImportRequests: (projectId: string, collectionId: string, requests: PortableRequest[]) => Promise<void>;
-  onRunCollection?: (projectId: string, collectionId: string) => void;
   onExportProject: (project: ProjectRecord) => Promise<PortableRequest[]>;
 }
 
@@ -362,12 +361,12 @@ export function WorkspaceExplorer(props: WorkspaceExplorerProps) {
   }
   return <section style={styles.root} role="tree" aria-label="工作区资源树" aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home End" tabIndex={0} onKeyDown={onTreeKeyDown}>
     <div style={styles.heading}>
-      <span style={styles.headingLabel}>资源管理 <small className="workspace-resource-count" title="当前项目请求总数">{selectedProjectRequestCount}</small></span>
+      <span style={styles.headingLabel}>接口管理 <small className="workspace-resource-count" title="当前项目请求总数">{selectedProjectRequestCount}</small></span>
       <input ref={importInput} hidden multiple type="file" accept=".json,.yaml,.yml,.har,.apivoy" onChange={(event) => void importFiles(event.target.files)} />
     </div>
     <div ref={createMenuRef} className="workspace-quick-actions">
       <div className="workspace-search-row">
-        <span className="workspace-search-field"><Icon name="search"/><input aria-label="搜索资源" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求、集合或 URL" /></span>
+        <span className="workspace-search-field"><Icon name="search"/><input aria-label="搜索接口" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索接口、集合或 URL" /></span>
         <button type="button" className={`workspace-batch-trigger${batchMode ? " is-active" : ""}`} aria-pressed={batchMode} title={batchMode ? "退出多选" : "进入多选"} onClick={() => { setBatchMode((value) => !value); setSelectedIds([]); setBatchTarget(""); }}>多选</button>
         <button ref={createMenuButtonRef} className="workspace-create-trigger" type="button" aria-label="新建资源" title="新建资源" aria-haspopup="menu" aria-expanded={createMenuOpen} onClick={() => setCreateMenuOpen((value) => !value)}><Icon name="plus" /></button>
       </div>

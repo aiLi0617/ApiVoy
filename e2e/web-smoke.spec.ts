@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const workbenchIds = ["http", "grpc", "websocket", "sse", "tcp", "udp", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "runner", "gateway", "capture", "plugins", "ai"];
+const workbenchIds = ["http", "grpc", "websocket", "sse", "tcp", "udp", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "gateway", "capture", "plugins", "ai"];
 
 async function expectActiveWorkbench(page: Page, id: string) {
   await expect(page.getByTestId(`workbench-${id}`).first()).toHaveAttribute("aria-current", "page");
@@ -186,7 +186,7 @@ test("switches theme and keeps visible keyboard focus", async ({ page }) => {
 
 test("keeps project settings separate from application settings", async ({ page }) => {
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-project-settings")));
-  const projectSettings = page.getByRole("dialog", { name: "项目设置" });
+  const projectSettings = page.locator(".project-settings-view");
   await expect(projectSettings).toContainText("通用设置");
   await expect(projectSettings).toContainText("项目资源");
   await projectSettings.getByRole("button", { name: "响应校验设置" }).click();
@@ -199,7 +199,6 @@ test("keeps project settings separate from application settings", async ({ page 
   });
   expect(footerBox.height).toBeLessThan(80);
   expect(footerBox.width).toBeGreaterThan(footerBox.height * 4);
-  await projectSettings.getByRole("button", { name: "取消" }).click();
 
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-settings")));
   const applicationSettings = page.locator(".settings-dialog").filter({ hasText: /软件级|Application-wide/ });

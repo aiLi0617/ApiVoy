@@ -6,6 +6,8 @@ import {
   type ExecutionSummary,
   type RequestEnvelope,
   type ResponseMeta,
+  reduceCompletedResponsePreview,
+  selectResponsePreview,
 } from "@apivoy/request-model";
 import type { AssertionResultEvent } from "@apivoy/request-model";
 import type {
@@ -271,6 +273,8 @@ export async function listHistoryViaAgent(filter?: HistoryFilter): Promise<Histo
   return rows.map((r) => ({
     id: r.id,
     protocolId: r.protocolId,
+    method: r.requestSnapshot?.payload.type === "http" ? r.requestSnapshot.payload.method : undefined,
+    name: r.requestSnapshot?.name,
     state: r.state,
     status: r.status,
     durationMs: r.durationMs,
@@ -524,9 +528,9 @@ export async function executeEnvelopeViaAgent(
   for await (const event of readSseEvents(eventsRes)) {
     eventCount += 1;
     hooks?.onEvent?.(event);
-    if (event.type === "response_chunk" && event.preview) {
-      hooks?.onChunk?.(event.preview);
-      if (event.done) preview = event.preview;
+    if (event.type === "response_chunk") {
+      if (event.preview) hooks?.onChunk?.(event.preview);
+      preview = reduceCompletedResponsePreview(preview, event);
     }
     if (event.type === "response_meta") responseMeta = event;
     if (event.type === "assertion_result") {
@@ -574,7 +578,7 @@ export async function executeEnvelopeViaAgent(
   return {
     summary,
     eventCount,
-    preview: preview ?? JSON.stringify(summary, null, 2),
+    preview: selectResponsePreview(preview),
     error,
     executionId: started.executionId,
     assertions,

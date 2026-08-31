@@ -11,6 +11,8 @@ import type { HttpWorkbenchProps, HttpWorkbenchRequest } from "./HttpWorkbench";
 import { InterfaceLifecycleShell, type InterfaceCaseRunOutcome, type InterfaceCaseSummary, type InterfaceDefinitionClient } from "./InterfaceLifecycle";
 import { captureHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY } from "./interfaceStructureV2";
 import { consumeCaseInterfaceStructure } from "./caseStructureBridge";
+import { validateDesignedResponse, type DesignedResponse } from "./designedResponseValidator";
+import { readResponseValidationSettings } from "./responseValidationSettings";
 
 export interface WorkbenchDefinition { id: string; label: string; protocol?: string; protocols?: string[]; group?: string; icon?: IconName }
 export type WorkbenchTab = WorkbenchDefinition;
@@ -49,7 +51,7 @@ export const DEFAULT_WORKBENCH_GROUPS: WorkbenchGroup[] = [
   { id:"realtime", label:"实时通信", icon:"activity", workbenchIds:["websocket","sse","tcp","udp"] },
   { id:"messaging", label:"消息", icon:"network", workbenchIds:["mqtt","amqp","kafka"] },
   { id:"data", label:"数据", icon:"database", workbenchIds:["redis","sql"] },
-  { id:"tools", label:"工具", icon:"bolt", workbenchIds:["mock","runner","gateway","capture","plugins","ai"] },
+  { id:"tools", label:"工具", icon:"bolt", workbenchIds:["mock","gateway","capture","plugins","ai"] },
 ];
 const GROUP_BY_WORKBENCH = new Map(DEFAULT_WORKBENCH_GROUPS.flatMap((group) => group.workbenchIds.map((id) => [id, group.label])));
 const LAYOUT_BY_WORKBENCH: Record<string, "request" | "stream" | "editor" | "management"> = { graphql:"request", grpc:"request", rpc:"request", websocket:"stream", sse:"stream", tcp:"stream", udp:"stream", mqtt:"stream", amqp:"stream", kafka:"stream", redis:"editor", sql:"editor", mock:"management", runner:"management", gateway:"management", capture:"management", plugins:"management", ai:"management" };
@@ -371,7 +373,6 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     { id: "curl", title: "导入 cURL", description: "粘贴 cURL 命令并生成 HTTP 请求", icon: "download" as IconName },
     { id: "grpc", title: "新建 gRPC 请求", description: "通过 Reflection 或 Descriptor 调试服务", icon: "network" as IconName },
     { id: "mock", title: "新建 Mock", description: "快速配置本地模拟响应", icon: "archive" as IconName },
-    { id: "runner", title: "运行当前集合", description: "批量执行集合中的请求", icon: "send" as IconName },
   ].filter((action) => action.id === "curl" || tabMap.has(action.id));
   function runHomeAction(id: string) {
     setHomeMoreOpen(false);
@@ -481,7 +482,20 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
       const duplicateCase = onLoadHttpInterface && onCreateHttpInterface ? async (caseId: string) => { const source = await onLoadHttpInterface(caseId); const summary = interfaceCases.find((item) => item.id === caseId); if (!source || !summary) return; const [fallbackProject = selectedProjectId ?? "", fallbackCollection = ""] = (saveTargetLabel ?? "").split(" / "); await onCreateHttpInterface({ ...source, id: crypto.randomUUID(), name: `${source.name ?? "测试用例"} 副本` }, summary.projectId ?? fallbackProject, summary.collectionId ?? fallbackCollection); } : undefined;
       const copyCurl = onLoadHttpInterface ? async (caseId: string) => { const source = await onLoadHttpInterface(caseId); if (!source) return ""; const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`; return [`curl --location --request ${source.method} ${quote(source.url)}`, ...source.headers.map(([key,value]) => `  --header ${quote(`${key}: ${value}`)}`), ...(source.body ? [`  --data-raw ${quote(source.body)}`] : [])].join(" \\\n"); } : undefined;
       const sendCase = isValidElement(source) ? (source as ReactElement<{ onSend?: HttpWorkbenchProps["onSend"] }>).props.onSend : undefined;
-      const runCases = onLoadHttpInterface && sendCase ? async (caseIds: string[]): Promise<Record<string, InterfaceCaseRunOutcome>> => Object.fromEntries(await Promise.all(caseIds.map(async (id) => { const request = await onLoadHttpInterface(id); if (!request) return [id, { passed: false, error: "用例不存在" }] as const; const result = await sendCase(request); return [id, { passed: !result.error, error: result.error, status: result.summary.status ?? null, durationMs: result.summary.durationMs, body: result.preview, headers: result.responseMeta?.headers ?? [] }] as const; }))) : undefined;
+      const runCases = onLoadHttpInterface && sendCase ? async (caseIds: string[]): Promise<Record<string, InterfaceCaseRunOutcome>> => {
+        const settings = readResponseValidationSettings(selectedProjectId);
+        const validationEnabled = settings.testScenario;
+        return Object.fromEntries(await Promise.all(caseIds.map(async (id) => {
+          const request = await onLoadHttpInterface(id);
+          if (!request) return [id, { passed: false, error: "用例不存在" }] as const;
+          const result = await sendCase(validationEnabled ? request : { ...request, assertions: [] });
+          const definitions = Array.isArray(request.metadata?.__apivoyResponseDefinitions) ? request.metadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
+          const definition = definitions[0];
+          const designedAssertions = validationEnabled && definition ? validateDesignedResponse(definition, result, settings) : [];
+          const failedAssertions = [...(validationEnabled ? result.assertions ?? [] : []), ...designedAssertions].filter((assertion) => !assertion.passed).map((assertion) => assertion.name);
+          return [id, { passed: !result.error && failedAssertions.length === 0, error: result.error ?? (failedAssertions.length ? failedAssertions.join("；") : undefined), status: result.summary.status ?? null, durationMs: result.summary.durationMs, body: result.preview, headers: result.responseMeta?.headers ?? [] }] as const;
+        })));
+      } : undefined;
       const deleteCase = onDeleteHttpInterface ?? (async (caseId: string) => { window.dispatchEvent(new CustomEvent("apivoy-delete-test-case", { detail: { caseId } })); });
       return <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} isSaved={Boolean(session.requestId)} definitionClient={definitionClient} caseMode={Boolean(session.caseParentId)} caseInterfaceName={session.caseInterfaceName} caseName={caseName} cases={cases} onOpenCase={openCase} onSaveCase={saveCase} onDeleteCase={deleteCase} onDuplicateCase={duplicateCase} onRunCases={runCases} onRunRequest={sendCase} onCopyCurl={copyCurl} onLoadCase={onLoadHttpInterface}>{content}</InterfaceLifecycleShell>;
     };
