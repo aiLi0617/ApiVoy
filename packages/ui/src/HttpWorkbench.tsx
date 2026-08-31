@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch
 import { createPortal } from "react-dom";
 import type {
   Assertion,
+  AssertionOperator,
+  AssertionTarget,
   AssertionResultEvent,
   AuthRef,
   ExecutionSummary,
@@ -12,6 +14,7 @@ import type {
 } from "@apivoy/request-model";
 import { Icon } from "./Icons";
 import { CodeEditor } from "./CodeEditor";
+import { CodeGenerator } from "./CodeGenerator";
 import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
 import { VirtualList } from "./VirtualList";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
@@ -22,7 +25,8 @@ import ts from "typescript";
 import { listEnvironmentResources } from "./agentResources";
 import { useI18n } from "./i18n";
 import { alignRequestToInterface, captureHttpInterfaceStructure, diffHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY, readInterfaceStructureMetadata } from "./interfaceStructureV2";
-import { HttpRequestResponseView } from "./HttpRequestResponseView";
+import { DEFAULT_RESPONSE_VALIDATION_SETTINGS, readResponseValidationSettings, RESPONSE_VALIDATION_SETTINGS_EVENT, type ProjectResponseValidationSettings } from "./responseValidationSettings";
+import { validateDesignedResponse, type DesignedResponse } from "./designedResponseValidator";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 type BearerTokenSource = "direct" | "secret_ref";
@@ -117,12 +121,62 @@ export function sanitizeHttpRequestForPersistence(request: HttpWorkbenchRequest)
 
 export function requestNameFromUrl(value: string): string {
   const target = value.trim();
-  if (!target) return "未命名接口";
+  if (!target) return "";
   try {
     return new URL(target, "http://apivoy.local").pathname || "/";
   } catch {
-    return target.split(/[?#]/, 1)[0] || "未命名接口";
+    return target.split(/[?#]/, 1)[0] || "";
   }
+}
+
+export function resolveDefaultSaveCollectionId(
+  collections: Array<{ id: string; parentId?: string | null }>,
+  preferredId: string,
+): string {
+  return collections.find((collection) => collection.id === "default-collection")?.id
+    ?? collections.find((collection) => collection.id === preferredId)?.id
+    ?? collections.find((collection) => !collection.parentId)?.id
+    ?? collections[0]?.id
+    ?? "";
+}
+
+export function flattenSaveCollections<T extends { id: string; parentId?: string | null }>(
+  collections: T[],
+): Array<{ collection: T; depth: number }> {
+  const result: Array<{ collection: T; depth: number }> = [];
+  const visited = new Set<string>();
+  const ids = new Set(collections.map((collection) => collection.id));
+  const append = (collection: T, depth: number) => {
+    if (visited.has(collection.id)) return;
+    visited.add(collection.id);
+    result.push({ collection, depth });
+    collections.filter((candidate) => candidate.parentId === collection.id).forEach((child) => append(child, depth + 1));
+  };
+  collections.filter((collection) => !collection.parentId || !ids.has(collection.parentId)).forEach((root) => append(root, 0));
+  collections.forEach((collection) => append(collection, 0));
+  return result;
+}
+
+function SaveDirectoryBranch({ collections, parentId, depth, selectedId, expandedIds, onSelect, onToggle }: {
+  collections: Array<{ id: string; name: string; parentId?: string | null }>;
+  parentId: string | null;
+  depth: number;
+  selectedId: string;
+  expandedIds: Set<string>;
+  onSelect: (id: string) => void;
+  onToggle: (id: string, expanded: boolean) => void;
+}) {
+  return <>{collections.filter((item) => (item.parentId ?? null) === parentId).map((collection) => {
+    const hasChildren = collections.some((item) => item.parentId === collection.id);
+    const expanded = hasChildren && expandedIds.has(collection.id);
+    return <div className="save-interface-tree-branch" role="none" key={collection.id}>
+      <div className={`save-interface-tree-row${selectedId === collection.id ? " is-selected" : ""}`} role="treeitem" aria-selected={selectedId === collection.id} aria-expanded={hasChildren ? expanded : undefined} style={{ "--save-depth": depth } as CSSProperties}>
+        {hasChildren ? <button type="button" className={`save-interface-tree-toggle${expanded ? " is-expanded" : ""}`} aria-label={`${expanded ? "收起" : "展开"} ${collection.name}`} onClick={() => onToggle(collection.id, !expanded)}><Icon name="chevron"/></button> : <span className="save-interface-tree-toggle-placeholder" aria-hidden="true"/>}
+        <button type="button" className="save-interface-tree-select" onClick={() => onSelect(collection.id)}><Icon name="folder"/><span>{collection.name}</span></button>
+      </div>
+      {expanded ? <SaveDirectoryBranch collections={collections} parentId={collection.id} depth={depth + 1} selectedId={selectedId} expandedIds={expandedIds} onSelect={onSelect} onToggle={onToggle}/> : null}
+    </div>;
+  })}</>;
 }
 
 export const CASE_NAME_PRESETS = ["成功", "失败", "记录不存在", "数据为空", "缺少参数", "参数有误", "已登录", "未登录"] as const;
@@ -353,6 +407,16 @@ function requestBodySize(request: HttpWorkbenchRequest | null): number {
   return new TextEncoder().encode(request?.body ?? "").length;
 }
 
+export function HttpLiveRequestView({ request }: { request: HttpWorkbenchRequest }) {
+  const contentType = request.headers.find(([header]) => header.toLowerCase() === "content-type")?.[1] ?? formatBytes(requestBodySize(request));
+  return <div className="http-live-request">
+    <section className="http-live-url-section"><h4>请求 URL:</h4><div className="http-request-summary" data-method={request.method.toUpperCase()}><strong>{request.method}</strong><code title={request.url}>{request.url}</code></div></section>
+    <section className="http-live-data-section"><h4>Header:</h4><div className="http-request-data" role="table" aria-label="实时请求 Header">{request.headers.length ? <><div className="http-request-data-heading" role="row"><strong role="columnheader">名称</strong><span role="columnheader">值</span></div>{request.headers.map(([name, value], index) => <div role="row" key={`${name}-${index}`}><strong role="cell">{name}</strong><span role="cell">{value}</span></div>)}</> : <p>（空）</p>}</div></section>
+    <section className="http-live-data-section"><h4>Body <span>{contentType}</span></h4><pre className={`http-request-body${request.body ? "" : " is-empty"}`}>{request.body || "（空）"}</pre></section>
+    <section className="http-live-code-section"><CodeGenerator request={request}/></section>
+  </div>;
+}
+
 function responseHeaderSize(meta: ResponseMeta | null | undefined): number {
   return meta?.headers.reduce((size, [name, value]) => size + new TextEncoder().encode(`${name}: ${value}\r\n`).length, 0) ?? 0;
 }
@@ -413,7 +477,12 @@ export interface HttpWorkbenchProps {
   onSend: (request: HttpWorkbenchRequest, hooks?: HttpSendHooks) => Promise<HttpRunResult>;
   onTitleChange?: (title: string) => void;
   onCancel?: (executionId: string) => Promise<void>;
-  onSave?: (request: HttpWorkbenchRequest) => Promise<void>;
+  onSave?: (request: HttpWorkbenchRequest, result?: HttpRunResult | null) => Promise<void>;
+  onSaveToCollection?: (request: HttpWorkbenchRequest, collectionId: string) => Promise<string | void>;
+  onCreateCollection?: (parentId: string | null, name: string, moduleId?: string) => Promise<{ id: string; name: string; parentId?: string | null }>;
+  saveCollections?: Array<{ id: string; name: string; parentId?: string | null; moduleId?: string }>;
+  saveModules?: Array<{ id: string; name: string; isDefault: boolean }>;
+  defaultSaveCollectionId?: string;
   onSaveAsCase?: (request: HttpWorkbenchRequest) => Promise<void>;
   onUpdateInterface?: (request: HttpWorkbenchRequest) => Promise<void>;
   onPutSecret?: (name: string, value: string) => Promise<void>;
@@ -423,6 +492,11 @@ export interface HttpWorkbenchProps {
   onListHistory?: (filter?: HistoryFilter) => Promise<HistoryItem[]>;
   onReplayHistory?: (id: string) => Promise<HttpWorkbenchRequest | RequestEnvelope | null>;
   externalRequest?: HttpWorkbenchRequest | null;
+  initialResult?: HttpRunResult | null;
+  historyStartedAt?: string;
+  historyInterfaceName?: string;
+  onOpenHistoryInterface?: () => void;
+  saveActionLabel?: string;
   environments?: Array<{ id: string; name: string }>;
   defaultEnvironmentId?: string;
   toolbarTargetId?: string;
@@ -531,62 +605,38 @@ function formatKv(vars: Record<string, string>): string {
     .join("\n");
 }
 
-function parseAssertions(text: string): Assertion[] {
-  const out: Assertion[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const status = trimmed.match(/^status\s*==\s*(\d+)$/i);
-    if (status) {
-      out.push({ type: "status_equals", expected: Number(status[1]) });
-      continue;
-    }
-    const duration = trimmed.match(/^duration\s*<\s*(\d+)$/i);
-    if (duration) {
-      out.push({ type: "duration_lt", max_ms: Number(duration[1]) });
-      continue;
-    }
-    const contains = trimmed.match(/^body\s+contains\s+(.+)$/i);
-    if (contains) {
-      out.push({ type: "body_contains", expected: contains[1].trim() });
-      continue;
-    }
-    const header = trimmed.match(/^header\s+(\S+)\s+==\s+(.+)$/i);
-    if (header) {
-      out.push({ type: "header_equals", name: header[1], expected: header[2].trim() });
-      continue;
-    }
-    const jsonpath = trimmed.match(/^jsonpath\s+(\S+)\s+==\s+(.+)$/i);
-    if (jsonpath) {
-      out.push({ type: "json_path_equals", path: jsonpath[1], expected: jsonpath[2].trim() });
-    }
-  }
-  return out;
+export const ASSERTION_SCHEMA_VERSION = 2;
+const ASSERTION_OPERATORS: Record<AssertionTarget, AssertionOperator[]> = {
+  status: ["equals", "not_equals", "in", "greater_than", "less_than"],
+  header: ["equals", "not_equals", "contains", "not_contains", "exists", "not_exists"],
+  body: ["contains", "not_contains"],
+  json_path: ["equals", "not_equals", "exists", "not_exists", "type_is", "greater_than", "less_than", "length_equals", "length_greater_than", "length_less_than"],
+  duration: ["greater_than", "less_than"], size: ["greater_than", "less_than"],
+};
+const ASSERTION_TARGET_LABELS: Record<AssertionTarget, string> = { status: "状态码", header: "Header", body: "Body", json_path: "JSONPath", duration: "耗时", size: "响应大小" };
+const ASSERTION_OPERATOR_LABELS: Record<AssertionOperator, string> = { equals: "等于", not_equals: "不等于", in: "属于列表", greater_than: "大于", less_than: "小于", contains: "包含", not_contains: "不包含", exists: "存在", not_exists: "不存在", type_is: "类型", length_equals: "数组长度等于", length_greater_than: "数组长度大于", length_less_than: "数组长度小于" };
+function createAssertion(target: AssertionTarget = "status"): Assertion { return { id: crypto.randomUUID(), enabled: true, target, operator: ASSERTION_OPERATORS[target][0], selector: "", expected: "" }; }
+function assertionNeedsSelector(rule: Assertion) { return rule.target === "header" || rule.target === "json_path"; }
+function assertionNeedsExpected(rule: Assertion) { return rule.operator !== "exists" && rule.operator !== "not_exists"; }
+export function assertionValid(rule: Assertion) { return (!assertionNeedsSelector(rule) || Boolean(rule.selector?.trim())) && (!assertionNeedsExpected(rule) || Boolean(rule.expected?.trim())); }
+export function generatedAssertions(preview: string, status: number | null | undefined, headers: Array<[string, string]>): { rules: Assertion[]; warning?: string } {
+  const rules: Assertion[] = status == null ? [] : [{ ...createAssertion("status"), expected: String(status) }];
+  for (const [selector, expected] of headers.slice(0, 50)) rules.push({ ...createAssertion("header"), selector, expected });
+  if (new TextEncoder().encode(preview).length > 1_000_000) return { rules, warning: "响应超过 1 MB，已停止展开 JSON" };
+  let root: unknown; try { root = JSON.parse(preview); } catch { return { rules, warning: "响应不是有效 JSON，仅生成状态码和 Header" }; }
+  let nodes = 0; let truncated = false;
+  const visit = (value: unknown, path: string, pointer: string, depth: number, usePointer = false) => {
+    if (++nodes > 300 || depth > 8) { truncated = true; return; }
+    const selector = usePointer ? pointer : path;
+    if (Array.isArray(value)) { rules.push({ ...createAssertion("json_path"), selector, operator: "length_equals", expected: String(value.length) }); if (value.length) visit(value[0], `${path}[0]`, `${pointer}/0`, depth + 1, usePointer); return; }
+    if (value && typeof value === "object") { for (const [key, child] of Object.entries(value)) { if (nodes > 300) break; const safe = /^[A-Za-z_$][\w$]*$/.test(key); const escaped = key.replace(/~/g, "~0").replace(/\//g, "~1"); visit(child, `${path}.${key}`, `${pointer}/${escaped}`, depth + 1, usePointer || !safe); } return; }
+    rules.push({ ...createAssertion("json_path"), selector, expected: typeof value === "string" ? value : JSON.stringify(value) });
+  };
+  visit(root, "$", "", 0);
+  return { rules, warning: truncated ? "JSON 节点超过预算，已停止继续展开" : undefined };
 }
 
-function formatAssertions(list: Assertion[]): string {
-  return list
-    .map((a) => {
-      switch (a.type) {
-        case "status_equals":
-          return `status == ${a.expected}`;
-        case "duration_lt":
-          return `duration < ${a.max_ms}`;
-        case "body_contains":
-          return `body contains ${a.expected}`;
-        case "header_equals":
-          return `header ${a.name} == ${a.expected}`;
-        case "json_path_equals":
-          return `jsonpath ${a.path} == ${a.expected}`;
-        default:
-          return "";
-      }
-    })
-    .filter(Boolean)
-    .join("\n");
-}
+export { validateDesignedResponse } from "./designedResponseValidator";
 
 function buildAuth(
   kind: AuthKind,
@@ -627,12 +677,22 @@ export function HttpWorkbench({
   onTitleChange,
   onCancel,
   onSave,
+  onSaveToCollection,
+  onCreateCollection,
+  saveCollections = [],
+  saveModules = [],
+  defaultSaveCollectionId = "",
   onSaveAsCase,
   onUpdateInterface,
   onPutSecret,
   onListHistory,
   onReplayHistory,
   externalRequest,
+  initialResult,
+  historyStartedAt,
+  historyInterfaceName,
+  onOpenHistoryInterface,
+  saveActionLabel,
   environments = DEFAULT_ENVIRONMENTS,
   defaultEnvironmentId = "default-env",
   toolbarTargetId,
@@ -644,6 +704,17 @@ export function HttpWorkbench({
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [requestId, setRequestId] = useState<string | undefined>();
+  const [saveInterfaceDraft, setSaveInterfaceDraft] = useState<{ request: HttpWorkbenchRequest; saveDefinition: boolean } | null>(null);
+  const [saveInterfaceName, setSaveInterfaceName] = useState("");
+  const [saveCollectionId, setSaveCollectionId] = useState("");
+  const [saveModuleId, setSaveModuleId] = useState("");
+  const [saveDirectoryOpen, setSaveDirectoryOpen] = useState(false);
+  const [expandedSaveModules, setExpandedSaveModules] = useState<Set<string>>(() => new Set());
+  const [expandedSaveCollections, setExpandedSaveCollections] = useState<Set<string>>(() => new Set());
+  const [saveInterfaceBusy, setSaveInterfaceBusy] = useState(false);
+  const [newCollectionOpen, setNewCollectionOpen] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [newCollectionParentId, setNewCollectionParentId] = useState("");
   const [method, setMethod] = useState<string>("GET");
   const [url, setUrl] = useState("");
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => [createHeaderRow()]);
@@ -679,10 +750,19 @@ export function HttpWorkbench({
   const [preScriptAssetIds,setPreScriptAssetIds]=useState<string[]>([]);
   const [postScriptAssetIds,setPostScriptAssetIds]=useState<string[]>([]);
   const [variablesText, setVariablesText] = useState("");
-  const [assertionsText, setAssertionsText] = useState("");
+  const [assertionRules, setAssertionRules] = useState<Assertion[]>([]);
   const [assertionsEnabled, setAssertionsEnabled] = useState(true);
   const [assertionConfigOpen, setAssertionConfigOpen] = useState(false);
-  const [assertionsDraft, setAssertionsDraft] = useState("");
+  const [assertionsDraft, setAssertionsDraft] = useState<Assertion[]>([]);
+  const [assertionGenerateOpen, setAssertionGenerateOpen] = useState(false);
+  const [generatedRuleSelection, setGeneratedRuleSelection] = useState<Set<string>>(new Set());
+  const [selectedDesignedResponse, setSelectedDesignedResponse] = useState("200");
+  const [responseValidationSettings, setResponseValidationSettings] = useState(DEFAULT_RESPONSE_VALIDATION_SETTINGS);
+  useEffect(() => {
+    const receive = (event: Event) => setResponseValidationSettings((event as CustomEvent<{ value?: ProjectResponseValidationSettings }>).detail?.value ?? DEFAULT_RESPONSE_VALIDATION_SETTINGS);
+    window.addEventListener(RESPONSE_VALIDATION_SETTINGS_EVENT, receive);
+    return () => window.removeEventListener(RESPONSE_VALIDATION_SETTINGS_EVENT, receive);
+  }, []);
   const [authKind, setAuthKind] = useState<AuthKind>("none");
   const [bearerTokenSource, setBearerTokenSource] = useState<BearerTokenSource>("direct");
   const [bearerToken, setBearerToken] = useState("");
@@ -922,9 +1002,9 @@ export function HttpWorkbench({
       bodySource: bodyMode === "msgpack" ? messagePackJson : bodyMode === "graphql" ? JSON.stringify({ type: "graphql", query: graphqlQuery, variables: JSON.parse(graphqlVariables || "{}"), operationName: graphqlOperationName.trim() || null }) : bodyMode === "jsonrpc" ? JSON.stringify({ type: "jsonrpc", method: rpcMethod, params: JSON.parse(rpcParams || "{}"), id: rpcId }) : undefined,
       multipart: bodyMode === "multipart" ? multipart.filter((part) => part.enabled && part.name.trim()).map(({ id: _id, enabled: _enabled, description: _description, kind: _kind, valueType: _valueType, typeSelected: _typeSelected, required: _required, ...part }) => part) : [],
       timeoutMs,
-      metadata: requestMetadata,
+      metadata: { ...requestMetadata, __apivoyAssertionSchemaVersion: ASSERTION_SCHEMA_VERSION, __apivoyAssertionsEnabled: assertionsEnabled },
       variables: parseKv(variablesText),
-      assertions: assertionsEnabled ? parseAssertions(assertionsText) : [],
+      assertions: assertionRules,
       auth: buildAuth(authKind, bearerTokenSource, bearerToken, authSecretRef, authUsername, authHeaderName, oauthTokenUrl, oauthScope, oauthAudience, oauthAuthorizationUrl, oauthRedirectUri, oauthCodeRef, oauthVerifierRef),
       followRedirects,
       retryMax,
@@ -976,6 +1056,10 @@ export function HttpWorkbench({
   function applyRequest(loaded: HttpWorkbenchRequest) {
     setRequestId(loaded.id);
     setRequestMetadata(loaded.metadata ?? {});
+    const projectId = typeof loaded.metadata?.__apivoyProjectId === "string" ? loaded.metadata.__apivoyProjectId : undefined;
+    setResponseValidationSettings(readResponseValidationSettings(projectId));
+    const definitions = Array.isArray(loaded.metadata?.__apivoyResponseDefinitions) ? loaded.metadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
+    setSelectedDesignedResponse(definitions[0]?.status ?? "200");
     setOpenedCaseParentId(loaded.variables?.__apivoyCaseOf ?? null);
     setOpenedCaseInterfaceName(typeof loaded.metadata?.__apivoyCaseInterfaceName === "string" ? loaded.metadata.__apivoyCaseInterfaceName : loaded.variables?.__apivoyCaseInterfaceName ?? "");
     setSyncCaseResponse(Boolean(loaded.metadata?.__apivoySavedResponse));
@@ -1038,8 +1122,9 @@ export function HttpWorkbench({
     setPreScriptAssetIds(assetIdsFromScripts(loaded.preScripts));
     setPostScriptAssetIds(assetIdsFromScripts(loaded.postScripts));
     setVariablesText(formatKv(loaded.variables));
-    setAssertionsText(formatAssertions(loaded.assertions));
-    setAssertionsEnabled(loaded.assertions.length > 0);
+    const hasNewAssertions = loaded.metadata?.__apivoyAssertionSchemaVersion === ASSERTION_SCHEMA_VERSION;
+    setAssertionRules(hasNewAssertions ? loaded.assertions : []);
+    setAssertionsEnabled(hasNewAssertions ? loaded.metadata?.__apivoyAssertionsEnabled !== false : false);
     const auth = loaded.auth;
     setBearerToken(auth?.kind === "bearer" ? auth.token ?? "" : "");
     setBearerTokenSource(auth?.kind === "bearer" && auth.secret_ref && !auth.token ? "secret_ref" : "direct");
@@ -1076,6 +1161,7 @@ export function HttpWorkbench({
   useEffect(() => {
     if (externalRequest) {
       applyRequest(externalRequest);
+      setResult(initialResult ?? null);
       setStatusMsg("已打开集合中的请求");
     } else {
       const draft = readWorkbenchDraft<HttpWorkbenchRequest>("http");
@@ -1084,7 +1170,17 @@ export function HttpWorkbench({
         setStatusMsg("已恢复上次未完成的 HTTP 草稿");
       }
     }
-  }, [externalRequest]);
+  }, [externalRequest, initialResult]);
+
+  useEffect(() => {
+    const markRequestDeleted = (event: Event) => {
+      const deletedId = (event as CustomEvent<{ requestId?: string }>).detail?.requestId;
+      if (!deletedId) return;
+      setRequestId((current) => current === deletedId ? undefined : current);
+    };
+    window.addEventListener("apivoy-request-deleted", markRequestDeleted);
+    return () => window.removeEventListener("apivoy-request-deleted", markRequestDeleted);
+  }, []);
 
   useWorkbenchHydration("http", (raw) => {
     const savedRequest = httpRequestFromHydration(raw);
@@ -1116,10 +1212,9 @@ export function HttpWorkbench({
       else { setRpcMethod(value.method ?? ""); setRpcParams(JSON.stringify(value.params ?? {}, null, 2)); setRpcId(value.id == null ? "null" : String(value.id)); }
       setResult(null); setStatusMsg(`已在 HTTP 工作台中载入 ${rpcEnvelope.protocolId === "soap" ? "SOAP" : "JSON-RPC"} 请求`); return;
     }
-    const detail = raw as { request?: HttpWorkbenchRequest; aiAssertions?: string };
+    const detail = raw as { request?: HttpWorkbenchRequest };
     if (!detail?.request) return;
     applyRequest(detail.request);
-    if (detail.aiAssertions) setAssertionsText(detail.aiAssertions);
     setStatusMsg(detail.request.metadata?.__apivoySavedResponse ? "已载入用例及其保存的响应" : "已载入请求，请检查后再发送");
   }, workbenchSessionId);
 
@@ -1202,7 +1297,10 @@ export function HttpWorkbench({
       }
       const request = buildRequest();
       setLastRequest(request);
-      const next = await onSend(request, {
+      const validationContext = request.metadata?.__apivoyCaseType === "test" ? "singleCase" : "interfaceRun";
+      const validationEnabled = assertionsEnabled && responseValidationSettings[validationContext];
+      const executionRequest = validationEnabled ? request : { ...request, assertions: [] };
+      const next = await onSend(executionRequest, {
         onStarted: (id) => setExecutionId(id),
         onChunk: (preview) => setLivePreview((current) => current + preview),
         onEvent: (event) => {
@@ -1217,7 +1315,11 @@ export function HttpWorkbench({
           }
         },
       });
-      setResult(next);
+      const designedResponses = Array.isArray(request.metadata?.__apivoyResponseDefinitions) ? request.metadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
+      const designedResponse = designedResponses.find((item) => item.status === selectedDesignedResponse) ?? designedResponses[0];
+      const designAssertions = validationEnabled && designedResponse ? validateDesignedResponse(designedResponse, next, responseValidationSettings) : [];
+      const combinedAssertions = designAssertions.length ? [...designAssertions, ...(next.assertions ?? [])] : next.assertions;
+      setResult(combinedAssertions ? { ...next, assertions: combinedAssertions } : next);
       setRequestWallMs(Math.round(performance.now() - wallStartedAt));
       if (onListHistory) {
         setHistory(await onListHistory(currentHistoryFilter()));
@@ -1247,10 +1349,21 @@ export function HttpWorkbench({
     }
   }
 
-  async function handleSave() {
+  async function handleSave(saveDefinition = false) {
     if (!onSave || !validateParameterNames()) return;
     try {
       const request = buildRequest();
+      if (!requestId && onSaveToCollection) {
+        const defaultModule = saveModules.find((module) => module.isDefault) ?? saveModules[0];
+        setSaveInterfaceDraft({ request, saveDefinition });
+        setSaveInterfaceName(request.name?.trim() || name.trim());
+        setSaveCollectionId(resolveDefaultSaveCollectionId(saveCollections, defaultSaveCollectionId));
+        setSaveModuleId(defaultModule?.id ?? "");
+        setExpandedSaveModules(defaultModule ? new Set([defaultModule.id]) : new Set());
+        setExpandedSaveCollections(new Set(saveCollections.filter((collection) => saveCollections.some((child) => child.parentId === collection.id)).map((collection) => collection.id)));
+        setSaveDirectoryOpen(false);
+        return;
+      }
       if (!openedCaseParentId) request.metadata = { ...(request.metadata ?? {}), [INTERFACE_STRUCTURE_METADATA_KEY]: captureHttpInterfaceStructure(request) };
       const responseSnapshot = syncCaseResponse && openedCaseParentId && result && hasResponseResult ? {
         status: result.summary.status ?? null,
@@ -1263,9 +1376,10 @@ export function HttpWorkbench({
         request.metadata = { ...(request.metadata ?? {}), __apivoySavedResponse: responseSnapshot, ...(lastRequest ? { __apivoySavedActualRequest: snapshotActualRequest(lastRequest) } : {}) };
         setRequestMetadata(request.metadata);
       }
-      await onSave(sanitizeHttpRequestForPersistence(request));
+      await onSave(sanitizeHttpRequestForPersistence(request), result);
       if (!name.trim()) setName(request.name ?? "");
       setStatusMsg("请求已保存到本地库");
+      if (saveDefinition) window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId: request.id } }));
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : String(err));
     }
@@ -1494,25 +1608,63 @@ export function HttpWorkbench({
   const responseTotalBytes = responseHeaderBytes + responseBodyBytes;
   const requestHeaderBytes = requestHeaderSize(lastRequest);
   const requestBodyBytes = requestBodySize(lastRequest);
+  const generated = useMemo(() => result ? generatedAssertions(responsePreview, result.summary.status, result.responseMeta?.headers ?? []) : { rules: [] as Assertion[] }, [result, responsePreview]);
+  const assertionPassed = result?.assertions?.filter((item) => item.passed).length ?? 0;
+  const assertionFailed = result?.assertions?.filter((item) => !item.passed).length ?? 0;
+  const responseStatus = result?.summary.status ?? 0;
+  const responseStatusTone = responseStatus >= 100 && responseStatus < 600 ? ` status-${Math.floor(responseStatus / 100)}xx` : "";
+  const validationContext = requestMetadata.__apivoyCaseType === "test" ? "singleCase" : "interfaceRun";
+  const validationFeatureEnabled = responseValidationSettings[validationContext];
+  const responseValidationActive = validationFeatureEnabled && assertionsEnabled;
+  const designedResponses = Array.isArray(requestMetadata.__apivoyResponseDefinitions) ? requestMetadata.__apivoyResponseDefinitions as DesignedResponse[] : [];
+  const displayedResponses = designedResponses.length ? designedResponses : [{ status: selectedDesignedResponse || "200", fields: [] }];
   const responseMetrics = result && !result.error ? <>
-    <strong className="http-status-code">{result.summary.status ?? "—"}</strong>
+    <strong className={`http-status-code${responseStatusTone}`}>{result.summary.status ?? "—"}</strong>
     <span className="http-metric-popover" tabIndex={0}>{result.summary.durationMs} ms<span className="http-metric-card http-timing-card" role="tooltip"><b>事件 <i>时间</i></b><span className="http-timing-progress-row"><em>前置操作执行</em><span className="http-timing-progress" aria-label="前置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row"><em>接口请求</em><span className="http-timing-progress" aria-label={`接口请求占总耗时 ${Math.round(result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%`}><i style={{ width: `${Math.min(100, result.summary.durationMs / Math.max(1, requestWallMs || result.summary.durationMs) * 100)}%` }}/></span><i>{result.summary.durationMs} ms</i></span><span className="http-timing-progress-row"><em>后置操作执行</em><span className="http-timing-progress" aria-label="后置操作占总耗时 0%"><i style={{ width: "0%" }}/></span><i>0 ms</i></span><span className="http-timing-progress-row http-timing-total"><em>总耗时</em><span className="http-timing-progress" aria-label="总耗时 100%"><i style={{ width: "100%" }}/></span><i>{requestWallMs || result.summary.durationMs} ms</i></span></span></span>
     <span className="http-metric-popover" tabIndex={0}>{formatBytes(responseTotalBytes)}<span className="http-metric-card http-size-card" role="tooltip"><b>↓ 响应大小 <i>{formatBytes(responseTotalBytes)}</i></b><span>Header <i>{formatBytes(responseHeaderBytes)}</i></span><span>Body <i>{formatBytes(responseBodyBytes)}</i></span><hr/><b>↑ 请求大小 <i>{formatBytes(requestSize(lastRequest))}</i></b><span>Header <i>{formatBytes(requestHeaderBytes)}</i></span><span>Body <i>{formatBytes(requestBodyBytes)}</i></span></span></span>
   </> : null;
+  const displayedSaveModules = saveModules.length
+    ? saveModules
+    : [{ id: "default-module", name: "默认模块", isDefault: true }];
+  const selectedSaveModule = displayedSaveModules.find((module) => module.id === saveModuleId)
+    ?? displayedSaveModules.find((module) => module.isDefault)
+    ?? displayedSaveModules[0];
+  const selectedSaveCollection = saveCollections.find((collection) => collection.id === saveCollectionId);
+  const responseValidationActions = validationFeatureEnabled ? <div className="http-response-validation-actions">
+    {!loading ? <label className="http-response-validation-control" title="启用或停用响应校验"><span>校验响应</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
+    {!loading && assertionsEnabled && !openedCaseParentId ? <select className={`http-response-status-select${assertionFailed ? " is-fail" : result?.assertions?.length ? " is-pass" : ""}`} aria-label="选择接口设计返回响应" value={selectedDesignedResponse || "200"} onChange={(event) => setSelectedDesignedResponse(event.target.value)}>
+      {displayedResponses.map((item) => { const status = item.status; const label = `${Number(status) >= 200 && Number(status) < 300 ? "成功" : "响应"} (${status})`; return <option key={status} value={status}>{label}</option>; })}
+    </select> : null}
+  </div> : null;
   const responseHeaderActions = <div className="http-response-header-actions">
-    {!loading && !result ? <label className="http-response-validation-control" title="启用或停用响应校验"><span>校验响应</span><span className="http-switch"><input type="checkbox" checked={assertionsEnabled} onChange={(event) => setAssertionsEnabled(event.target.checked)}/><span/></span></label> : null}
-    {!loading && !result ? <div className="http-assertion-config">
-      <button type="button" className="http-assertion-summary" aria-expanded={assertionConfigOpen} onClick={() => { setAssertionsDraft(assertionsText); setAssertionConfigOpen((open) => !open); }}>
-        <span>配置</span><span className="http-assertion-chevron"><Icon name="chevron"/></span>
-      </button>
+    {false ? <div>
       {assertionConfigOpen ? <div className="http-assertion-editor" role="dialog" aria-label="响应校验配置">
-        <strong>响应校验配置</strong>
-        <span>每行一条：status == 200 / body contains … / jsonpath $.a == 1</span>
-        <textarea style={styles.textarea} value={assertionsDraft} onChange={(event) => setAssertionsDraft(event.target.value)} rows={5} spellCheck={false}/>
-        <div className="http-assertion-editor-actions"><button type="button" style={styles.secondaryButton} onClick={() => setAssertionConfigOpen(false)}>取消</button><button type="button" style={styles.primaryButton} onClick={() => { setAssertionsText(assertionsDraft); setAssertionConfigOpen(false); setStatusMsg("响应校验配置已保存"); }}>保存</button></div>
+        <div className="http-assertion-editor-title"><strong>响应校验</strong>{result ? <button type="button" onClick={() => { setAssertionGenerateOpen((open) => !open); setGeneratedRuleSelection(new Set()); }}>从当前响应生成</button> : null}</div>
+        {assertionGenerateOpen ? <div className="http-assertion-generator"><span>{generated.warning ?? "选择要生成的状态码、Header 或 JSON 字段规则"}</span><div>{generated.rules.map((rule) => <label key={rule.id}><input type="checkbox" checked={generatedRuleSelection.has(rule.id)} onChange={(event) => setGeneratedRuleSelection((current) => { const next = new Set(current); event.target.checked ? next.add(rule.id) : next.delete(rule.id); return next; })}/><code>{ASSERTION_TARGET_LABELS[rule.target]} {rule.selector || rule.expected}</code></label>)}</div><button type="button" disabled={!generatedRuleSelection.size} onClick={() => { setAssertionsDraft((current) => [...current, ...generated.rules.filter((rule) => generatedRuleSelection.has(rule.id))]); setAssertionGenerateOpen(false); }}>添加所选规则</button></div> : null}
+        <div className="http-assertion-rules">{assertionsDraft.map((rule, index) => <div className={`http-assertion-rule${assertionValid(rule) ? "" : " is-invalid"}`} key={rule.id}>
+          <label className="http-switch" title="启用此规则"><input type="checkbox" checked={rule.enabled} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, enabled: event.target.checked } : item))}/><span/></label>
+          <select aria-label="校验目标" value={rule.target} onChange={(event) => { const target = event.target.value as AssertionTarget; setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, target, operator: ASSERTION_OPERATORS[target][0], selector: "", expected: "" } : item)); }}>{Object.entries(ASSERTION_TARGET_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+          {assertionNeedsSelector(rule) ? <input aria-label="定位信息" value={rule.selector ?? ""} placeholder={rule.target === "header" ? "Header 名称" : "$.data.id"} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, selector: event.target.value } : item))}/> : null}
+          <select aria-label="比较操作" value={rule.operator} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, operator: event.target.value as AssertionOperator } : item))}>{ASSERTION_OPERATORS[rule.target].map((value) => <option key={value} value={value}>{ASSERTION_OPERATOR_LABELS[value]}</option>)}</select>
+          {assertionNeedsExpected(rule) ? <input aria-label="预期值" value={rule.expected ?? ""} placeholder={rule.operator === "in" ? "200, 201" : "预期值"} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, expected: event.target.value } : item))}/> : null}
+          <div className="http-assertion-rule-actions"><button type="button" title="上移" disabled={!index} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}>↑</button><button type="button" title="下移" disabled={index === assertionsDraft.length - 1} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next; })}>↓</button><button type="button" title="复制" onClick={() => setAssertionsDraft((list) => [...list.slice(0, index + 1), { ...rule, id: crypto.randomUUID() }, ...list.slice(index + 1)])}>⧉</button><button type="button" title="删除" onClick={() => setAssertionsDraft((list) => list.filter((item) => item.id !== rule.id))}>×</button></div>
+        </div>)}</div>
+        <button type="button" className="http-assertion-add" onClick={() => setAssertionsDraft((list) => [...list, createAssertion()])}>＋ 新增规则</button>
+        <div className="http-assertion-editor-actions"><button type="button" style={styles.secondaryButton} onClick={() => setAssertionConfigOpen(false)}>取消</button><button type="button" style={styles.primaryButton} disabled={assertionsDraft.some((rule) => !assertionValid(rule))} onClick={() => { setAssertionRules(assertionsDraft); setAssertionConfigOpen(false); setStatusMsg("响应校验配置已保存"); }}>保存</button></div>
       </div> : null}
     </div> : null}
     {result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null}
+    {responseValidationActions}
+  </div>;
+  const responseMetricsActions = result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null;
+  const responseValidationPanel = <div className="http-response-validation-panel">
+    {result?.assertions?.length ? <div className="http-assertion-results">
+      <div className="http-validation-summary"><strong>校验结果</strong><div><span>共 {result.assertions.length}</span><span className="is-pass">通过 {assertionPassed}</span><span className={assertionFailed ? "is-fail" : ""}>失败 {assertionFailed}</span></div></div>
+      {result.assertions.map((assertion, index) => { const rule = assertionRules.find((item) => item.id === assertion.ruleId); return <details key={assertion.ruleId || `${assertion.name}-${index}`} open={!assertion.passed} className={assertion.passed ? "is-pass" : "is-fail"}>
+        <summary><span className="http-validation-state" aria-hidden="true">{assertion.passed ? "✓" : "×"}</span><span className="http-validation-name">{assertion.name}</span><span className="http-validation-status">{assertion.passed ? "通过" : "失败"}</span></summary>
+        <div className="http-validation-details"><div><span>预期值</span><code>{assertion.expected ?? "—"}</code></div><div><span>实际值</span><code>{assertion.actual ?? "—"}</code></div>{assertion.message ? <div className="http-validation-reason"><span>失败原因</span><p>{assertion.message}</p></div> : null}{!assertion.passed && rule?.target === "json_path" ? <button type="button" onClick={() => { setResponseTab("body"); setResponseSearchOpen(true); setResponseSearch(assertion.actual || rule.selector || ""); }}>在响应 Body 中定位</button> : null}</div>
+      </details>; })}
+    </div> : <div className="http-validation-empty"><strong>校验响应</strong><span>{assertionsEnabled ? "发送请求后将在这里显示校验结果" : "响应校验已关闭"}</span></div>}
   </div>;
   const environmentControl = <div className="http-environment-select"><select aria-label="请求环境" value={environmentRef} onChange={(event)=>setEnvironmentRef(event.target.value)} disabled={loading}>{environmentOptions.map((environment)=><option key={environment.id} value={environment.id}>{environment.name}{environment.id===defaultEnvironmentId?" · 默认":""}</option>)}</select><button type="button" className="http-environment-manage" aria-label="编辑环境变量" title="编辑环境变量" onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-environment"))}><Icon name="menu"/></button></div>;
 
@@ -1524,18 +1676,18 @@ export function HttpWorkbench({
       </select>
       <label className="http-target-field"><input id="http-target-url" aria-label="目标 URL" style={styles.input} value={url} onChange={(e) => setUrl(e.target.value)} onBlur={(e) => setQueryRows(queryRowsFromUrl(e.target.value))} placeholder="接口路径" spellCheck={false} disabled={loading} /></label>
       {lifecycleTab === "definition" ? <>
-        <button type="button" className="http-send-button" style={styles.button} disabled={!url.trim()} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId } }))}><Icon name="archive"/>保存</button>
+        <button type="button" className="http-send-button" style={styles.button} disabled={loading} onClick={() => void handleSave(true)}><Icon name="archive"/>保存</button>
         <button type="button" className="http-save-button" style={styles.secondaryButton} onClick={() => window.dispatchEvent(new CustomEvent("apivoy-open-lifecycle-tab", { detail: { sessionId: workbenchSessionId, tab: "debug" } }))}><Icon name="send"/>调试</button>
       </> : <>
-        <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading ? !onCancel || !executionId : !url.trim()} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
+        <button className={`http-send-button${loading ? " is-cancel" : ""}`} style={styles.button} disabled={loading && (!onCancel || !executionId)} aria-label={loading ? t("action.cancel") : t("action.send")} onClick={() => loading ? void handleCancel() : void handleSend()}>
           <Icon name={loading ? "close" : "send"}/>{loading ? t("action.cancel") : t("action.send")}
         </button>
       {onSave && <div className="http-save-split" ref={saveMenuRef}>
-        <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading || !url.trim()} onClick={() => void handleSave()}><Icon name="archive"/>{t("action.save")}</button>
+        <button type="button" className="http-save-button" style={styles.secondaryButton} disabled={loading} onClick={() => void handleSave()}><Icon name="archive"/>{saveActionLabel ?? t("action.save")}</button>
         {openedCaseParentId ? <label className="http-save-response-sync" title="勾选后，点击保存时同步当前响应">
           <input type="checkbox" aria-label="同步保存响应" checked={syncCaseResponse} disabled={loading} onChange={(event) => setSyncCaseResponse(event.target.checked)}/>
         </label> : onSaveAsCase ? <>
-          <button type="button" className="http-save-menu-trigger" aria-label="更多保存方式" aria-haspopup="menu" aria-expanded={saveMenuOpen} disabled={loading || !url.trim()} onClick={() => setSaveMenuOpen((open) => !open)}><Icon name="chevron"/></button>
+          <button type="button" className="http-save-menu-trigger" aria-label="更多保存方式" aria-haspopup="menu" aria-expanded={saveMenuOpen} disabled={loading} onClick={() => setSaveMenuOpen((open) => !open)}><Icon name="chevron"/></button>
           {saveMenuOpen ? <div className="http-save-menu" role="menu" aria-label="保存方式">
             <button type="button" role="menuitem" onClick={() => openCaseDialog("debug")}><Icon name="copy"/><span>保存为用例</span></button>
           </div> : null}
@@ -1546,7 +1698,7 @@ export function HttpWorkbench({
   </div>;
 
   return (
-    <>{caseDialogOpen ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !caseSaving && setCaseDialogOpen(false)}>
+    <>{saveInterfaceDraft ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !saveInterfaceBusy && setSaveInterfaceDraft(null)}><form className="save-interface-dialog" role="dialog" aria-modal="true" aria-labelledby="save-interface-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!saveInterfaceName.trim() || !saveCollectionId || !onSaveToCollection) return; setSaveInterfaceBusy(true); try { const request = { ...saveInterfaceDraft.request, name: saveInterfaceName.trim() }; const savedId = await onSaveToCollection(sanitizeHttpRequestForPersistence(request), saveCollectionId); const persistedId = savedId || request.id; setName(request.name); setRequestId(persistedId); onTitleChange?.(request.name); setStatusMsg("请求已保存到本地库"); const shouldSaveDefinition = saveInterfaceDraft.saveDefinition; setSaveInterfaceDraft(null); if (shouldSaveDefinition) window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId: persistedId } })); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="save-interface-title">保存接口</h2><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}><Icon name="close"/></button></header><div className="save-interface-fields"><label><span>名称 <i>*</i></span><input className="save-interface-name-input" autoFocus required value={saveInterfaceName} onChange={(event) => setSaveInterfaceName(event.target.value)} /></label><fieldset><legend>目录 <i>*</i></legend><div className={`save-interface-directory-picker${saveDirectoryOpen ? " is-open" : ""}`}><button type="button" className="save-interface-directory-trigger" role="combobox" aria-label="目录" aria-haspopup="tree" aria-expanded={saveDirectoryOpen} onClick={() => setSaveDirectoryOpen((open) => !open)}><Icon name="folder"/><span>{selectedSaveCollection?.name ?? "请选择目录"}</span><Icon name="chevron"/></button>{saveDirectoryOpen ? <div className="save-interface-directory-tree" role="tree" aria-label="选择保存目录">{displayedSaveModules.map((module) => { const moduleCollections = saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === module.id : module.isDefault); const moduleExpanded = expandedSaveModules.has(module.id); const rootCollection = moduleCollections.find((collection) => !collection.parentId) ?? moduleCollections[0]; return <div className="save-interface-module-group" role="group" key={module.id}><div className="save-interface-module-row" role="treeitem" aria-expanded={moduleExpanded}><button type="button" className="save-interface-tree-toggle" aria-label={moduleExpanded ? `收起${module.name}` : `展开${module.name}`} onClick={() => setExpandedSaveModules((current) => { const next = new Set(current); next.has(module.id) ? next.delete(module.id) : next.add(module.id); return next; })}><Icon name="chevron"/></button><button type="button" className="save-interface-tree-select" onClick={() => { setSaveModuleId(module.id); if (rootCollection) { setSaveCollectionId(rootCollection.id); setSaveDirectoryOpen(false); } }}><Icon name="folder"/><span>{module.name}</span></button></div>{moduleExpanded ? <SaveDirectoryBranch collections={moduleCollections} parentId={null} depth={0} selectedId={saveCollectionId} expandedIds={expandedSaveCollections} onSelect={(collectionId) => { setSaveModuleId(module.id); setSaveCollectionId(collectionId); setSaveDirectoryOpen(false); }} onToggle={(collectionId, expanded) => setExpandedSaveCollections((current) => { const next = new Set(current); expanded ? next.add(collectionId) : next.delete(collectionId); return next; })}/> : null}</div>; })}{!saveCollections.length ? <p>当前模块暂无目录，请先新建目录。</p> : null}<button type="button" className="save-interface-new-directory" onClick={() => { setNewCollectionName(""); setNewCollectionParentId(""); setNewCollectionOpen(true); }}><Icon name="plus"/>新建目录</button></div> : null}</div></fieldset></div><footer><button type="button" className="ui-button secondary" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !saveInterfaceName.trim() || !saveCollectionId}>{saveInterfaceBusy ? "保存中…" : "保存"}</button></footer></form>{newCollectionOpen ? <div className="save-interface-nested-backdrop" role="presentation" onMouseDown={() => setNewCollectionOpen(false)}><form className="save-interface-new-dialog" role="dialog" aria-modal="true" aria-labelledby="new-save-directory-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!newCollectionName.trim() || !onCreateCollection) return; setSaveInterfaceBusy(true); try { const created = await onCreateCollection(newCollectionParentId || null, newCollectionName.trim(), saveModuleId || selectedSaveModule?.id); setSaveCollectionId(created.id); setNewCollectionOpen(false); setSaveDirectoryOpen(false); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="new-save-directory-title">新建目录</h2><button type="button" className="ui-icon-button" aria-label="关闭" onClick={() => setNewCollectionOpen(false)}><Icon name="close"/></button></header><label><span>名称 <i>*</i></span><input autoFocus value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)}/></label><label><span>父级目录 <i>*</i></span><select value={newCollectionParentId} onChange={(event) => setNewCollectionParentId(event.target.value)}><option value="">{selectedSaveModule?.name ?? "模块根目录"}</option>{saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === selectedSaveModule?.id : selectedSaveModule?.isDefault).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label><footer><button type="button" className="ui-button secondary" onClick={() => setNewCollectionOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !newCollectionName.trim()}>{saveInterfaceBusy ? "创建中…" : "创建"}</button></footer></form></div> : null}</div>, document.body) : null}{caseDialogOpen ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !caseSaving && setCaseDialogOpen(false)}>
       <form className="case-save-dialog" role="dialog" aria-modal="true" aria-labelledby="case-save-title" onSubmit={(event) => { event.preventDefault(); void saveAsCase(); }} onMouseDown={(event) => event.stopPropagation()}>
         <header><div><h2 id="case-save-title">保存为用例</h2></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={caseSaving} onClick={() => setCaseDialogOpen(false)}><Icon name="close"/></button></header>
         <div className="case-save-fields">
@@ -1569,7 +1721,8 @@ export function HttpWorkbench({
     </div>, document.body) : null}{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}{commandbarTarget ? createPortal(requestCommandbar, commandbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={embeddedPreview ? undefined : statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
       <div className={`http-workbench-layout${commandbarTarget || embeddedPreview ? " has-external-commandbar" : ""}${embeddedPreview ? " is-embedded-preview" : ""}`}>
       {commandbarTarget || embeddedPreview ? null : requestCommandbar}
-      <div className="http-workbench-split">
+      {historyStartedAt ? <div className="http-history-sent-at">{historyInterfaceName && onOpenHistoryInterface ? <button type="button" className="http-history-interface-link" aria-label={"\u6253\u5f00\u63a5\u53e3 " + historyInterfaceName} onClick={onOpenHistoryInterface}><Icon name="folder"/><span>{historyInterfaceName}</span></button> : null}<span className="http-history-time"><Icon name="activity"/><span>{"\u5386\u53f2\u53d1\u9001\u65f6\u95f4"}</span><time dateTime={historyStartedAt}>{new Date(historyStartedAt).toLocaleString("zh-CN", { hour12: false })}</time></span></div> : null}
+      <div className={`http-workbench-split${responseValidationActive && result ? " has-response-validation" : ""}`}>
       <SplitPane id={embeddedPreview ? "http-test-case-preview" : "http-workbench"} direction="vertical" fixedDirection={fixedSplitDirection ?? (embeddedPreview ? "horizontal" : undefined)} minPrimary={160} minSecondary={160} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={responseHeaderActions} primary={<div className="apivoy-workbench http-request-pane" style={styles.section}>
       {(() => {
         const paramDifferenceCount = caseStructureState?.differences.filter((item) => item.field.location === "query").length ?? 0;
@@ -1805,7 +1958,7 @@ export function HttpWorkbench({
         </div>
       )}
 
-      </div>} secondary={<div className="http-response-pane">
+      </div>} secondary={<div className={`http-response-validation-layout${responseValidationActive && result ? "" : " is-disabled"}`}><SplitPane id="http-response-validation" fixedDirection="horizontal" showCollapseControl={false} secondaryCollapsedMeta={assertionFailed ? <span className="is-fail">× 失败</span> : result?.assertions?.length ? <span className="is-pass">✓ 通过</span> : null} minPrimary={280} minSecondary={220} primaryLabel="返回响应" secondaryLabel="校验响应" primaryActions={responseValidationActive && result ? responseMetricsActions : undefined} secondaryActions={responseValidationActive && result ? responseValidationActions : undefined} primary={<div className="http-response-pane">
       {!result && !loading ? <div className="response-empty"><span className="response-empty-icon">↗</span><strong>{t("response.waitingTitle")}</strong><p>{t("response.waitingBody")}</p></div> : null}
 
       {loading && livePreview && <div className="http-response-content"><div style={styles.responseHeader}><strong>响应流正在接收…</strong><span>{new TextEncoder().encode(livePreview).length} bytes</span></div><pre className="http-response-body">{prettyPreview(livePreview).slice(0, 10000)}</pre></div>}
@@ -1856,16 +2009,7 @@ export function HttpWorkbench({
                   </div>
               </div>}
               <div className={`http-response-scroll is-${responseTab}`}>
-              {responseTab === "console" && <div className="http-response-console">{result.assertions && result.assertions.length > 0 && (
-                <ul style={styles.assertList}>
-                  {result.assertions.map((a, i) => (
-                    <li key={`${a.name}-${i}`} style={a.passed ? styles.assertPass : styles.assertFail}>
-                      {a.passed ? "✓" : "✗"} {a.name}
-                      {a.message ? ` — ${a.message}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              )}<VirtualList items={scriptConsoleEvents} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="脚本控制台" className="http-timeline" renderItem={({ at, event }) => <div style={styles.timelineRow} className={`http-timeline-event event-${event.type}`}><time>+{timeline.length ? (at - timeline[0].at).toFixed(1) : "0.0"}ms</time><b>{event.type === "log" ? "script_log" : event.type}</b><span>{event.type === "log" ? event.message : event.type === "variables_extracted" ? Object.entries(event.variables).map(([key, value]) => `${key}=${value}`).join(", ") : event.type === "failed" ? event.message : ""}</span></div>} empty={<div className="http-console-empty"><Icon name="code"/><strong>没有脚本输出</strong><span>前置或后置脚本中的 console.log、变量提取和脚本错误会显示在这里。</span></div>} /></div>}
+              {responseTab === "console" && <div className="http-response-console"><VirtualList items={scriptConsoleEvents} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="脚本控制台" className="http-timeline" renderItem={({ at, event }) => <div style={styles.timelineRow} className={`http-timeline-event event-${event.type}`}><time>+{timeline.length ? (at - timeline[0].at).toFixed(1) : "0.0"}ms</time><b>{event.type === "log" ? "script_log" : event.type}</b><span>{event.type === "log" ? event.message : event.type === "variables_extracted" ? Object.entries(event.variables).map(([key, value]) => `${key}=${value}`).join(", ") : event.type === "failed" ? event.message : ""}</span></div>} empty={<div className="http-console-empty"><Icon name="code"/><strong>没有脚本输出</strong><span>前置或后置脚本中的 console.log、变量提取和脚本错误会显示在这里。</span></div>} /></div>}
               {responseTab === "headers" && !result.responseMeta?.headers.length && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "headers" && Boolean(result.responseMeta?.headers.length) && <div style={styles.headerTable}>
                 <div style={styles.headerSummary}><span>{result.responseMeta?.contentType ?? "未知 Content-Type"}</span><span>预估 {result.responseMeta?.sizeHint ?? result.summary.bytesReceived} bytes</span></div>
@@ -1873,7 +2017,7 @@ export function HttpWorkbench({
               </div>}
               {responseTab === "cookies" && responseCookies.length === 0 && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "cookies" && responseCookies.length > 0 && <div style={styles.headerTable}>{responseCookies.map((cookie, index) => <div key={index} style={styles.headerRow}><strong>{cookie.split("=", 1)[0]}</strong><span>{cookie}</span></div>)}</div>}
-              {responseTab === "request" && (lastRequest ? <HttpRequestResponseView request={lastRequest} result={{ passed: !result.error, error: result.error, status: result.summary.status, durationMs: result.summary.durationMs, body: result.preview, headers: result.responseMeta?.headers ?? [] }}/> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
+              {responseTab === "request" && (lastRequest ? <HttpLiveRequestView request={lastRequest}/> : <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>)}
               {responseTab === "body" && !responseHasBody && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
               {responseTab === "body" && responseHasBody && responseView === "table" && responseTable && <div style={styles.jsonTableWrap}><table style={styles.jsonTable}><thead><tr>{responseTable.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{responseTable.rows.slice(0, 1000).map((row, index) => <tr key={index}>{responseTable.columns.map((column) => <td key={column}>{typeof row[column] === "object" ? JSON.stringify(row[column]) : String(row[column] ?? "")}</td>)}</tr>)}</tbody></table>{responseTable.rows.length > 1000 && <div style={styles.muted}>仅显示前 1000 行，共 {responseTable.rows.length} 行。</div>}</div>}
               {responseTab === "body" && responseHasBody && responseView === "preview" && responsePreviewKind === "html" && <iframe className="http-response-html-preview" title="HTML 响应预览" sandbox="allow-forms allow-modals allow-popups" srcDoc={decodedResponse}/>}
@@ -1887,7 +2031,7 @@ export function HttpWorkbench({
           )}
         </div>
       )}
-      </div>}/>
+      </div>} secondary={responseValidationPanel}/></div>}/>
       </div>
       </div>
     </WorkbenchFrame></>

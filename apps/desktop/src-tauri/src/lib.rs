@@ -264,39 +264,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum AssertionDto {
-    StatusEquals { expected: u16 },
-    StatusIn { expected: Vec<u16> },
-    DurationLt { max_ms: u64 },
-    SizeLt { max_bytes: u64 },
-    HeaderEquals { name: String, expected: String },
-    HeaderContains { name: String, expected: String },
-    BodyContains { expected: String },
-    JsonPathEquals { path: String, expected: String },
-}
-
-impl From<AssertionDto> for Assertion {
-    fn from(value: AssertionDto) -> Self {
-        match value {
-            AssertionDto::StatusEquals { expected } => Assertion::StatusEquals { expected },
-            AssertionDto::StatusIn { expected } => Assertion::StatusIn { expected },
-            AssertionDto::DurationLt { max_ms } => Assertion::DurationLt { max_ms },
-            AssertionDto::SizeLt { max_bytes } => Assertion::SizeLt { max_bytes },
-            AssertionDto::HeaderEquals { name, expected } => {
-                Assertion::HeaderEquals { name, expected }
-            }
-            AssertionDto::HeaderContains { name, expected } => {
-                Assertion::HeaderContains { name, expected }
-            }
-            AssertionDto::BodyContains { expected } => Assertion::BodyContains { expected },
-            AssertionDto::JsonPathEquals { path, expected } => {
-                Assertion::JsonPathEquals { path, expected }
-            }
-        }
-    }
-}
+type AssertionDto = Assertion;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -366,7 +334,7 @@ async fn execute_request(
 
     scope.request = request.variables.clone();
     envelope.variables = request.variables.clone();
-    envelope.assertions = request.assertions.into_iter().map(Into::into).collect();
+    envelope.assertions = request.assertions;
     envelope.environment_ref = Some(env_id.to_string());
     envelope.auth_ref = request.auth.map(Into::into);
 
@@ -678,7 +646,7 @@ async fn save_request(
 ) -> Result<StoredRequest, String> {
     let mut envelope = build_envelope(&request);
     envelope.variables = request.variables;
-    envelope.assertions = request.assertions.into_iter().map(Into::into).collect();
+    envelope.assertions = request.assertions;
     envelope.auth_ref = request.auth.map(Into::into);
     state
         .store

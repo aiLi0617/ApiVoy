@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ApiVoy 图标库选型对比</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d10;
+      --surface: #111419;
+      --elevated: #171a20;
+      --overlay: #1d2128;
+      --border: #2a3039;
+      --border-strong: #3c4653;
+      --text: #eef3f8;
+      --muted: #9aa7b7;
+      --subtle: #6f7c8c;
+      --accent: #4c9bff;
+      --accent-soft: rgba(76, 155, 255, .13);
+      --teal: #43d7c0;
+      --warning: #f4bd50;
+      font-family: Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    button, input { font: inherit; }
+    .page { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 44px 0 64px; }
+    .eyebrow { margin: 0 0 10px; color: var(--teal); font: 700 11px/1.2 ui-monospace, monospace; letter-spacing: .16em; }
+    h1 { max-width: 760px; margin: 0; font-size: clamp(30px, 5vw, 54px); line-height: 1.05; letter-spacing: -.04em; }
+    .lead { max-width: 760px; margin: 18px 0 0; color: var(--muted); font-size: 15px; line-height: 1.75; }
+    .verdict { display: grid; grid-template-columns: 40px 1fr; gap: 13px; max-width: 760px; margin-top: 24px; padding: 16px 18px; border: 1px solid rgba(76, 155, 255, .35); border-radius: 10px; background: var(--accent-soft); }
+    .verdict-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 9px; background: var(--accent); color: #06111f; font-weight: 900; }
+    .verdict strong { display: block; margin-bottom: 3px; font-size: 14px; }
+    .verdict span { color: #b7c9dd; font-size: 12px; line-height: 1.6; }
+    .section-head { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin: 48px 0 15px; }
+    .section-head h2 { margin: 0; font-size: 18px; }
+    .section-head p { margin: 0; color: var(--muted); font-size: 12px; }
+    .matrix { display: grid; gap: 10px; }
+    .library-row { display: grid; grid-template-columns: 220px repeat(5, minmax(92px, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--border); }
+    .library-meta, .icon-cell { background: var(--surface); }
+    .library-meta { padding: 17px; }
+    .library-name { display: flex; align-items: center; gap: 8px; }
+    .library-name strong { font-size: 15px; }
+    .badge { padding: 3px 6px; border-radius: 4px; background: var(--overlay); color: var(--muted); font: 700 9px/1.2 ui-monospace, monospace; }
+    .library-meta p { min-height: 38px; margin: 9px 0 12px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .traits { display: flex; flex-wrap: wrap; gap: 5px; }
+    .traits span { padding: 3px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--subtle); font-size: 9px; }
+    .icon-cell { min-height: 136px; display: grid; place-items: center; align-content: center; gap: 12px; padding: 14px 8px; }
+    .icon-stage { width: 52px; height: 52px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--elevated); }
+    .icon-stage img { width: 27px; height: 27px; }
+    .icon-cell span { color: var(--muted); font: 10px/1 ui-monospace, monospace; }
+    .lucide .icon-stage { color: #71afff; }
+    .tabler .icon-stage { color: #64d8c6; }
+    .heroicons .icon-stage { color: #c8a8ff; }
+    .phosphor .icon-stage { color: #f4bd50; }
+    .comparison { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .comparison article { min-height: 250px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+    .comparison h3 { margin: 0 0 12px; font-size: 15px; }
+    .comparison dl { display: grid; grid-template-columns: 58px 1fr; gap: 9px; margin: 0; font-size: 11px; line-height: 1.55; }
+    .comparison dt { color: var(--subtle); }
+    .comparison dd { margin: 0; color: var(--muted); }
+    .comparison .fit { margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--border); color: var(--text); font-size: 11px; line-height: 1.6; }
+    .decision { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .decision article { padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+    .decision h3 { margin: 0 0 10px; font-size: 14px; }
+    .decision ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 11px; line-height: 1.8; }
+    code { padding: 2px 5px; border-radius: 4px; background: var(--overlay); color: #bad7ff; font: 10px/1.4 ui-monospace, monospace; }
+    footer { margin-top: 30px; color: var(--subtle); font-size: 10px; line-height: 1.6; }
+    a { color: #86baff; }
+    @media (max-width: 900px) {
+      .library-row { grid-template-columns: repeat(5, 1fr); }
+      .library-meta { grid-column: 1 / -1; }
+      .comparison { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { width: min(100% - 20px, 1180px); padding-top: 28px; }
+      .library-row { grid-template-columns: repeat(2, 1fr); }
+      .icon-cell:last-child { grid-column: 1 / -1; }
+      .comparison, .decision { grid-template-columns: 1fr; }
+      .section-head { display: block; }
+      .section-head p { margin-top: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">APIVOY · ICON SYSTEM STUDY</p>
+    <h1>四套图标库，放进同一个开发者工具里看。</h1>
+    <p class="lead">这份样张用五个高频动作比较 Lucide、Tabler、Heroicons 与 Phosphor。观察轮廓密度、圆角、留白和小尺寸清晰度，比单看图库首页更容易判断哪套适合 ApiVoy。</p>
+    <div class="verdict">
+      <div class="verdict-mark">L</div>
+      <div><strong>ApiVoy 推荐：Lucide 作为唯一 UI 图标源</strong><span>现有 24×24、currentColor、1.8px 描边组件可以平滑迁移；协议和厂商品牌标志另用 Simple Icons 或官方 SVG。</span></div>
+    </div>
+
+    <div class="section-head"><h2>同一动作横向对比</h2><p>真实图标由 Iconify 仅用于本地选型预览</p></div>
+    <section class="matrix" aria-label="四套图标库视觉对比">
+      <div class="library-row lucide">
+        <div class="library-meta"><div class="library-name"><strong>Lucide</strong><span class="badge">ISC</span></div><p>克制、通用、空白充足，工程工具感最稳定。</p><div class="traits"><span>24×24</span><span>outline</span><span>圆角</span></div></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Lucide 搜索" src="https://api.iconify.design/lucide/search.svg?color=%2371afff" /></div><span>search</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Lucide 设置" src="https://api.iconify.design/lucide/settings.svg?color=%2371afff" /></div><span>settings</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Lucide 发送" src="https://api.iconify.design/lucide/send.svg?color=%2371afff" /></div><span>send</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Lucide 数据库" src="https://api.iconify.design/lucide/database.svg?color=%2371afff" /></div><span>database</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Lucide 删除" src="https://api.iconify.design/lucide/trash-2.svg?color=%2371afff" /></div><span>trash-2</span></div>
+      </div>
+      <div class="library-row tabler">
+        <div class="library-meta"><div class="library-name"><strong>Tabler</strong><span class="badge">MIT</span></div><p>覆盖面极广、几何感更强，适合功能繁多的后台。</p><div class="traits"><span>24×24</span><span>outline / filled</span><span>大图库</span></div></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Tabler 搜索" src="https://api.iconify.design/tabler/search.svg?color=%2364d8c6" /></div><span>search</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Tabler 设置" src="https://api.iconify.design/tabler/settings.svg?color=%2364d8c6" /></div><span>settings</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Tabler 发送" src="https://api.iconify.design/tabler/send.svg?color=%2364d8c6" /></div><span>send</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Tabler 数据库" src="https://api.iconify.design/tabler/database.svg?color=%2364d8c6" /></div><span>database</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Tabler 删除" src="https://api.iconify.design/tabler/trash.svg?color=%2364d8c6" /></div><span>trash</span></div>
+      </div>
+      <div class="library-row heroicons">
+        <div class="library-meta"><div class="library-name"><strong>Heroicons</strong><span class="badge">MIT</span></div><p>更像产品 UI 组件，solid 与小尺寸版本很实用。</p><div class="traits"><span>16 / 20 / 24</span><span>outline / solid</span><span>Tailwind</span></div></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Heroicons 搜索" src="https://api.iconify.design/heroicons/magnifying-glass.svg?color=%23c8a8ff" /></div><span>magnifying-glass</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Heroicons 设置" src="https://api.iconify.design/heroicons/cog-6-tooth.svg?color=%23c8a8ff" /></div><span>cog-6-tooth</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Heroicons 发送" src="https://api.iconify.design/heroicons/paper-airplane.svg?color=%23c8a8ff" /></div><span>paper-airplane</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Heroicons 数据库" src="https://api.iconify.design/heroicons/circle-stack.svg?color=%23c8a8ff" /></div><span>circle-stack</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Heroicons 删除" src="https://api.iconify.design/heroicons/trash.svg?color=%23c8a8ff" /></div><span>trash</span></div>
+      </div>
+      <div class="library-row phosphor">
+        <div class="library-meta"><div class="library-name"><strong>Phosphor</strong><span class="badge">MIT</span></div><p>个性更强，可切换多种 weight，适合表达丰富的产品。</p><div class="traits"><span>6 weights</span><span>fill / duotone</span><span>表现力</span></div></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Phosphor 搜索" src="https://api.iconify.design/ph/magnifying-glass.svg?color=%23f4bd50" /></div><span>magnifying-glass</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Phosphor 设置" src="https://api.iconify.design/ph/gear-six.svg?color=%23f4bd50" /></div><span>gear-six</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Phosphor 发送" src="https://api.iconify.design/ph/paper-plane-tilt.svg?color=%23f4bd50" /></div><span>paper-plane-tilt</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Phosphor 数据库" src="https://api.iconify.design/ph/database.svg?color=%23f4bd50" /></div><span>database</span></div>
+        <div class="icon-cell"><div class="icon-stage"><img alt="Phosphor 删除" src="https://api.iconify.design/ph/trash.svg?color=%23f4bd50" /></div><span>trash</span></div>
+      </div>
+    </section>
+
+    <div class="section-head"><h2>关键差异</h2><p>不是谁更好，而是谁更像你的产品</p></div>
+    <section class="comparison">
+      <article><h3>Lucide</h3><dl><dt>气质</dt><dd>理性、轻量、开发者工具</dd><dt>覆盖</dt><dd>中等偏广，常用 UI 足够</dd><dt>优势</dt><dd>风格一致，命名直观，迁移简单</dd><dt>限制</dt><dd>品牌和冷门业务图标较少</dd></dl><p class="fit">适合：IDE、API 客户端、文档工具、设置密集型产品。</p></article>
+      <article><h3>Tabler</h3><dl><dt>气质</dt><dd>几何、工程、信息密集</dd><dt>覆盖</dt><dd>四者中最广之一</dd><dt>优势</dt><dd>冷门图标容易找到，格式齐全</dd><dt>限制</dt><dd>选择过多，团队容易出现语义漂移</dd></dl><p class="fit">适合：大型后台、ERP、监控平台、跨行业 SaaS。</p></article>
+      <article><h3>Heroicons</h3><dl><dt>气质</dt><dd>现代 Web 产品、组件化</dd><dt>覆盖</dt><dd>相对精简，聚焦常用界面</dd><dt>优势</dt><dd>16/20/24 尺寸与 solid 版本明确</dd><dt>限制</dt><dd>协议、数据、工程类隐喻选择较少</dd></dl><p class="fit">适合：Tailwind 产品、营销后台、表单和 CRUD 应用。</p></article>
+      <article><h3>Phosphor</h3><dl><dt>气质</dt><dd>友好、鲜明、表现力丰富</dd><dt>覆盖</dt><dd>广，且每个图标有多种 weight</dd><dt>优势</dt><dd>regular/bold/fill/duotone 可表达状态</dd><dt>限制</dt><dd>若权重不受控，很容易混成多套风格</dd></dl><p class="fit">适合：消费产品、教育、内容工具、需要插画感的界面。</p></article>
+    </section>
+
+    <div class="section-head"><h2>ApiVoy 落地方式</h2><p>先统一规则，再替换路径</p></div>
+    <section class="decision">
+      <article><h3>主图标系统</h3><ul><li>使用 <code>lucide-react</code>，保留现有 <code>&lt;Icon name="…" /&gt;</code> 包装层。</li><li>工具栏 16–18px，导航 18px，空状态 24px。</li><li>全局固定 1.8px 或 2px 描边，只选一种。</li><li>使用 <code>currentColor</code>，由按钮和状态组件控制颜色。</li></ul></article>
+      <article><h3>例外与边界</h3><ul><li>GraphQL、GitHub、Kafka 等品牌只用官方 SVG 或 Simple Icons。</li><li>不要在同一区域混入 Tabler 或 Phosphor 补缺口。</li><li>缺少协议图标时，优先使用语义隐喻，再绘制同网格自定义图标。</li><li>字符按钮 <code>••• ↑ ↓ × ✓</code> 逐步替换为统一 SVG。</li></ul></article>
+    </section>
+
+    <footer>预览图标通过 Iconify API 加载，仅用于视觉比较；正式实现应安装并锁定各图标库的官方包，同时保留相应许可证声明。</footer>
+  </main>
+</body>
+</html>
