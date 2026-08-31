@@ -33,7 +33,7 @@ A local-first, extensible workbench for API and infrastructure protocols.
 - Environments, variables, assertions, and request history
 - Import from cURL, OpenAPI, HAR, and Postman
 - Code generation for HTTP and several protocol workbenches
-- Collection runner in Desktop and CLI with CI-friendly exit codes
+- Collection execution in CLI with CI-friendly exit codes; the UI workflow will be consolidated into automation testing
 - OS keychain-backed secret storage
 - Optional traffic capture proxy (loopback defaults, sensitive header masking)
 - Optional self-hosted collaboration and private deployment (preview)

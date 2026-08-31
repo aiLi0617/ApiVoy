@@ -10,7 +10,6 @@ import {
   GrpcWorkbench,
   PluginCenter,
   MockWorkbench,
-  CollectionRunner,
   WorkbenchDeck,
   buildWorkbenchTabs,
   TeamWorkbench,
@@ -37,15 +36,16 @@ import {
   restoreTeamSnapshot,
   WorkspaceExplorer,
   type HistoryFilter,
+  type HttpWorkbenchProps,
   type HttpWorkbenchRequest,
   type WorkspaceTree,
   type InstalledPlugin,
   type PluginManifest,
   type MockRule,
-  type CollectionRunCase,
 } from "@apivoy/ui";
 import {
   CLIENT_VERSION,
+  selectResponsePreview,
   type AssertionResultEvent,
   type ExecutionSummary,
   type ExecutionEvent,
@@ -266,10 +266,53 @@ export function App() {
     };
   }, []);
 
+  const listRequestHistory = async (filter?: HistoryFilter) => {
+    const rows = await invoke<HistoryRecord[]>("list_history", {
+      limit: 30,
+      filter: filter ? { state: filter.state ?? null, status: filter.status ?? null, protocolId: filter.protocolId ?? null, requestId: filter.requestId ?? null } : null,
+    });
+    return rows.map((row) => ({ id: row.id, protocolId: row.protocolId, method: row.requestSnapshot?.payload.type === "http" ? row.requestSnapshot.payload.method : undefined, name: row.requestSnapshot?.name, state: row.state, status: row.status, durationMs: row.durationMs, startedAt: row.startedAt, target: row.requestSnapshot?.target, preview: row.preview ?? undefined }));
+  };
+
+  const replayRequestHistory = async (id: string) => {
+    const item = await invoke<HistoryRecord | null>("get_history_item", { id });
+    if (!item?.requestSnapshot) return null;
+    return item.requestSnapshot.payload.type === "http" ? fromEnvelope(item.requestSnapshot) : item.requestSnapshot;
+  };
+
+
+  const executeHistoryRequest: HttpWorkbenchProps["onSend"] = async (request, hooks) => {
+    const version = await invoke<{ desktopVersion: string; protocolApiVersion: string }>("version_info");
+    if (version.protocolApiVersion !== "1") throw new Error(`Protocol version mismatch: expected 1, received ${version.protocolApiVersion}`);
+    let activeExecutionId: string | null = null;
+    const stop = await listen<string>("execution-started", (event) => {
+      activeExecutionId = event.payload;
+      hooks?.onStarted?.(event.payload);
+    });
+    const stopEvents = await listen<{ executionId: string; event: ExecutionEvent }>("execution-event", ({ payload }) => {
+      if (activeExecutionId !== payload.executionId) return;
+      hooks?.onEvent?.(payload.event);
+      if (payload.event.type === "response_chunk" && payload.event.preview) hooks?.onChunk?.(payload.event.preview);
+    });
+    try {
+      const data = await invoke<ExecuteResponse>("execute_request", { request: toInvokeRequest(request) });
+      hooks?.onStarted?.(data.executionId);
+      return { summary: data.summary, eventCount: data.eventCount, preview: selectResponsePreview(data.responseBody, data.preview), executionId: data.executionId, assertions: data.assertions ?? [], responseMeta: data.responseMeta ?? null };
+    } finally {
+      stop();
+      stopEvents();
+    }
+  };
+
+  const executeHistoryEnvelope = async (request: RequestEnvelope) => {
+    const data = await invoke<ExecuteResponse>("execute_protocol", { request });
+    return { summary: data.summary, eventCount: data.eventCount, preview: selectResponsePreview(data.responseBody, data.preview), executionId: data.executionId, assertions: data.assertions ?? [], responseMeta: data.responseMeta ?? null };
+  };
   return (
     <AppShell
       channelLabel="Desktop ↔ Rust Core"
       projectContext={{ projects: tree?.projects ?? [], selectedProjectId, onSelectProject: (projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); } }}
+      requestHistory={{ onList: listRequestHistory, onReplay: replayRequestHistory, requestEditor: { onSend: executeHistoryRequest, onSendEnvelope: executeHistoryEnvelope, onCancel: async (executionId) => { await invoke<boolean>("cancel_execution", { id: executionId }); }, onSaveInterface: async (request, collectionId) => { await invoke("save_request", { request: toInvokeRequest(request), projectId: selectedProjectId, collectionId }); await refreshTree(); }, onSaveEnvelopeInterface: async (request, collectionId) => { await invoke("save_envelope", { request, projectId: selectedProjectId, collectionId }); await refreshTree(); }, onSaveDebugCase: async (request, parent) => { await invoke("save_request", { request: toInvokeRequest(request), projectId: parent.projectId, collectionId: parent.collectionId }); await refreshTree(); }, onSaveEnvelopeDebugCase: async (request, parent) => { await invoke("save_envelope", { request, projectId: parent.projectId, collectionId: parent.collectionId }); await refreshTree(); }, onOpenInterface: async (id) => { const record = tree?.requests.find((request) => request.id === id); if (record) { setSelectedProjectId(record.projectId); setSelectedCollectionId(record.collectionId); setSelectedRequestId(id); } const stored = await invoke<StoredRequest | null>("get_request", { id }); if (stored) window.dispatchEvent(new CustomEvent("apivoy-open-request", { detail: stored.envelope })); }, interfaces: (tree?.requests ?? []).filter((request) => !request.envelope?.variables?.__apivoyCaseOf).map((request) => ({ id: request.id, name: request.name, projectId: request.projectId, collectionId: request.collectionId, method: request.method, protocolId: request.protocolId, target: request.target })), saveCollections: (tree?.collections ?? []).filter((collection) => collection.projectId === selectedProjectId), saveModules: tree?.modules ?? [], defaultSaveCollectionId: selectedCollectionId } }}
       connectionStatus={null}
       environment={{
         onLoad: async () => invoke<{ variables: Record<string, string>; secretRefs?: string[] }>("get_environment", { id: "default-env" }),
@@ -302,10 +345,9 @@ export function App() {
       onMoveRequest={async (id, projectId, collectionId) => { await invoke("move_request", { id, projectId, collectionId }); await refreshTree(); }}
       onImportRequests={async (projectId, collectionId, requests) => { const paths = new Map<string, string>(); for (const request of requests) { let parentId = collectionId; let key = collectionId; for (const segment of request.collectionPath ?? []) { key += `/${segment}`; let id = paths.get(key); if (!id) { const existing = tree?.collections.find((item) => item.projectId === projectId && (item.parentId ?? null) === parentId && item.name === segment); const created = existing ?? await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId, parentId, name: segment }); id = created.id; paths.set(key, id); } parentId = id; } await invoke("save_request", { request: toInvokeRequest({ name: request.name, url: request.url, method: request.method, headers: Object.entries(request.headers), body: request.body, timeoutMs: 30000, variables: request.variables ?? {}, assertions: [], auth: null, followRedirects: true, retryMax: 0, retryBackoffMs: 250, proxy: null, tlsVerify: true }), projectId, collectionId: parentId }); } await refreshTree(); }}
       onExportProject={async (project) => { const items = tree?.requests.filter((item) => item.projectId === project.id) ?? []; return Promise.all(items.map(async (item) => { const stored = await invoke<StoredRequest | null>("get_request", { id: item.id }); const request = stored ? fromEnvelope(stored.envelope, stored.target) : null; return { name: item.name, method: request?.method ?? item.method ?? "GET", url: request?.url ?? item.target, headers: Object.fromEntries(request?.headers ?? []), body: request?.body }; })); }}
-      onDeleteRequest={async (id) => { await invoke("delete_request", { id }); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }}
-      onRunCollection={(projectId, collectionId) => { setSelectedProjectId(projectId); setSelectedCollectionId(collectionId); }}
+      onDeleteRequest={async (id) => { await invoke("delete_request", { id }); window.dispatchEvent(new CustomEvent("apivoy-request-deleted", { detail: { requestId: id } })); if (selectedRequestId === id) setSelectedRequestId(null); await refreshTree(); }}
     />}>
-      <WorkbenchDeck definitionClient={{ list: (projectId) => invoke("list_api_definitions", { projectId }), save: (input) => invoke("save_api_definition", { request: input }), binding: (requestId) => invoke("get_request_definition_binding", { requestId }), bind: (requestId, definitionId, operationRef) => invoke("bind_request_definition", { requestId, definitionId, operationRef }), unbind: (requestId) => invoke("unbind_request_definition", { requestId }) }} tabs={buildWorkbenchTabs({ runner: true })} projects={(tree?.projects ?? []).map((project) => { const requests = tree?.requests.filter((request) => request.projectId === project.id) ?? []; return { id: project.id, name: project.name, resourceCount: requests.length, protocols: Array.from(new Set(requests.map((request) => request.protocolId ?? request.method ?? "http"))) }; })} selectedProjectId={selectedProjectId} onSelectProject={(projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); }} onCreateProject={async (name) => { const created = await invoke<WorkspaceTree["projects"][number]>("create_project", { workspaceId: tree?.workspaces[0]?.id ?? "default-workspace", name }); setSelectedProjectId(created.id); setSelectedCollectionId(""); await refreshTree(); }} onRenameProject={async (id, name) => { await invoke("rename_project", { id, name }); await refreshTree(); }} onCloneProject={cloneProject} onDeleteProject={async (id) => { await invoke("delete_project", { id }); if (selectedProjectId === id) { const fallback = tree?.projects.find((project) => project.id !== id); setSelectedProjectId(fallback?.id ?? ""); setSelectedCollectionId(fallback ? tree?.collections.find((item) => item.projectId === fallback.id)?.id ?? "" : ""); setSelectedRequestId(null); } await refreshTree(); }} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
+      <WorkbenchDeck saveCollections={tree?.collections ?? []} saveModules={tree?.modules ?? []} onCreateSaveCollection={async (projectId, parentId, name, moduleId) => { const created = await invoke<WorkspaceTree["collections"][number]>("create_collection", { projectId, parentId, name, moduleId }); await refreshTree(); return created; }} definitionClient={{ list: (projectId) => invoke("list_api_definitions", { projectId }), save: (input) => invoke("save_api_definition", { request: input }), binding: (requestId) => invoke("get_request_definition_binding", { requestId }), bind: (requestId, definitionId, operationRef) => invoke("bind_request_definition", { requestId, definitionId, operationRef }), unbind: (requestId) => invoke("unbind_request_definition", { requestId }) }} tabs={buildWorkbenchTabs({ runner: false })} projects={(tree?.projects ?? []).map((project) => { const requests = tree?.requests.filter((request) => request.projectId === project.id) ?? []; return { id: project.id, name: project.name, resourceCount: requests.length, protocols: Array.from(new Set(requests.map((request) => request.protocolId ?? request.method ?? "http"))) }; })} selectedProjectId={selectedProjectId} onSelectProject={(projectId) => { setSelectedProjectId(projectId); setSelectedCollectionId(tree?.collections.find((item) => item.projectId === projectId)?.id ?? ""); setSelectedRequestId(null); }} onCreateProject={async (name) => { const created = await invoke<WorkspaceTree["projects"][number]>("create_project", { workspaceId: tree?.workspaces[0]?.id ?? "default-workspace", name }); setSelectedProjectId(created.id); setSelectedCollectionId(""); await refreshTree(); }} onRenameProject={async (id, name) => { await invoke("rename_project", { id, name }); await refreshTree(); }} onCloneProject={cloneProject} onDeleteProject={async (id) => { await invoke("delete_project", { id }); if (selectedProjectId === id) { const fallback = tree?.projects.find((project) => project.id !== id); setSelectedProjectId(fallback?.id ?? ""); setSelectedCollectionId(fallback ? tree?.collections.find((item) => item.projectId === fallback.id)?.id ?? "" : ""); setSelectedRequestId(null); } await refreshTree(); }} saveTargetLabel={`${selectedProjectId} / ${selectedCollectionId}`}>
       <HttpWorkbench
         onSend={async (request, hooks) => {
           const version = await invoke<{
@@ -336,7 +378,7 @@ export function App() {
             return {
               summary: data.summary,
               eventCount: data.eventCount,
-              preview: data.responseBody ?? data.preview ?? JSON.stringify(data.summary, null, 2),
+              preview: selectResponsePreview(data.responseBody, data.preview),
               executionId: data.executionId,
               assertions: data.assertions ?? [],
               responseMeta: data.responseMeta ?? null,
@@ -463,7 +505,6 @@ export function App() {
         onCreate={async (rule) => { await agentJson<MockRule>("/v1/mock-rules", { method: "POST", body: JSON.stringify(rule) }); }}
         onDelete={async (id) => { await agentJson<void>(`/v1/mock-rules/${id}`, { method: "DELETE" }); }}
       />
-      <CollectionRunner collectionId={selectedCollectionId} onRun={(collectionId, failFast) => invoke<CollectionRunCase[]>("run_collection", { collectionId, failFast })} />
       <GatewayWorkbench />
       <CaptureWorkbench onStatus={()=>invoke<CaptureStatus>("capture_status")} onStart={(bind)=>invoke<CaptureStatus>("start_capture",{request:{bind,allowRemote:false}})} onStop={()=>invoke<CaptureStatus>("stop_capture")} onList={()=>invoke<CapturedExchange[]>("capture_exchanges")} onClear={()=>invoke("clear_capture")} />
       <PluginCenter

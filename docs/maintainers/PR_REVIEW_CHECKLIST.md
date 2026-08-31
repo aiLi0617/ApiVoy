@@ -8,9 +8,13 @@
 
 ---
 
-## 0. 必跑验证（按改动类型）
+## 0. PR / 最终交付前必跑验证（按改动类型）
 
-| 改动 | 本地至少跑 |
+以下全量验证在 PR 或任务最终交付前集中运行一次，不要求在每次代码编辑后重复执行。
+开发过程中优先运行受影响包、模块或用例的最小相关检查；相关修改稳定后再执行全量验证。
+纯文档改动无需运行代码测试。若全量验证通过后仅修改了不影响代码的内容，无需重跑。
+
+| 改动 | PR / 最终交付前至少跑一次 |
 |------|------------|
 | TypeScript / UI | `pnpm typecheck`、`pnpm test`；UI 再加 `pnpm test:e2e` + 截图 |
 | Rust / Cargo.lock | `cargo test --workspace --locked`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo audit -D warnings` |

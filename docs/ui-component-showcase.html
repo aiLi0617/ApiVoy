@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ApiVoy 真实组件样式清单</title>
+  <link rel="stylesheet" href="../packages/ui/src/styles.css">
+  <link rel="stylesheet" href="../packages/ui/src/RequestHistoryPanel.css">
+  <style>
+    html,body { min-height:100%; }
+    body { overflow:auto; background:var(--apivoy-bg); }
+    svg { display:block; fill:none; stroke:currentColor; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round; }
+    .catalog-shell { min-height:100dvh; display:grid; grid-template-columns:224px minmax(0,1fr); grid-template-rows:48px minmax(0,1fr); }
+    .catalog-header { grid-column:1/-1; position:sticky; top:0; z-index:var(--z-header); display:flex; align-items:center; gap:10px; padding:0 12px; border-bottom:1px solid var(--apivoy-border); background:var(--apivoy-nav); }
+    .catalog-brand { display:flex; align-items:center; gap:9px; font-weight:750; }
+    .catalog-brand .brand-mark { width:28px; height:28px; display:grid; place-items:center; }
+    .catalog-brand svg { width:18px; height:18px; }
+    .catalog-header-note { color:var(--apivoy-muted); font-size:11px; }
+    .catalog-header-actions { margin-left:auto; display:flex; gap:5px; }
+    .catalog-nav { position:sticky; top:48px; height:calc(100dvh - 48px); overflow:auto; padding:9px 7px 24px; border-right:1px solid var(--apivoy-border); background:var(--apivoy-nav); }
+    .catalog-nav-title { padding:9px 8px 4px; color:var(--apivoy-subtle); font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+    .catalog-nav a { min-height:31px; display:flex; align-items:center; gap:8px; padding:0 8px; border-radius:5px; color:var(--apivoy-muted); font-size:11px; text-decoration:none; }
+    .catalog-nav a:hover,.catalog-nav a:focus-visible { background:var(--apivoy-bg-elevated); color:var(--apivoy-text); }
+    .catalog-nav svg { width:14px; height:14px; }
+    .catalog-main { min-width:0; padding:22px clamp(12px,3vw,34px) 60px; background:var(--apivoy-workspace); }
+    .catalog-intro { max-width:1180px; margin:0 auto 16px; }
+    .catalog-intro h1 { margin:0 0 6px; font-size:22px; }
+    .catalog-intro p { max-width:830px; margin:0; color:var(--apivoy-muted); font-size:12px; line-height:1.65; }
+    .catalog-proof { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+    .catalog-proof span { padding:3px 7px; border:1px solid var(--apivoy-border); border-radius:999px; background:var(--apivoy-bg-elevated); color:var(--apivoy-muted); font:9px var(--apivoy-mono); }
+    .catalog-list { max-width:1180px; margin:auto; display:grid; gap:14px; }
+    .catalog-section { scroll-margin-top:62px; border:1px solid var(--apivoy-border); border-radius:9px; overflow:hidden; background:var(--apivoy-bg-elevated); }
+    .catalog-section-head { min-height:50px; display:flex; align-items:center; gap:10px; padding:9px 13px; border-bottom:1px solid var(--apivoy-border); background:color-mix(in srgb,var(--apivoy-bg-elevated) 72%,var(--apivoy-nav)); }
+    .catalog-section-head svg { width:16px; height:16px; color:var(--apivoy-accent); }
+    .catalog-section-head h2 { margin:0; font-size:14px; }
+    .catalog-section-head p { margin:2px 0 0; color:var(--apivoy-muted); font-size:10px; }
+    .catalog-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; background:var(--apivoy-border); }
+    .catalog-demo { min-width:0; padding:14px; background:var(--apivoy-bg-elevated); }
+    .catalog-demo.full { grid-column:1/-1; }
+    .catalog-demo h3 { margin:0 0 3px; font-size:12px; }
+    .catalog-caption { margin:0 0 12px; color:var(--apivoy-muted); font-size:10px; line-height:1.55; }
+    .catalog-source { display:inline-flex; margin-left:5px; color:var(--apivoy-accent); font:9px var(--apivoy-mono); }
+    .catalog-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+    .catalog-stack { display:grid; gap:9px; }
+    .catalog-state-grid { display:grid; grid-template-columns:repeat(6,minmax(92px,1fr)); gap:8px; }
+    .catalog-state-grid > div { min-width:0; }
+    .catalog-state-grid small { display:block; margin-bottom:6px; color:var(--apivoy-subtle); font-size:9px; }
+    .catalog-force-hover { border-color:var(--apivoy-border-strong)!important; filter:brightness(1.08); }
+    .catalog-force-focus { outline:2px solid var(--apivoy-accent)!important; outline-offset:2px; }
+    .catalog-force-active { box-shadow:inset 0 1px 3px rgba(0,0,0,.32); filter:brightness(.94); }
+    .catalog-tokens { display:grid; grid-template-columns:repeat(8,minmax(72px,1fr)); gap:7px; }
+    .catalog-token { overflow:hidden; border:1px solid var(--apivoy-border); border-radius:6px; background:var(--apivoy-workspace); }
+    .catalog-token-color { height:38px; background:var(--token); }
+    .catalog-token code { display:block; padding:6px; overflow:hidden; color:var(--apivoy-muted); font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
+    .catalog-input-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .catalog-tab-example { min-width:0; overflow:hidden; border:1px solid var(--apivoy-border); border-radius:7px; background:var(--apivoy-workspace); }
+    .catalog-tab-panel { min-height:150px; box-sizing:border-box; padding:14px; }
+    .catalog-tab-panel[hidden] { display:none; }
+    .catalog-panel-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .catalog-panel-note { display:grid; gap:5px; padding:12px; border:1px solid var(--apivoy-border); border-radius:6px; background:var(--apivoy-bg-elevated); color:var(--apivoy-muted); font-size:10px; }
+    .catalog-panel-note strong { color:var(--apivoy-text); font-size:11px; }
+    .catalog-code-editor { min-height:90px; margin:0; padding:11px; border-top:1px solid var(--apivoy-border); background:var(--apivoy-bg); color:var(--apivoy-text); font:11px/1.55 var(--apivoy-mono); }
+    .catalog-surface { padding:12px; border:1px solid var(--apivoy-border); border-radius:7px; background:var(--apivoy-workspace); }
+    .catalog-inline-toast { position:static; width:auto; }
+    .catalog-inline-dialog { position:static; display:block; padding:14px; background:color-mix(in srgb,var(--apivoy-bg) 65%,transparent); }
+    .catalog-inline-dialog .confirm-dialog { margin:auto; }
+    .catalog-inline-settings { width:100%; height:auto; max-height:none; }
+    .catalog-inline-settings .settings-dialog-body { min-height:280px; }
+    .catalog-command-wrap { padding:18px; background:color-mix(in srgb,var(--apivoy-bg) 65%,transparent); }
+    .catalog-command-wrap .command-palette { margin:auto; }
+    .catalog-split { height:250px; }
+    .catalog-split .split-horizontal { --split-min-primary:120px; --split-min-secondary:120px; --split-ratio:48%; }
+    .catalog-split .split-panel { display:grid; place-items:center; background:var(--apivoy-workspace); color:var(--apivoy-muted); }
+    .catalog-split .split-handle { min-width:24px; }
+    .catalog-protocol { min-height:280px; border:1px solid var(--apivoy-border); border-radius:8px; overflow:hidden; }
+    .catalog-protocol .protocol-workbench-layout { height:280px; }
+    .catalog-protocol .protocol-request-content { display:grid; align-content:start; gap:10px; }
+    .catalog-protocol .protocol-response-pane { padding:12px; }
+    .catalog-actual-http { height:640px; min-width:820px; border:1px solid var(--apivoy-border); border-radius:8px; overflow:hidden; background:var(--apivoy-workspace); }
+    .catalog-actual-http.workbench-panel { position:relative; inset:auto; }
+    .catalog-actual-http-scroll { overflow:auto; }
+    .catalog-actual-http .interface-lifecycle { height:640px; }
+    .catalog-actual-http .http-inline-input { flex:1; min-width:220px; padding:12px 14px; border:1px solid var(--apivoy-border); border-radius:10px; outline:none; background:#0d131b; color:var(--apivoy-text); font:12px var(--apivoy-mono); }
+    .catalog-actual-http .http-inline-method { padding:10px 12px; border:1px solid rgba(62,207,142,.35); border-radius:9px; background:rgba(62,207,142,.12); color:var(--apivoy-success); font:600 13px var(--apivoy-mono); }
+    .catalog-actual-http .http-inline-send { padding:12px 18px; border:0; border-radius:10px; background:var(--apivoy-accent); color:#041018; box-shadow:0 8px 22px rgba(31,111,184,.22); font-size:14px; font-weight:600; cursor:pointer; }
+    .catalog-actual-http .http-inline-save { padding:12px 18px; border:1px solid var(--apivoy-border); border-radius:10px; background:rgba(255,255,255,.025); color:var(--apivoy-text); font-size:14px; font-weight:600; cursor:pointer; }
+    .catalog-actual-http .catalog-http-body { height:100%; min-height:0; display:grid; grid-template-rows:minmax(0,1fr) 1px minmax(250px,.95fr); padding:0 10px; }
+    .catalog-actual-http .catalog-request-pane { min-height:0; overflow:auto; padding-top:4px; }
+    .catalog-actual-http .catalog-request-tabs { display:flex; flex-wrap:wrap; gap:2px; margin-bottom:12px; border-bottom:1px solid var(--apivoy-border); }
+    .catalog-actual-http .catalog-request-tabs button { height:34px; display:flex; align-items:center; margin-bottom:-1px; padding:0 8px; border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:var(--apivoy-muted); font-size:11px; cursor:pointer; }
+    .catalog-actual-http .catalog-request-tabs button.is-active { border-bottom-color:var(--apivoy-accent); color:var(--apivoy-accent); }
+    .catalog-actual-http .catalog-http-divider { position:relative; background:var(--apivoy-border); }
+    .catalog-actual-http .catalog-http-divider::after { content:""; position:absolute; left:50%; top:-2px; width:18px; height:5px; border-radius:4px; background:var(--apivoy-border-strong); transform:translateX(-50%); }
+    .catalog-actual-http .catalog-response-region { min-height:0; display:grid; grid-template-rows:40px minmax(0,1fr); }
+    .catalog-actual-http .catalog-response-heading { display:flex; align-items:center; justify-content:space-between; padding:0 12px 0 30px; border-bottom:1px solid var(--apivoy-border); color:var(--apivoy-text); font-size:12px; font-weight:650; }
+    .catalog-actual-http .response-empty { background:color-mix(in srgb,var(--apivoy-bg) 55%,var(--apivoy-workspace)); }
+    .catalog-environment { overflow:auto; }
+    .catalog-environment .environment-kv-editor { min-width:640px; }
+    .catalog-history { height:520px; border:1px solid var(--apivoy-border); border-radius:8px; overflow:hidden; }
+    .catalog-history .request-history-page { height:100%; }
+    .catalog-history .request-history-detail-card { padding:18px; }
+    .catalog-history .request-history-response pre { min-height:110px; max-height:140px; }
+    .catalog-interface-table { overflow:auto; }
+    .catalog-interface-table .interface-case-table { min-width:760px; }
+    .catalog-legacy-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+    .catalog-legacy-card { display:grid; gap:8px; padding:11px; border:1px solid var(--apivoy-border); border-radius:7px; background:var(--apivoy-workspace); }
+    .catalog-legacy-card strong { font-size:11px; }
+    .catalog-legacy-card small { color:var(--apivoy-muted); font-size:9px; }
+    .catalog-legacy-card button { min-height:34px; border-radius:8px; padding:0 12px; font-weight:700; }
+    .legacy-ai { border:1px solid rgba(179,88,255,.36); background:rgba(179,88,255,.1); color:#e2c5ff; }
+    .legacy-capture { border:1px solid rgba(255,150,52,.35); background:rgba(255,150,52,.08); color:#ffd2a3; }
+    .legacy-rpc { border:1px solid rgba(36,197,183,.35); background:rgba(36,197,183,.08); color:#bff5ef; }
+    .legacy-team { border:1px solid rgba(86,173,245,.35); background:var(--apivoy-accent-soft); color:#cdeaff; }
+    :root[data-theme="light"] .legacy-ai,:root[data-theme="light"] .legacy-capture,:root[data-theme="light"] .legacy-rpc,:root[data-theme="light"] .legacy-team { color:var(--apivoy-text); }
+    .catalog-map { width:100%; min-width:900px; border-collapse:collapse; }
+    .catalog-map th,.catalog-map td { padding:8px 10px; border-bottom:1px solid var(--apivoy-border); vertical-align:top; text-align:left; }
+    .catalog-map th { color:var(--apivoy-subtle); background:var(--apivoy-workspace); font-size:9px; }
+    .catalog-map td { color:var(--apivoy-muted); font-size:10px; }
+    .catalog-map code { color:var(--apivoy-accent); }
+    .catalog-callout { padding:10px 12px; border-left:3px solid var(--apivoy-warning); background:color-mix(in srgb,var(--apivoy-warning) 9%,transparent); color:var(--apivoy-muted); font-size:10px; line-height:1.55; }
+    @media(max-width:900px) { .catalog-shell{grid-template-columns:52px minmax(0,1fr)}.catalog-nav{padding-inline:5px}.catalog-nav-title,.catalog-nav span{display:none}.catalog-nav a{justify-content:center;padding:0}.catalog-grid{grid-template-columns:1fr}.catalog-demo.full{grid-column:auto}.catalog-state-grid{grid-template-columns:repeat(3,1fr)}.catalog-tokens{grid-template-columns:repeat(4,1fr)}.catalog-legacy-grid{grid-template-columns:repeat(2,1fr)} }
+    @media(max-width:620px) { .catalog-shell{display:block}.catalog-header{height:48px}.catalog-nav{display:none}.catalog-main{padding:16px 10px 50px}.catalog-header-note{display:none}.catalog-state-grid{grid-template-columns:repeat(2,1fr)}.catalog-tokens{grid-template-columns:repeat(2,1fr)}.catalog-input-row,.catalog-legacy-grid{grid-template-columns:1fr}.catalog-header-actions .command-trigger{display:none}.catalog-history{height:620px}.catalog-history .request-history-page{grid-template-columns:1fr;grid-template-rows:260px 1fr}.catalog-inline-settings .settings-dialog-body{grid-template-columns:1fr}.catalog-inline-settings .settings-categories{display:none}.catalog-inline-settings .settings-content{grid-column:1} }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"></path></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 3v6h8V3M8 15h8"></path></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M8 7l1 13h6l1-13"></path></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.8 19h18.4L12 3Z"></path><path d="M12 9v4M12 16h.01"></path></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"></path></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3V9.6h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.1.4.3.8.6 1 .3.3.7.4 1.1.4h.1v4h-.1c-.4 0-.8.1-1.1.4-.3.2-.5.6-.6 1Z"></path></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"></path></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></symbol>
+  </svg>
+
+  <div class="catalog-shell">
+    <header class="catalog-header">
+      <div class="catalog-brand"><span class="brand-mark"><svg viewBox="0 0 24 24"><use href="#i-grid"></use></svg></span><span>ApiVoy 真实组件</span></div>
+      <span class="catalog-header-note">直接加载 packages/ui/src/styles.css · 不包含推测组件</span>
+      <div class="catalog-header-actions"><button class="command-trigger" type="button"><svg width="14" height="14"><use href="#i-search"></use></svg><span>搜索组件</span><kbd>Ctrl K</kbd></button><button class="ui-icon-button" id="themeToggle" type="button" aria-label="切换浅色主题" title="切换主题"><svg width="16" height="16"><use href="#i-settings"></use></svg></button></div>
+    </header>
+
+    <nav class="catalog-nav" aria-label="组件目录">
+      <div class="catalog-nav-title">基础</div>
+      <a href="#tokens"><svg><use href="#i-grid"></use></svg><span>真实令牌</span></a>
+      <a href="#buttons"><svg><use href="#i-send"></use></svg><span>按钮体系</span></a>
+      <a href="#fields"><svg><use href="#i-settings"></use></svg><span>字段与选择</span></a>
+      <a href="#navigation"><svg><use href="#i-chevron"></use></svg><span>Tabs 与导航</span></a>
+      <div class="catalog-nav-title">工作台</div>
+      <a href="#commandbars"><svg><use href="#i-send"></use></svg><span>协议命令栏</span></a>
+      <a href="#http-workbench"><svg><use href="#i-grid"></use></svg><span>HTTP 实际工作台</span></a>
+      <a href="#split"><svg><use href="#i-more"></use></svg><span>分栏控件</span></a>
+      <div class="catalog-nav-title">浮层与设置</div>
+      <a href="#feedback"><svg><use href="#i-alert"></use></svg><span>反馈组件</span></a>
+      <a href="#overlays"><svg><use href="#i-search"></use></svg><span>菜单与弹窗</span></a>
+      <a href="#settings"><svg><use href="#i-settings"></use></svg><span>设置与环境</span></a>
+      <div class="catalog-nav-title">业务组件</div>
+      <a href="#history"><svg><use href="#i-clock"></use></svg><span>请求历史</span></a>
+      <a href="#legacy"><svg><use href="#i-grid"></use></svg><span>遗留私有按钮</span></a>
+      <a href="#mapping"><svg><use href="#i-check"></use></svg><span>源码映射</span></a>
+    </nav>
+
+    <main class="catalog-main">
+      <div class="catalog-intro"><h1>现有组件样式清单</h1><p>本页不重新发明控件。下面的示例使用项目真实类名、真实样式表和真实组合关系；后续调整这些共享样式时，本页面会同步更新。工具类工作台仍存在的内联私有按钮会单独列出，作为待收敛对象。</p><div class="catalog-proof"><span>styles.css</span><span>feedback.css</span><span>workbench-standard.css</span><span>RequestHistoryPanel.css</span><span>真实 className</span></div></div>
+
+      <div class="catalog-list">
+        <section class="catalog-section" id="tokens"><div class="catalog-section-head"><svg><use href="#i-grid"></use></svg><div><h2>全局设计令牌</h2><p>来自 packages/ui/src/styles.css 的 :root</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>实际颜色变量 <span class="catalog-source">styles.css:4–20</span></h3><p class="catalog-caption">深浅主题切换直接使用项目的 data-theme 实现。</p><div class="catalog-tokens">
+            <div class="catalog-token" style="--token:var(--apivoy-bg)"><div class="catalog-token-color"></div><code>--apivoy-bg</code></div><div class="catalog-token" style="--token:var(--apivoy-nav)"><div class="catalog-token-color"></div><code>--apivoy-nav</code></div><div class="catalog-token" style="--token:var(--apivoy-workspace)"><div class="catalog-token-color"></div><code>--apivoy-workspace</code></div><div class="catalog-token" style="--token:var(--apivoy-bg-elevated)"><div class="catalog-token-color"></div><code>--apivoy-bg-elevated</code></div><div class="catalog-token" style="--token:var(--apivoy-overlay)"><div class="catalog-token-color"></div><code>--apivoy-overlay</code></div><div class="catalog-token" style="--token:var(--apivoy-accent)"><div class="catalog-token-color"></div><code>--apivoy-accent</code></div><div class="catalog-token" style="--token:var(--apivoy-success)"><div class="catalog-token-color"></div><code>--apivoy-success</code></div><div class="catalog-token" style="--token:var(--apivoy-danger)"><div class="catalog-token-color"></div><code>--apivoy-danger</code></div>
+          </div></div>
+        </div></section>
+
+        <section class="catalog-section" id="buttons"><div class="catalog-section-head"><svg><use href="#i-send"></use></svg><div><h2>项目真实按钮体系</h2><p>共享按钮、图标按钮、协议按钮及 gRPC 按钮</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>共享 Button 状态 <span class="catalog-source">.ui-button · feedback.css</span></h3><p class="catalog-caption">实际项目目前定义 primary、secondary、danger 三种共享变体。</p><div class="catalog-state-grid"><div><small>Primary</small><button class="ui-button primary" type="button">确认</button></div><div><small>Secondary</small><button class="ui-button secondary" type="button">取消</button></div><div><small>Danger</small><button class="ui-button danger" type="button">删除</button></div><div><small>Hover</small><button class="ui-button secondary catalog-force-hover" type="button">悬停</button></div><div><small>Focus</small><button class="ui-button secondary catalog-force-focus" type="button">聚焦</button></div><div><small>Disabled</small><button class="ui-button primary" type="button" disabled>禁用</button></div></div></div>
+          <div class="catalog-demo"><h3>Icon Button <span class="catalog-source">.ui-icon-button</span></h3><p class="catalog-caption">32px 默认、26px compact、is-active 选中态。</p><div class="catalog-row"><button class="ui-icon-button" type="button" aria-label="搜索"><svg width="16" height="16"><use href="#i-search"></use></svg></button><button class="ui-icon-button compact" type="button" aria-label="更多"><svg width="14" height="14"><use href="#i-more"></use></svg></button><button class="ui-icon-button is-active" type="button" aria-label="当前设置"><svg width="16" height="16"><use href="#i-settings"></use></svg></button><button class="ui-icon-button" type="button" disabled aria-label="不可用"><svg width="16" height="16"><use href="#i-trash"></use></svg></button></div></div>
+          <div class="catalog-demo"><h3>Protocol Action <span class="catalog-source">.protocol-*-button</span></h3><p class="catalog-caption">ProtocolWorkbenchLayout 中真实使用的运行、取消、保存按钮。</p><div class="catalog-row"><button class="protocol-run-button" type="button">Run</button><button class="protocol-cancel-button" type="button">Cancel</button><button class="protocol-save-button" type="button">Save</button><button class="protocol-run-button" type="button" disabled>Running</button></div></div>
+          <div class="catalog-demo full"><h3>gRPC Action <span class="catalog-source">.grpc-primary / secondary / danger</span></h3><p class="catalog-caption">gRPC 当前拥有独立尺寸与按钮变体，后续需要与共享 Button 收敛。</p><div class="catalog-row"><button class="grpc-primary" type="button"><svg width="14" height="14"><use href="#i-send"></use></svg>Invoke</button><button class="grpc-secondary" type="button">Load descriptor</button><button class="grpc-danger" type="button">Cancel stream</button></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="fields"><div class="catalog-section-head"><svg><use href="#i-settings"></use></svg><div><h2>字段、Checkbox 与 Switch</h2><p>使用设置字段、Prompt 字段、项目验证和 HTTP Switch 的真实结构</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo"><h3>Settings Field <span class="catalog-source">.settings-field</span></h3><p class="catalog-caption">设置弹窗与应用设置中的输入和下拉框。</p><div class="catalog-input-row"><label class="settings-field">界面语言<select><option>简体中文</option><option>English</option></select><span class="settings-hint">重新打开页面后仍会保留。</span></label><label class="settings-field">Local Agent 地址<input value="http://127.0.0.1:39217"><span class="settings-hint">仅允许本机连接。</span></label></div></div>
+          <div class="catalog-demo"><h3>Prompt Field <span class="catalog-source">.prompt-field</span></h3><p class="catalog-caption">输入型弹窗使用的字段样式。</p><label class="prompt-field">集合名称<input value="用户接口"></label></div>
+          <div class="catalog-demo"><h3>Native Checkbox <span class="catalog-source">.project-validation-content</span></h3><p class="catalog-caption">项目验证页当前使用原生 Checkbox 与 accent-color。</p><div class="project-validation-content"><header><strong>接口验证</strong><span>发送请求后自动执行以下规则</span></header><label><input type="checkbox" checked><span><strong>验证响应状态</strong><small>与接口设计中的状态码进行比较</small></span></label><label><input type="checkbox"><span><strong>验证响应结构</strong><small>根据 Schema 检查字段类型</small></span></label></div></div>
+          <div class="catalog-demo"><h3>HTTP Switch <span class="catalog-source">.http-switch</span></h3><p class="catalog-caption">响应校验和接口设计开关的真实实现。</p><div class="catalog-row"><label class="http-response-validation-control"><span>校验响应</span><span class="http-switch"><input type="checkbox" checked><span></span></span></label><label class="http-response-validation-control"><span>停用状态</span><span class="http-switch"><input type="checkbox" disabled><span></span></span></label></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="navigation"><div class="catalog-section-head"><svg><use href="#i-chevron"></use></svg><div><h2>项目现有 Tabs 与内容面板</h2><p>每组示例都包含真实 tablist、tabpanel 和点击切换状态</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo"><h3>Collaboration Tabs <span class="catalog-source">CollaborationHub.tsx</span></h3><div class="catalog-tab-example" data-tab-group><div class="collaboration-tabs" role="tablist" aria-label="协作中心"><button class="is-active" role="tab" aria-selected="true" type="button" data-tab-target="collab-team">团队</button><button role="tab" aria-selected="false" type="button" data-tab-target="collab-comments">评论</button><button role="tab" aria-selected="false" type="button" data-tab-target="collab-sso">SSO</button></div><div class="collaboration-dialog-body catalog-tab-panel" role="tabpanel" data-tab-panel="collab-team"><div class="catalog-panel-note"><strong>团队工作区</strong><span>团队成员、角色与共享工作区内容由 AppShell 作为 ReactNode 传入。</span><button class="ui-button primary" type="button">邀请成员</button></div></div><div class="collaboration-dialog-body catalog-tab-panel" role="tabpanel" data-tab-panel="collab-comments" hidden><div class="catalog-panel-note"><strong>评论</strong><span>查看当前项目中的讨论并添加评论。</span><label class="prompt-field">评论内容<input placeholder="输入评论"></label></div></div><div class="collaboration-dialog-body catalog-tab-panel" role="tabpanel" data-tab-panel="collab-sso" hidden><div class="catalog-panel-note"><strong>单点登录</strong><span>当前企业身份服务尚未配置。</span><button class="ui-button secondary" type="button" disabled>使用企业账号继续</button></div></div></div></div>
+          <div class="catalog-demo"><h3>Protocol Mode Tabs <span class="catalog-source">ProtocolWorkbenchLayout.tsx</span></h3><div class="catalog-tab-example" data-tab-group><div class="protocol-mode-tabs" role="tablist"><button class="is-active" role="tab" aria-selected="true" type="button" data-tab-target="protocol-publish">Publish</button><button role="tab" aria-selected="false" type="button" data-tab-target="protocol-consume">Consume</button></div><div class="protocol-request-content catalog-tab-panel" role="tabpanel" data-tab-panel="protocol-publish"><div class="catalog-panel-fields"><label class="settings-field">Topic<input value="apivoy/events"></label><label class="settings-field">QoS<select><option>1 · At least once</option></select></label></div></div><div class="protocol-request-content catalog-tab-panel" role="tabpanel" data-tab-panel="protocol-consume" hidden><div class="catalog-panel-fields"><label class="settings-field">Subscription<input value="apivoy/#"></label><label class="settings-field">QoS<select><option>0 · At most once</option></select></label></div></div></div></div>
+          <div class="catalog-demo"><h3>gRPC Request Tabs <span class="catalog-source">GrpcWorkbench.tsx</span></h3><div class="catalog-tab-example" data-tab-group><div class="grpc-request-tabs" role="tablist" aria-label="gRPC 请求配置"><button class="is-active" role="tab" aria-selected="true" type="button" data-tab-target="grpc-message">Message</button><button role="tab" aria-selected="false" type="button" data-tab-target="grpc-metadata">Metadata</button><button role="tab" aria-selected="false" type="button" data-tab-target="grpc-settings">Settings</button></div><section class="grpc-message-editor catalog-tab-panel" role="tabpanel" data-tab-panel="grpc-message"><header><strong>请求消息</strong><select aria-label="消息格式"><option>JSON</option><option>Protobuf Base64</option></select></header><pre class="catalog-code-editor">{
+  "user_id": "42"
+}</pre></section><section class="grpc-metadata-panel catalog-tab-panel" role="tabpanel" data-tab-panel="grpc-metadata" hidden><div class="catalog-panel-note"><strong>请求 Metadata</strong><span>authorization · Bearer ********</span></div></section><section class="grpc-panel grpc-settings catalog-tab-panel" role="tabpanel" data-tab-panel="grpc-settings" hidden><label><span>超时</span><div class="grpc-number-field"><input type="number" value="30000"><em>ms</em></div></label></section></div></div>
+          <div class="catalog-demo"><h3>Settings Category <span class="catalog-source">SettingsDialog.tsx</span></h3><div class="catalog-tab-example" data-tab-group><div class="settings-dialog-body" data-category="general" style="min-height:210px"><nav class="settings-categories" aria-label="设置分类"><div><button class="is-active" type="button" aria-current="page" data-tab-target="settings-general">常规</button><button type="button" data-tab-target="settings-connection">连接</button><button type="button" data-tab-target="settings-ai">AI</button></div></nav><div class="settings-content"><section class="settings-section category-general" data-tab-panel="settings-general"><h3>外观</h3><label class="settings-field">主题<select><option>跟随系统</option></select></label></section><section class="settings-section category-connection" data-tab-panel="settings-connection" hidden><h3>连接</h3><label class="settings-field">Local Agent 地址<input value="http://127.0.0.1:39217"></label></section><section class="settings-section category-ai" data-tab-panel="settings-ai" hidden><h3>AI</h3><label class="settings-field">服务提供方<select><option>OpenAI Compatible</option></select></label></section></div></div></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="commandbars"><div class="catalog-section-head"><svg><use href="#i-send"></use></svg><div><h2>协议请求命令栏</h2><p>ProtocolWorkbenchLayout 当前使用的实际结构</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>Protocol Commandbar <span class="catalog-source">ProtocolWorkbenchLayout.tsx · .protocol-commandbar</span></h3><div class="catalog-protocol"><div class="protocol-workbench-layout"><div class="protocol-commandbar"><span class="protocol-command-badge">MQTT</span><input class="protocol-name-input" value="Publish message" aria-label="请求名称"><input class="protocol-target-input" value="mqtt://127.0.0.1:1883" aria-label="Broker 地址"><button class="protocol-run-button" type="button">Publish</button><button class="protocol-save-button" type="button">Save</button></div><div class="protocol-workbench-split"><div class="protocol-request-pane"><div class="protocol-mode-tabs"><button aria-selected="true" type="button">Publish</button><button aria-selected="false" type="button">Consume</button></div><div class="protocol-request-content"><label class="settings-field">Topic<input value="apivoy/events"></label><label class="settings-field">QoS<select><option>1 · At least once</option></select></label></div></div></div><div class="protocol-status">Ready · Save to: default-project / default-collection</div></div></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="http-workbench"><div class="catalog-section-head"><svg><use href="#i-grid"></use></svg><div><h2>HTTP 实际工作台</h2><p>按项目默认“新建 HTTP 接口”状态整体呈现，不再拆散或虚构响应状态</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>新建 HTTP 接口 · 默认状态 <span class="catalog-source">InterfaceLifecycle.tsx + HttpWorkbench.tsx</span></h3><p class="catalog-caption">此区域对应项目截图：调试生命周期、接口名、方法与路径、请求 Tabs、Query 参数、返回响应和校验开关。输入与按钮同时补齐源码中的 React 内联样式。</p><div class="catalog-actual-http-scroll"><div class="catalog-actual-http workbench-panel"><div class="interface-lifecycle has-commandbar">
+            <div class="interface-lifecycle-tabs" role="tablist" aria-label="接口生命周期"><button class="is-active" role="tab" aria-selected="true" type="button"><svg><use href="#i-send"></use></svg>调试</button><button role="tab" aria-selected="false" type="button"><svg><use href="#i-code"></use></svg>设计</button><button role="tab" aria-selected="false" type="button"><svg><use href="#i-grid"></use></svg>文档预览</button></div>
+            <div class="interface-lifecycle-commandbar"><div class="http-request-commandbar"><label class="http-request-name-field"><input class="http-inline-input" aria-label="接口名称" placeholder="接口名称" value=""></label><div class="http-request-primary-actions"><select class="http-inline-method" aria-label="HTTP 方法"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select><label class="http-target-field"><input class="http-inline-input" aria-label="目标 URL" placeholder="接口路径" value=""></label><button class="http-send-button http-inline-send" type="button"><svg width="14" height="14"><use href="#i-send"></use></svg>发送</button><div class="http-save-split"><button class="http-save-button http-inline-save" type="button"><svg width="14" height="14"><use href="#i-save"></use></svg>保存</button><button class="http-save-menu-trigger" type="button" aria-label="更多保存方式"><svg width="13" height="13"><use href="#i-chevron"></use></svg></button></div></div></div></div>
+            <div class="interface-lifecycle-content interface-lifecycle-debug"><div class="http-workbench-layout has-external-commandbar"><div class="catalog-http-body">
+              <div class="catalog-request-pane"><div class="http-request-tabs"><div class="catalog-request-tabs" role="tablist" aria-label="请求配置"><button class="is-active" role="tab" aria-selected="true" type="button">Params</button><button role="tab" aria-selected="false" type="button">Body</button><button role="tab" aria-selected="false" type="button">Headers</button><button role="tab" aria-selected="false" type="button">Cookies</button><button role="tab" aria-selected="false" type="button">Auth</button><button role="tab" aria-selected="false" type="button">前置操作</button><button role="tab" aria-selected="false" type="button">后置操作</button><button role="tab" aria-selected="false" type="button">设置</button></div><div class="http-request-tab-panel"><div class="http-request-editor-section"><div class="http-kv-editor" aria-label="URL Query Params"><div class="http-section-heading">Query 参数</div><div class="http-param-header"><span></span><span>参数名</span><span>参数值</span><span class="http-type-header"><span>类型</span><button type="button" tabindex="-1">*</button></span><span></span><span>说明</span><span></span></div><div class="http-param-row http-apifox-row is-new"><input class="http-row-enabled" type="checkbox" aria-label="启用新参数"><div class="http-param-name-cell"><input class="http-inline-input" placeholder="添加参数"></div><div class="http-param-value-cell"><input class="http-inline-input" aria-label="参数值"></div><div class="http-param-type-cell"><select class="http-param-type http-inline-input" aria-label="参数类型"><option>String</option></select></div><span class="http-required-row"><button type="button" aria-label="设为必填">*</button></span><input class="http-inline-input" aria-label="参数说明"><span class="http-kv-delete-placeholder"></span></div></div></div></div></div></div>
+              <div class="catalog-http-divider" role="separator" aria-label="调整请求和响应区域大小"></div>
+              <div class="catalog-response-region"><div class="catalog-response-heading"><span>返回响应</span><label class="http-response-validation-control"><span>校验响应</span><span class="http-switch"><input type="checkbox" checked><span></span></span><strong>成功 (200)</strong></label></div><div class="http-response-pane"><div class="response-empty"><span class="response-empty-icon"><svg width="18" height="18"><use href="#i-send"></use></svg></span><strong>等待响应</strong><p>发送请求后，状态、响应头、正文、断言与时间线会显示在这里。</p></div></div></div>
+            </div></div></div>
+          </div></div></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="split"><div class="catalog-section-head"><svg><use href="#i-more"></use></svg><div><h2>SplitPane 与布局菜单</h2><p>使用 WorkbenchFrame 中真实的分隔器和布局切换控件</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>Horizontal Split <span class="catalog-source">WorkbenchFrame.tsx · .split-pane</span></h3><div class="catalog-split"><div class="split-pane-shell"><div class="split-pane split-horizontal"><section class="split-panel" aria-label="请求配置">请求配置</section><div class="split-handle" role="separator" tabindex="0" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="48"><span></span></div><section class="split-panel split-secondary-panel" aria-label="响应检查器">响应检查器</section></div></div></div></div>
+          <div class="catalog-demo full"><h3>Layout Popover <span class="catalog-source">.split-layout-popover</span></h3><div class="split-layout-flyout" style="position:relative;display:flex;justify-content:flex-end;min-height:90px"><div class="split-layout-popover" role="group" aria-label="选择分栏布局"><button class="is-active" type="button" aria-pressed="true" title="上下分屏"><svg class="split-layout-icon" viewBox="0 0 20 20"><rect x="3.25" y="3.25" width="13.5" height="13.5" rx="2"></rect><path d="M3.75 10h12.5"></path></svg><span>上下<br>分屏</span></button><button type="button" aria-pressed="false" title="左右分屏"><svg class="split-layout-icon" viewBox="0 0 20 20"><rect x="3.25" y="3.25" width="13.5" height="13.5" rx="2"></rect><path d="M10 3.75v12.5"></path></svg><span>左右<br>分屏</span></button></div></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="feedback"><div class="catalog-section-head"><svg><use href="#i-alert"></use></svg><div><h2>共享反馈组件</h2><p>Feedback.tsx 实际导出的 Toast、Confirm、Empty 与 Loading</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>Toast <span class="catalog-source">Feedback.tsx · .toast</span></h3><div class="catalog-stack"><div class="toast toast-success catalog-inline-toast"><svg width="16" height="16" style="color:var(--apivoy-success)"><use href="#i-check"></use></svg><span>保存成功，接口已更新。</span><button type="button" aria-label="关闭"><svg width="13" height="13"><use href="#i-close"></use></svg></button></div><div class="toast toast-warning catalog-inline-toast"><svg width="16" height="16" style="color:var(--apivoy-warning)"><use href="#i-alert"></use></svg><span>证书将在 7 天后过期。</span><button type="button" aria-label="关闭"><svg width="13" height="13"><use href="#i-close"></use></svg></button></div><div class="toast toast-danger catalog-inline-toast"><svg width="16" height="16" style="color:var(--apivoy-danger)"><use href="#i-alert"></use></svg><span>Local Agent 连接失败。</span><button type="button" aria-label="关闭"><svg width="13" height="13"><use href="#i-close"></use></svg></button></div></div></div>
+          <div class="catalog-demo"><h3>Empty State <span class="catalog-source">.ui-empty-state</span></h3><div class="ui-empty-state"><span class="ui-empty-icon"><svg width="18" height="18"><use href="#i-grid"></use></svg></span><strong>暂无执行记录</strong><p>发送请求后，状态和响应会显示在这里。</p><button class="ui-button primary" type="button">发送请求</button></div></div>
+          <div class="catalog-demo"><h3>Loading <span class="catalog-source">.ui-loading</span></h3><div class="ui-loading"><span class="ui-spinner"></span><span>正在加载请求历史…</span></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="overlays"><div class="catalog-section-head"><svg><use href="#i-search"></use></svg><div><h2>命令面板与确认弹窗</h2><p>使用 AppShell 和 Feedback 中的真实结构</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>Command Palette <span class="catalog-source">AppShell.tsx · .command-palette</span></h3><div class="catalog-command-wrap"><div class="command-palette" role="dialog" aria-label="命令面板"><div class="command-input-wrap"><svg width="15" height="15"><use href="#i-search"></use></svg><input role="combobox" aria-expanded="true" value="http"><kbd>Esc</kbd></div><div role="listbox"><div class="command-group-label">操作</div><button class="is-active" role="option" aria-selected="true" type="button"><span><svg width="14" height="14"><use href="#i-send"></use></svg>新建 HTTP 请求</span><small>Action</small></button><div class="command-group-label">工作台</div><button role="option" aria-selected="false" type="button"><span><svg width="14" height="14"><use href="#i-grid"></use></svg>HTTP</span><small>API</small></button></div></div></div></div>
+          <div class="catalog-demo full"><h3>Confirm Dialog <span class="catalog-source">Feedback.tsx · .confirm-dialog</span></h3><div class="catalog-inline-dialog"><div class="confirm-dialog" role="dialog" aria-modal="false"><span class="dialog-icon dialog-danger"><svg width="18" height="18"><use href="#i-trash"></use></svg></span><div><h2>删除“获取用户详情”？</h2><p>此操作无法撤销，请确认是否继续。</p></div><div class="dialog-actions"><button class="ui-button secondary" type="button">取消</button><button class="ui-button danger" type="button">确认删除</button></div></div></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="settings"><div class="catalog-section-head"><svg><use href="#i-settings"></use></svg><div><h2>设置与环境变量</h2><p>SettingsDialog 和 EnvironmentEditor 的真实组件结构</p></div></div><div class="catalog-grid">
+          <div class="catalog-demo full"><h3>Settings Dialog <span class="catalog-source">SettingsDialog.tsx · .settings-dialog</span></h3><div class="settings-dialog catalog-inline-settings"><header class="settings-dialog-header"><div><span class="settings-scope-label">应用设置</span><h2>设置</h2><p>管理界面、连接和本地能力。</p></div><button class="ui-icon-button" type="button" aria-label="关闭"><svg width="16" height="16"><use href="#i-close"></use></svg></button></header><div class="settings-dialog-body" data-category="general"><div class="settings-categories"><div><button class="is-active" type="button">常规</button><button type="button">连接</button><button type="button">AI</button><button type="button">插件</button></div></div><div class="settings-content"><section class="settings-section category-general"><h3>外观</h3><label class="settings-field">主题<select><option>跟随系统</option><option>深色</option><option>浅色</option></select></label><label class="settings-field">语言<select><option>简体中文</option><option>English</option></select></label></section></div></div><footer class="settings-dialog-footer"><button class="ui-button secondary" type="button">取消</button><button class="ui-button primary" type="button">保存</button></footer></div></div>
+          <div class="catalog-demo full"><h3>Environment Key/Value Editor <span class="catalog-source">EnvironmentEditor.tsx · .environment-kv-*</span></h3><div class="catalog-environment"><div class="environment-kv-editor"><div class="environment-kv-header"><span>变量名</span><span>当前值</span><span>说明</span><span></span></div><div class="environment-kv-row"><input value="baseUrl"><input value="https://api.example.com"><input value="测试服务地址"><button type="button" aria-label="删除 baseUrl"><svg width="14" height="14"><use href="#i-trash"></use></svg></button></div><div class="environment-kv-row environment-kv-new"><input placeholder="新增变量"><input placeholder="变量值"><input placeholder="说明"><button type="button" aria-label="添加变量">+</button></div></div></div></div>
+        </div></section>
+
+        <section class="catalog-section" id="history"><div class="catalog-section-head"><svg><use href="#i-clock"></use></svg><div><h2>请求历史</h2><p>按 RequestHistoryPanel 当前默认未选择记录状态呈现</p></div></div><div class="catalog-grid"><div class="catalog-demo full"><h3>History Timeline · Empty Detail <span class="catalog-source">RequestHistoryPanel.tsx:283–315</span></h3><p class="catalog-caption">真实组件的列表主文案是请求目标；右侧默认显示选择提示。选中 HTTP 记录后，项目会加载完整 HttpWorkbench，而不是旧 H5 中虚构的摘要卡片。</p><div class="catalog-history"><div class="request-history-page"><aside class="request-history-timeline" aria-label="请求历史时间线"><header class="request-history-sidebar-header"><div><h1>请求历史</h1><span>2 条本地记录</span></div><button type="button" class="ui-icon-button" aria-label="刷新请求历史" title="刷新"><svg width="15" height="15"><use href="#i-clock"></use></svg></button></header><div class="request-history-source" aria-label="历史记录来源"><strong>本地</strong><span>当前项目</span></div><label class="request-history-search"><span class="sr-only">搜索请求历史</span><svg width="14" height="14"><use href="#i-search"></use></svg><input placeholder="搜索请求或地址" aria-label="搜索请求历史"></label><div class="request-history-compact-filters"><label><span class="sr-only">执行状态</span><select aria-label="执行状态"><option>全部状态</option><option>已完成</option><option>失败</option></select></label><label><span class="sr-only">HTTP 状态码</span><input inputmode="numeric" placeholder="状态码" aria-label="HTTP 状态码"></label><button type="button" class="ui-button secondary compact">筛选</button></div><div class="request-history-groups"><section class="request-history-group"><h2><svg width="11" height="11"><use href="#i-chevron"></use></svg><span>2026年8月31日</span><small>2</small></h2><div><button class="request-history-item" type="button"><span class="request-history-method method-get">GET</span><span class="request-history-item-copy"><strong title="https://api.example.com/users/42">https://api.example.com/users/42</strong><small>15:12:00 · 83 ms</small></span><span class="request-history-status state-completed">200</span></button><button class="request-history-item" type="button"><span class="request-history-method method-get">GET</span><span class="request-history-item-copy"><strong title="https://api.example.com/missing">https://api.example.com/missing</strong><small>14:40:00 · 121 ms</small></span><span class="request-history-status state-failed">404</span></button></div></section></div></aside><main class="request-history-detail"><div class="request-history-tab-panels"><div class="request-history-detail-empty"><span><svg width="23" height="23"><use href="#i-clock"></use></svg></span><strong>选择一条请求历史</strong><p>从左侧时间线打开记录，可在多个标签间切换、重新发送或保存。</p></div></div></main></div></div></div></div></section>
+
+        <section class="catalog-section" id="legacy"><div class="catalog-section-head"><svg><use href="#i-grid"></use></svg><div><h2>项目中仍存在的私有按钮</h2><p>这些来自真实工作台内联样式，正是后续应迁移到共享 Button 的对象</p></div></div><div class="catalog-grid"><div class="catalog-demo full"><h3>Legacy Inline Variants <span class="catalog-source">Ai / Capture / Rpc / Team Workbench</span></h3><p class="catalog-caption">这些差异并非新设计，而是当前源码中确实存在的不一致。组件库将它们显式列出，避免迁移时遗漏。</p><div class="catalog-legacy-grid"><div class="catalog-legacy-card"><strong>AI</strong><small>AiWorkbench.tsx · purple secondary</small><button class="legacy-ai" type="button">生成建议</button></div><div class="catalog-legacy-card"><strong>Capture</strong><small>CaptureWorkbench.tsx · orange secondary</small><button class="legacy-capture" type="button">生成 HTTP 请求</button></div><div class="catalog-legacy-card"><strong>RPC</strong><small>RpcWorkbench.tsx · teal secondary</small><button class="legacy-rpc" type="button">发送请求</button></div><div class="catalog-legacy-card"><strong>Team</strong><small>TeamWorkbench.tsx · blue secondary</small><button class="legacy-team" type="button">拉取工作区</button></div></div></div></div></section>
+
+        <section class="catalog-section" id="mapping"><div class="catalog-section-head"><svg><use href="#i-check"></use></svg><div><h2>组件与源码映射</h2><p>后续按真实实现逐族调整，不触碰页面布局</p></div></div><div class="catalog-grid"><div class="catalog-demo full"><div class="catalog-callout">这份清单只覆盖项目真实存在的控件族。管理型工作台里使用内联 style 的按钮与字段，不伪造成新组件，而是作为迁移对象收敛到下表的共享目标。</div></div><div class="catalog-demo full" style="overflow:auto"><table class="catalog-map"><thead><tr><th>实际控件族</th><th>真实源码/类名</th><th>后续共享目标</th><th>布局约束</th></tr></thead><tbody>
+          <tr><td>通用按钮与弹窗按钮</td><td><code>feedback.css · .ui-button</code></td><td>Button primary / secondary / danger</td><td>只替换外观，不改变位置和事件</td></tr><tr><td>顶部与工具栏图标按钮</td><td><code>styles.css · .ui-icon-button</code></td><td>IconButton default / compact / active</td><td>保持当前工具栏结构</td></tr><tr><td>协议运行、取消、保存</td><td><code>.protocol-run-button / cancel / save</code></td><td>共享 Button 的协议动作语义</td><td>保持 ProtocolWorkbenchLayout</td></tr><tr><td>HTTP 命令栏</td><td><code>.http-request-commandbar / .http-send-button</code></td><td>统一输入、主操作和保存变体</td><td>保持当前命令栏网格</td></tr><tr><td>HTTP KV 编辑器</td><td><code>.http-kv-editor / .http-param-row</code></td><td>KeyValueRows</td><td>保持列顺序与横向滚动</td></tr><tr><td>Settings 与环境变量</td><td><code>.settings-field / .environment-kv-row</code></td><td>Field / Input / Select / KV Row</td><td>保持设置导航和表单结构</td></tr><tr><td>Tabs</td><td><code>.protocol-mode-tabs / .grpc-request-tabs / .collaboration-tabs</code></td><td>共享 Tabs 视觉与键盘行为</td><td>保持当前 Tab 内容分区</td></tr><tr><td>响应与反馈</td><td><code>.http-response-* / .toast / .ui-empty-state</code></td><td>ResponseToolbar / Toast / Empty / Loading</td><td>保持响应面板位置</td></tr><tr><td>管理型工作台私有按钮</td><td><code>Ai/Capture/Gateway/Team 等 inline style</code></td><td>迁移到 Button、Field、StatusBadge</td><td>不改变管理页卡片与列布局</td></tr></tbody></table></div></div></section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const root=document.documentElement;
+    const themeToggle=document.querySelector('#themeToggle');
+    themeToggle.addEventListener('click',()=>{const theme=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=theme;themeToggle.setAttribute('aria-label',theme==='dark'?'切换浅色主题':'切换深色主题')});
+    document.querySelectorAll('[data-tab-group]').forEach(group=>{
+      const buttons=[...group.querySelectorAll('[data-tab-target]')];
+      const panels=[...group.querySelectorAll('[data-tab-panel]')];
+      const activate=button=>{
+        const target=button.dataset.tabTarget;
+        buttons.forEach(item=>{item.classList.toggle('is-active',item===button);if(item.getAttribute('role')==='tab')item.setAttribute('aria-selected',String(item===button));else if(item===button)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current')});
+        panels.forEach(panel=>{panel.hidden=panel.dataset.tabPanel!==target});
+        const settingsBody=group.querySelector('.settings-dialog-body[data-category]');
+        if(settingsBody&&target.startsWith('settings-'))settingsBody.dataset.category=target.slice('settings-'.length);
+      };
+      buttons.forEach((button,index)=>{button.addEventListener('click',()=>activate(button));button.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:event.key==='ArrowRight'?(index+1)%buttons.length:(index-1+buttons.length)%buttons.length;activate(buttons[next]);buttons[next].focus()})});
+    });
+  </script>
+</body>
+</html>

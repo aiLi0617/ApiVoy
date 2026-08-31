@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const workbenchIds = ["http", "grpc", "websocket", "sse", "tcp", "udp", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "runner", "gateway", "capture", "plugins", "ai"];
+const workbenchIds = ["http", "grpc", "websocket", "sse", "tcp", "udp", "mqtt", "amqp", "kafka", "redis", "sql", "mock", "gateway", "capture", "plugins", "ai"];
 
 async function expectActiveWorkbench(page: Page, id: string) {
   await expect(page.getByTestId(`workbench-${id}`).first()).toHaveAttribute("aria-current", "page");
@@ -14,13 +14,14 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/#workbench=http");
 });
 
-test("starts with zero tabs and the default new-page content", async ({ page }) => {
+test("starts with zero tabs and the project overview", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator(".workbench-tabs")).toBeVisible();
+  await expect(page.locator(".workbench-tabs")).toHaveCount(0);
   await expect(page.locator(".workbench-tab")).toHaveCount(0);
-  await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(0);
-  await expect(page.locator(".workbench-home")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "从这里开始探索接口" })).toBeVisible();
+  await expect(page.locator(".workbench-session-stack [role=tabpanel]")).toHaveCount(1);
+  await expect(page.getByRole("main", { name: "项目" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
 });
 
 test("opens the grouped protocol workspace without horizontal overflow", async ({ page }) => {
@@ -185,10 +186,19 @@ test("switches theme and keeps visible keyboard focus", async ({ page }) => {
 
 test("keeps project settings separate from application settings", async ({ page }) => {
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-project-settings")));
-  const projectSettings = page.getByRole("dialog", { name: "项目设置" });
-  await expect(projectSettings).toContainText("项目级");
-  await expect(projectSettings).toContainText("环境与变量");
-  await projectSettings.getByRole("button", { name: "完成" }).click();
+  const projectSettings = page.locator(".project-settings-view");
+  await expect(projectSettings).toContainText("通用设置");
+  await expect(projectSettings).toContainText("项目资源");
+  await projectSettings.getByRole("button", { name: "响应校验设置" }).click();
+  await expect(projectSettings).toContainText("模块功能开关");
+  await expect(projectSettings).toContainText("“接口运行”和“调试用例”里的校验响应");
+  await expect(projectSettings).toContainText("Object 对象允许额外字段");
+  const footerBox = await projectSettings.locator(".settings-dialog-footer").evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { height: bounds.height, width: bounds.width };
+  });
+  expect(footerBox.height).toBeLessThan(80);
+  expect(footerBox.width).toBeGreaterThan(footerBox.height * 4);
 
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("apivoy-open-settings")));
   const applicationSettings = page.locator(".settings-dialog").filter({ hasText: /软件级|Application-wide/ });

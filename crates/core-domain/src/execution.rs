@@ -101,6 +101,8 @@ pub struct ResponseMeta {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssertionResultEvent {
+    #[serde(default, rename = "ruleId")]
+    pub rule_id: String,
     pub name: String,
     pub passed: bool,
     pub expected: Option<String>,

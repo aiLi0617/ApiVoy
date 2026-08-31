@@ -23,5 +23,11 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "dompurify@<3.4.13": "3.4.13",
+      "nanoid@<3.3.18": "3.3.18"
+    }
   }
 }

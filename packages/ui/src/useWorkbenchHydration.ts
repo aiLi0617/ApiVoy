@@ -19,7 +19,7 @@ export function useWorkbenchHydration(
       handlerRef.current(detail);
     };
 
-    const pending = consumeHydrate(workbenchId);
+    const pending = consumeHydrate(workbenchId, sessionId);
     if (pending) deliver(pending.envelope);
 
     const onHydrate = (event: Event) => {

@@ -1453,3 +1453,12 @@
 | 2026-08-14 | 新增并关闭 UX-048：发送按钮原位切换取消并清理请求栏工具按钮。 |
 | 2026-08-14 | 新增并关闭 UX-049：移除请求栏快捷键视觉提示，快捷键说明规划统一收纳至设置。 |
 | 2026-08-14 | 新增并关闭 UX-050–055：完成环境、脚本、单侧栏、设置分类、快捷键说明和品牌图标升级。 |
+# Reusable response design
+
+HTTP interface design treats each response as an independent, ordered instance. Responses may share the same status code and media type, while retaining separate names, fields, and component references. Response tabs can be reordered by dragging.
+
+Response Body types include JSON, XML, HTML, Text, Binary, MessagePack, Event-Stream, and No Content. Event-Stream is stored as `event-stream`; legacy `sse` response values are migrated when read. Selecting a type supplies its conventional Content-Type while keeping the media type editable where applicable.
+
+Project Settings → Response Components manages reusable response templates. Component properties are optional, components may be marked for automatic inclusion in newly created interfaces, and the interface response picker uses a height-limited searchable list. Component order and interface response order are independent.
+
+Existing HTTP interfaces save in place from either Debug or Design. A new interface opens the shared Save Interface dialog on first save; its name and URL may be empty, while the resource-tree directory is required. A nested directory can be created by choosing its name and parent directory.
