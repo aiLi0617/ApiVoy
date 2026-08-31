@@ -45,7 +45,16 @@ const MAX_SCHEMA_VALIDATION_DEPTH = 64;
 
 function validXml(source: string): boolean {
   if (!source.trim()) return false;
-  const cleaned = source.replace(/<\?xml[\s\S]*?\?>/gi, "").replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "text").trim();
+  let cleaned = source;
+  let previous: string;
+  do {
+    previous = cleaned;
+    cleaned = cleaned
+      .replace(/<\?xml[\s\S]*?\?>/gi, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "text");
+  } while (cleaned !== previous);
+  cleaned = cleaned.trim();
   const tags = cleaned.match(/<[^>]+>/g);
   if (!tags?.length || !cleaned.startsWith("<") || !cleaned.endsWith(">")) return false;
   const stack: string[] = [];
