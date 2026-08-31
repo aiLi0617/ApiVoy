@@ -84,15 +84,16 @@ export interface TlsOptions {
   client_cert_ref?: string | null;
 }
 
-export type Assertion =
-  | { type: "status_equals"; expected: number }
-  | { type: "status_in"; expected: number[] }
-  | { type: "duration_lt"; max_ms: number }
-  | { type: "size_lt"; max_bytes: number }
-  | { type: "header_equals"; name: string; expected: string }
-  | { type: "header_contains"; name: string; expected: string }
-  | { type: "body_contains"; expected: string }
-  | { type: "json_path_equals"; path: string; expected: string };
+export type AssertionTarget = "status" | "header" | "body" | "json_path" | "duration" | "size";
+export type AssertionOperator = "equals" | "not_equals" | "in" | "greater_than" | "less_than" | "contains" | "not_contains" | "exists" | "not_exists" | "type_is" | "length_equals" | "length_greater_than" | "length_less_than";
+export interface Assertion {
+  id: string;
+  enabled: boolean;
+  target: AssertionTarget;
+  operator: AssertionOperator;
+  selector?: string | null;
+  expected?: string | null;
+}
 
 export interface RequestEnvelope {
   id: string;
@@ -145,6 +146,7 @@ export interface MetricEvent {
 }
 
 export interface AssertionResultEvent {
+  ruleId?: string;
   name: string;
   passed: boolean;
   expected?: string | null;
@@ -179,6 +181,27 @@ export type ExecutionEvent =
   | { type: "completed"; summary: ExecutionSummary }
   | { type: "failed"; code: string; message: string }
   | { type: "cancelled"; reason?: string | null };
+
+/**
+ * Keeps the final response preview without confusing an empty response body
+ * with an absent preview. This applies to every protocol using ExecutionEvent.
+ */
+export function reduceCompletedResponsePreview(
+  current: string | null,
+  event: ExecutionEvent,
+): string | null {
+  if (event.type === "response_chunk" && event.done && event.preview != null) {
+    return event.preview;
+  }
+  return current;
+}
+
+/** Selects a protocol response preview while preserving a valid empty body. */
+export function selectResponsePreview(
+  ...candidates: Array<string | null | undefined>
+): string | null {
+  return candidates.find((candidate): candidate is string => candidate != null) ?? null;
+}
 
 export interface CreateHttpRequestOptions {
   name?: string;

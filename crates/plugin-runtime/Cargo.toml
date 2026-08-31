@@ -12,7 +12,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 thiserror = { workspace = true }
-wasmtime = { version = "47.0.3", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
+wasmtime = { version = "47.0.4", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 
 [dev-dependencies]
 rand = "0.8"

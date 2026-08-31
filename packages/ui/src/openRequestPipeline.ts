@@ -13,8 +13,9 @@ export function stashHydrate(payload: HydratePayload): void {
   pending = payload;
 }
 
-export function consumeHydrate(workbenchId: string): HydratePayload | null {
+export function consumeHydrate(workbenchId: string, sessionId?: string): HydratePayload | null {
   if (!pending || pending.workbenchId !== workbenchId) return null;
+  if (pending.sessionId && pending.sessionId !== sessionId) return null;
   const value = pending;
   pending = null;
   return value;

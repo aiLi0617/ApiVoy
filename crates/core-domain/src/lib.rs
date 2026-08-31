@@ -7,7 +7,7 @@ mod error;
 mod execution;
 mod request;
 
-pub use assertion::Assertion;
+pub use assertion::{Assertion, AssertionOperator, AssertionTarget};
 pub use error::{DomainError, DomainResult, ErrorKind};
 pub use execution::{
     AssertionResultEvent, ExecutionEvent, ExecutionId, ExecutionPhase, ExecutionState,
