@@ -1,7 +1,9 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 import type { HttpWorkbenchRequest } from "./HttpWorkbench";
 import { useI18n } from "./i18n";
 import { CodeEditor } from "./CodeEditor";
+import { Button } from "./Components";
+import { RovingTabList } from "./RovingTabList";
 
 export type CodeLanguage = "curl" | "curl-windows" | "httpie" | "wget" | "powershell" | "javascript" | "java" | "swift" | "go" | "php" | "python" | "http" | "c" | "csharp" | "objective-c" | "ruby" | "ocaml" | "dart" | "r";
 export interface HttpCodeTemplate { id: string; label: string; generate: (request: HttpWorkbenchRequest) => string }
@@ -29,7 +31,6 @@ function normalizeGeneratedBody(body: string, headers: Array<[string, string]>):
     return body;
   }
 }
-
 export function generateHttpCode(request: HttpWorkbenchRequest, language: CodeLanguage | string): string {
   const plugin = pluginTemplates.get(language);
   if (plugin) return plugin.generate(request);
@@ -112,14 +113,14 @@ export function CodeGeneratorView({ groups, selected, onSelect, code, editorLang
   const [message, setMessage] = useState("");
   const activeGroup = groups.find((group) => group.variants.some((variant) => variant.id === selected)) ?? groups[0];
   const editorHeight = useMemo(() => Math.min(900, Math.max(440, code.split("\n").length * 19 + 32)), [code]);
-  return <div style={styles.root} className="http-code-generator">
-    <div style={styles.heading}><strong>请求代码</strong><button style={styles.copy} onClick={async () => { await navigator.clipboard.writeText(code); setMessage("已复制"); }}>{message || t("action.copy")}</button></div>
-    <div style={styles.languageTabs} role="tablist" aria-label="代码语言">
-      {groups.map((group) => <button key={group.id} type="button" role="tab" aria-selected={activeGroup?.id === group.id} style={activeGroup?.id === group.id ? styles.languageActive : styles.languageTab} onClick={() => { onSelect(group.variants[0].id); setMessage(""); }}>{group.label}</button>)}
-    </div>
-    {activeGroup && <div style={styles.variantTabs} role="tablist" aria-label={`${activeGroup.label} 客户端`}>
-      {activeGroup.variants.map((variant) => <button key={variant.id} type="button" role="tab" aria-selected={selected === variant.id} style={selected === variant.id ? styles.variantActive : styles.variantTab} onClick={() => { onSelect(variant.id); setMessage(""); }}>{variant.label}</button>)}
-    </div>}
+  return <div className="http-code-generator">
+    <div className="code-generator-heading"><strong>请求代码</strong><Button variant="ghost" size="compact" icon="copy" onClick={async () => { await navigator.clipboard.writeText(code); setMessage("已复制"); }}>{message || t("action.copy")}</Button></div>
+    <RovingTabList className="code-generator-language-tabs" ariaLabel="代码语言">
+      {groups.map((group) => <button key={group.id} type="button" role="tab" tabIndex={activeGroup?.id === group.id ? 0 : -1} aria-selected={activeGroup?.id === group.id} className={activeGroup?.id === group.id ? "is-active" : undefined} onClick={() => { onSelect(group.variants[0].id); setMessage(""); }}>{group.label}</button>)}
+    </RovingTabList>
+    {activeGroup && <RovingTabList className="code-generator-variant-tabs" ariaLabel={`${activeGroup.label} 客户端`}>
+      {activeGroup.variants.map((variant) => <button key={variant.id} type="button" role="tab" tabIndex={selected === variant.id ? 0 : -1} aria-selected={selected === variant.id} className={selected === variant.id ? "is-active" : undefined} onClick={() => { onSelect(variant.id); setMessage(""); }}>{variant.label}</button>)}
+    </RovingTabList>}
     <CodeEditor value={code} onChange={() => {}} language={editorLanguage} height={editorHeight} readOnly bare wordWrap={false}/>
   </div>;
 }
@@ -132,15 +133,3 @@ export function CodeGenerator({ request }: { request: HttpWorkbenchRequest }) {
   const groups = pluginVariants.length ? [...BUILTIN_GROUPS, { id: "plugin", label: t("codegen.plugin"), variants: pluginVariants }] : BUILTIN_GROUPS;
   return <CodeGeneratorView groups={groups.map((group) => ({ ...group, variants: [...group.variants] }))} selected={language} onSelect={setLanguage} code={code} editorLanguage={VIEWER_LANGUAGE[language] ?? "plaintext"}/>;
 }
-
-const styles: Record<string, CSSProperties> = {
-  root: { marginTop: 10, border: "1px solid var(--apivoy-border)", borderRadius: 8, overflow: "hidden", background: "var(--apivoy-bg)" },
-  heading: { minHeight: 42, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "0 12px", color: "var(--apivoy-text)" },
-  copy: { border: 0, background: "transparent", color: "var(--apivoy-muted)", padding: "5px 8px", fontSize: 11 },
-  languageTabs: { display: "flex", gap: 2, overflowX: "auto", padding: "0 10px", borderBottom: "1px solid var(--apivoy-border)" },
-  languageTab: { flex: "0 0 auto", border: 0, borderBottom: "2px solid transparent", borderRadius: 0, background: "transparent", color: "var(--apivoy-muted)", padding: "9px 10px", fontSize: 12 },
-  languageActive: { flex: "0 0 auto", border: 0, borderBottom: "2px solid var(--apivoy-accent)", borderRadius: 0, background: "transparent", color: "var(--apivoy-accent)", padding: "9px 10px", fontSize: 12, fontWeight: 700 },
-  variantTabs: { minHeight: 40, display: "flex", alignItems: "center", gap: 5, overflowX: "auto", padding: "5px 12px", borderBottom: "1px solid var(--apivoy-border)" },
-  variantTab: { flex: "0 0 auto", border: 0, background: "transparent", color: "var(--apivoy-muted)", padding: "6px 9px", fontSize: 11 },
-  variantActive: { flex: "0 0 auto", border: 0, background: "var(--apivoy-bg-elevated)", color: "var(--apivoy-text)", padding: "6px 9px", fontSize: 11 },
-};

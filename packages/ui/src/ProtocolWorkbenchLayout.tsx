@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { HttpRunResult } from "./HttpWorkbench";
 import { SplitPane } from "./WorkbenchFrame";
+import { RovingTabList } from "./RovingTabList";
 
 interface ProtocolWorkbenchLayoutProps {
   id: string; protocol: string; name: string; target: string; targetLabel: string;
@@ -23,7 +24,7 @@ export function ProtocolWorkbenchLayout({ id, protocol, name, target, targetLabe
       </div>
       <div className="protocol-workbench-split">
         <SplitPane id={`${id}-workbench`} direction="vertical" minPrimary={180} minSecondary={140} primaryLabel="请求配置" secondaryLabel="响应检查器" secondaryActions={metrics}
-          primary={<div className="protocol-request-pane">{controls ? <div className="protocol-mode-tabs" role="tablist">{controls}</div> : null}<div className="protocol-request-content">{children}</div></div>}
+          primary={<div className="protocol-request-pane">{controls ? <RovingTabList className="protocol-mode-tabs" ariaLabel={`${protocol} 操作模式`}>{controls}</RovingTabList> : null}<div className="protocol-request-content">{children}</div></div>}
           secondary={<div className="protocol-response-pane"><div className="protocol-response-tabs"><button type="button" className="is-active">{responseTitle}</button></div><pre className={`protocol-response-body${result ? " has-result" : " is-empty"}`}>{result?.preview ?? emptyResponse}</pre></div>}
         />
       </div>

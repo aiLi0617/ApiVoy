@@ -1,0 +1,25 @@
+.comments-workbench { display: grid; gap: 12px; }
+.comments-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.comments-header h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: -.4px; }
+.comments-header p { max-width: 650px; margin: 0; color: var(--apivoy-muted); line-height: 1.55; }
+.comments-toolbar { display: flex; align-items: flex-end; gap: 10px; }
+.comments-context-field { flex: 1; display: grid; gap: 6px; color: var(--apivoy-muted); font-size: 10px; font-weight: 750; letter-spacing: 1px; }
+.comments-context-field small { font-weight: 500; letter-spacing: 0; }
+.comments-composer { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--apivoy-border); border-radius: 10px; background: var(--apivoy-bg-elevated); }
+.comments-composer .ui-textarea { width: 100%; min-height: 88px; background: var(--apivoy-workspace); }
+.comments-reply-banner, .comments-composer-footer { display: flex; justify-content: space-between; align-items: center; }
+.comments-reply-banner { color: var(--apivoy-accent); font-size: 12px; }
+.comments-list { display: grid; gap: 10px; }
+.comments-thread { padding: 12px; border: 1px solid var(--apivoy-border); border-radius: 10px; background: var(--apivoy-bg-elevated); }
+.comments-thread.is-resolved { opacity: .72; }
+.comments-reply { margin-top: 8px; padding-left: 18px; border-left: 2px solid var(--apivoy-border); }
+.comment-card { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; }
+.comment-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--apivoy-accent-soft); color: var(--apivoy-accent); font-weight: 800; }
+.comment-content { display: grid; gap: 6px; min-width: 0; }
+.comment-meta { display: flex; align-items: center; gap: 8px; color: var(--apivoy-muted); font-size: 11px; }
+.comment-content > p { margin: 0; white-space: pre-wrap; line-height: 1.55; }
+.comment-actions { display: flex; gap: 8px; }
+.comment-actions button { padding: 0; border: 0; background: transparent; color: var(--apivoy-muted); font-size: 11px; }
+.comment-actions button:hover { color: var(--apivoy-accent); }
+.comment-resolved-badge { color: var(--apivoy-success); }
+.comments-notice { padding: 8px 11px; border-left: 3px solid var(--apivoy-accent); background: var(--apivoy-accent-soft); font-size: 12px; }

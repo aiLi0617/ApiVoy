@@ -1,5 +1,6 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { EmptyState, LoadingState, useFeedback } from "./Feedback";
+import { Button, Checkbox, InlineAlert, StatusBadge, Textarea, TextInput } from "./Components";
 
 export interface PluginManifest { id: string; name: string; version: string; kind: "protocol" | "auth" | "importer" | "transformer"; permissions: Array<"network" | "filesystem_read" | "filesystem_write" | "secrets_read">; description: string; publisherKeyId?: string | null; signatureBase64?: string | null }
 export interface InstalledPlugin { manifest: PluginManifest; enabled: boolean; sha256: string; signatureVerified: boolean }
@@ -32,35 +33,24 @@ export function PluginCenter(props: PluginCenterProps) {
     } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
   }
 
-  return <section style={styles.root}>
-    <div style={styles.title}><div><small style={styles.eyebrow}>SANDBOXED EXTENSIONS</small><h2 style={styles.h2}>WASM 插件中心</h2></div><span style={styles.security}>COMPONENT ONLY · NO WASI BY DEFAULT</span></div>
-    <div style={styles.install}>
-      <label style={styles.field}>插件 Manifest<textarea aria-label="插件 Manifest" style={styles.manifest} value={manifestText} onChange={(event) => setManifestText(event.target.value)}/></label>
-      <div style={styles.installActions}>
-        <label style={styles.field}>WASM Component<input type="file" accept=".wasm" onChange={(event) => setWasm(event.target.files?.[0] ?? null)}/></label>
-        <button style={styles.button} onClick={() => void install()}>安装插件</button>
-        <label style={styles.field}>调用测试输入<input value={input} onChange={(event) => setInput(event.target.value)} placeholder="transform 测试输入"/></label>
+  return <section className="plugin-center">
+    <div className="plugin-center-title"><div><small>SANDBOXED EXTENSIONS</small><h2>WASM 插件中心</h2></div><StatusBadge tone="info">COMPONENT ONLY · NO WASI BY DEFAULT</StatusBadge></div>
+    <div className="plugin-install">
+      <label className="plugin-field">插件 Manifest<Textarea aria-label="插件 Manifest" className="plugin-manifest" value={manifestText} onChange={(event) => setManifestText(event.target.value)}/></label>
+      <div className="plugin-install-actions">
+        <label className="plugin-field">WASM Component<input className="plugin-file-input" type="file" accept=".wasm" onChange={(event) => setWasm(event.target.files?.[0] ?? null)}/></label>
+        <Button variant="primary" onClick={() => void install()}>安装插件</Button>
+        <label className="plugin-field">调用测试输入<TextInput value={input} onChange={(event) => setInput(event.target.value)} placeholder="transform 测试输入"/></label>
         {message && <small role="status" aria-live="polite">{message}</small>}
       </div>
     </div>
-    <div style={styles.list}>
-      {state === "loading" ? <LoadingState label="正在加载插件…"/> : state === "error" ? <div style={styles.error} role="alert"><b>插件加载失败</b><span>{loadError}</span><button className="ui-button secondary" onClick={() => void refresh()}>重试</button></div> : plugins.length === 0 ? <EmptyState title="还没有插件" description="粘贴 Manifest 并选择 .wasm Component 后安装。"/> : plugins.map((plugin) => <div style={styles.plugin} key={plugin.manifest.id}>
+    <div className="plugin-list">
+      {state === "loading" ? <LoadingState label="正在加载插件…"/> : state === "error" ? <InlineAlert tone="danger" title="插件加载失败"><span>{loadError}</span><Button variant="secondary" onClick={() => void refresh()}>重试</Button></InlineAlert> : plugins.length === 0 ? <EmptyState title="还没有插件" description="粘贴 Manifest 并选择 .wasm Component 后安装。"/> : plugins.map((plugin) => <div className="plugin-row" key={plugin.manifest.id}>
         <div><b>{plugin.manifest.name}</b><small>{plugin.manifest.id} · v{plugin.manifest.version} · {plugin.manifest.kind}</small><code title={plugin.sha256}>sha256 {plugin.sha256.slice(0, 16)}…</code></div>
-        <label><input type="checkbox" checked={plugin.enabled} onChange={async (event) => { await props.onEnable(plugin.manifest.id, event.target.checked); await refresh(); }}/>启用</label>
-        <button onClick={async () => { try { setMessage(await props.onInvoke(plugin.manifest.id, input)); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }}>调用</button>
-        <button onClick={async () => { if (await confirm({ title: "卸载插件", description: `卸载插件 ${plugin.manifest.name}？`, tone: "danger", confirmLabel: "卸载" })) { await props.onDelete(plugin.manifest.id); await refresh(); } }}>卸载</button>
+        <Checkbox label="启用" checked={plugin.enabled} onChange={async (event) => { await props.onEnable(plugin.manifest.id, event.target.checked); await refresh(); }}/>
+        <Button size="compact" onClick={async () => { try { setMessage(await props.onInvoke(plugin.manifest.id, input)); } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); } }}>调用</Button>
+        <Button size="compact" variant="danger" onClick={async () => { if (await confirm({ title: "卸载插件", description: `卸载插件 ${plugin.manifest.name}？`, tone: "danger", confirmLabel: "卸载" })) { await props.onDelete(plugin.manifest.id); await refresh(); } }}>卸载</Button>
       </div>)}
     </div>
   </section>;
 }
-
-const styles: Record<string, CSSProperties> = {
-  root: { marginTop: 22, padding: 18, border: "1px solid var(--apivoy-border)", borderRadius: 14, background: "#121016" },
-  title: { display: "flex", justifyContent: "space-between" }, eyebrow: { color: "#b28bfa", letterSpacing: 1.4 }, h2: { margin: "3px 0 14px", fontSize: 18 },
-  security: { alignSelf: "center", color: "#aa91da", fontSize: 9, border: "1px solid #4a386b", borderRadius: 999, padding: "4px 8px" },
-  install: { display: "grid", gridTemplateColumns: "1fr .7fr", gap: 10 }, manifest: { minHeight: 175, background: "#09070d", color: "#d9caee", border: "1px solid var(--apivoy-border)", borderRadius: 8, padding: 10, fontFamily: "monospace" },
-  field: { display: "grid", gap: 6, color: "var(--apivoy-muted)", fontSize: 10 }, installActions: { display: "flex", flexDirection: "column", gap: 9 },
-  button: { border: 0, borderRadius: 8, background: "#a77bea", color: "#140822", fontWeight: 700, padding: 9 }, list: { display: "grid", gap: 6, marginTop: 13 },
-  error: { display: "flex", alignItems: "center", gap: 10, padding: 12, border: "1px solid var(--apivoy-danger)", borderRadius: 8, color: "var(--apivoy-muted)" },
-  plugin: { display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 9, alignItems: "center", borderTop: "1px solid var(--apivoy-border)", paddingTop: 8, fontSize: 11 },
-};

@@ -27,6 +27,11 @@ export {
   type UserPreferencesSnapshot,
 } from "./userPreferences";
 export { WorkbenchFrame, SplitPane, type WorkbenchFrameProps, type SplitPaneProps } from "./WorkbenchFrame";
+export { ClosableTabStrip, type ClosableTabItem, type ClosableTabStripProps } from "./ClosableTabStrip";
+export { RovingTabList, moveTabFocus, type RovingTabListProps } from "./RovingTabList";
+export { ModalFrame, type ModalFrameProps } from "./ModalFrame";
+export { MessageInspector, MessageSummary, MessageToolbar, MessageDetail, MessageDetailActions, type MessageAction } from "./MessageInspector";
+export { redisRequestEnvelope, mqttRequestEnvelope, amqpRequestEnvelope, kafkaRequestEnvelope, sqlRequestEnvelope, sseRequestEnvelope, webSocketRequestEnvelope, grpcRequestEnvelope, socketRequestEnvelope } from "./requestEnvelopeAdapters";
 export { Icon, type IconName } from "./Icons";
 export { FeedbackProvider, useFeedback, EmptyState, LoadingState } from "./Feedback";
 export { useAppStore, type ThemeMode, type WorkbenchLayoutPreference, type SplitPanePreference } from "./appStore";

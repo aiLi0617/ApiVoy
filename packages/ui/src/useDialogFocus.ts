@@ -11,7 +11,7 @@ export function useDialogFocus(open: boolean, dialogRef: RefObject<HTMLElement |
   useEffect(() => {
     if (!open) return;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusInitial = () => (initialRef?.current ?? dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE) ?? dialogRef.current)?.focus();
+    const focusInitial = () => (initialRef?.current ?? dialogRef.current?.querySelector<HTMLElement>("[autofocus]") ?? dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE) ?? dialogRef.current)?.focus();
     queueMicrotask(focusInitial);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeRef.current(); return; }

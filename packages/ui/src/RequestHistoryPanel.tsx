@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { RequestEnvelope } from "@apivoy/request-model";
 import { Icon } from "./Icons";
+import { Button, IconButton } from "./Components";
+import { ClosableTabStrip } from "./ClosableTabStrip";
+import { ModalFrame } from "./ModalFrame";
 import { ProtocolHistoryWorkbench } from "./ProtocolHistoryWorkbench";
 import "./RequestHistoryPanel.css";
 import {
@@ -126,7 +129,6 @@ export function RequestHistoryPanel({ onList, onReplay, requestEditor }: Request
   const [activeId, setActiveId] = useState<string | null>(null);
   const [requests, setRequests] = useState<Record<string, HttpWorkbenchRequest | RequestEnvelope | null>>({});
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
-  const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -197,19 +199,16 @@ export function RequestHistoryPanel({ onList, onReplay, requestEditor }: Request
     const remaining = openIds.filter((tabId) => tabId !== id);
     setOpenIds(remaining);
     if (activeId === id) setActiveId(remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null);
-    setTabsMenuOpen(false);
   }
 
   function closeAllTabs() {
     setOpenIds([]);
     setActiveId(null);
-    setTabsMenuOpen(false);
   }
 
   function closeOtherTabs() {
     if (!activeId) return;
     setOpenIds([activeId]);
-    setTabsMenuOpen(false);
   }
 
   function openSaveDialog(request: HttpWorkbenchRequest) {
@@ -282,10 +281,10 @@ export function RequestHistoryPanel({ onList, onReplay, requestEditor }: Request
 
   return <section className="request-history-page" aria-labelledby="request-history-title">
     <aside className="request-history-timeline" aria-label="请求历史时间线">
-      <header className="request-history-sidebar-header"><div><h1 id="request-history-title">请求历史</h1><span>{items.length} 条本地记录</span></div><button type="button" className="ui-icon-button" aria-label="刷新请求历史" title="刷新" disabled={loading} onClick={() => void load(stateFilter, statusFilter)}><Icon name="activity"/></button></header>
+      <header className="request-history-sidebar-header"><div><h1 id="request-history-title">请求历史</h1><span>{items.length} 条本地记录</span></div><IconButton label="刷新请求历史" icon="activity" title="刷新" disabled={loading} onClick={() => void load(stateFilter, statusFilter)} /></header>
       <div className="request-history-source" aria-label="历史记录来源"><strong>本地</strong><span>当前项目</span></div>
       <label className="request-history-search"><span className="sr-only">搜索请求历史</span><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索请求或地址"/></label>
-      <div className="request-history-compact-filters"><label><span className="sr-only">执行状态</span><select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}><option value="">全部状态</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label><label><span className="sr-only">HTTP 状态码</span><input inputMode="numeric" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} placeholder="状态码"/></label><button type="button" className="ui-button secondary compact" disabled={loading} onClick={() => void load(stateFilter, statusFilter)}>筛选</button></div>
+      <div className="request-history-compact-filters"><label><span className="sr-only">执行状态</span><select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}><option value="">全部状态</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label><label><span className="sr-only">HTTP 状态码</span><input inputMode="numeric" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} placeholder="状态码"/></label><Button variant="secondary" size="compact" disabled={loading} onClick={() => void load(stateFilter, statusFilter)}>筛选</Button></div>
       {error ? <div className="request-history-error" role="alert">{error}</div> : null}
       <div className="request-history-groups" aria-live="polite">
         {loading && !items.length ? <div className="request-history-list-empty">正在加载…</div> : null}
@@ -295,7 +294,7 @@ export function RequestHistoryPanel({ onList, onReplay, requestEditor }: Request
     </aside>
 
     <main className="request-history-detail">
-      {openIds.length ? <div className="request-history-tabs workbench-tabs"><div className="workbench-tab-scroll" role="tablist" aria-label="已打开的历史请求">{openIds.map((id) => { const item = tabItems[id]; if (!item) return null; const title = item.name || item.target || "未命名请求"; return <div className={`workbench-tab${id === activeId ? " is-active" : ""}`} key={id}><button type="button" role="tab" aria-selected={id === activeId} onClick={() => setActiveId(id)}><Icon name="activity"/><span>{title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${title}`} onClick={() => closeTab(id)}><Icon name="close"/></button></div>; })}</div><div className="workbench-tab-tools"><div className="workbench-tabs-more is-align-right" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setTabsMenuOpen(false); }}><button type="button" className="ui-icon-button compact" aria-label="更多页签操作" title="更多" aria-haspopup="menu" aria-expanded={tabsMenuOpen} onClick={() => setTabsMenuOpen((open) => !open)}><Icon name="more"/></button>{tabsMenuOpen ? <div className="workbench-tabs-menu" role="menu" aria-label="历史页签操作"><div className="workbench-tabs-menu-actions"><button type="button" role="menuitem" onClick={closeAllTabs}>关闭全部标签页</button><button type="button" role="menuitem" disabled={!activeId} onClick={() => activeId && closeTab(activeId)}>关闭当前标签页</button><button type="button" role="menuitem" disabled={!activeId || openIds.length < 2} onClick={closeOtherTabs}>关闭其他标签页</button></div></div> : null}</div></div></div> : null}
+      {openIds.length ? <ClosableTabStrip className="request-history-tabs" items={openIds.flatMap((id) => { const item = tabItems[id]; return item ? [{ id, title: item.name || item.target || "未命名请求", icon: "activity" as const }] : []; })} activeId={activeId} ariaLabel="已打开的历史请求" menuLabel="历史页签操作" onActivate={setActiveId} onClose={closeTab} onCloseAll={closeAllTabs} onCloseOthers={closeOtherTabs}/> : null}
       <div className="request-history-tab-panels">
         {openIds.map((id) => {
           const item = tabItems[id];
@@ -316,8 +315,8 @@ export function RequestHistoryPanel({ onList, onReplay, requestEditor }: Request
       </div>
     </main>
 
-    {saveDraft && requestEditor ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !saveBusy && setSaveDraft(null)}><form className="history-save-interface-dialog" role="dialog" aria-modal="true" aria-labelledby="history-save-interface-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveInterface(); }}><header><h2 id="history-save-interface-title">保存为接口</h2><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveBusy} onClick={() => setSaveDraft(null)}><Icon name="close"/></button></header><div className="history-save-interface-fields"><label><span>接口名称 <i>*</i></span><input autoFocus required value={saveName} onChange={(event) => setSaveName(event.target.value)}/></label>{isHttpRequest(saveDraft) ? <><label><span>接口路径</span><input value={savePath} disabled={keepFullUrl} onChange={(event) => setSavePath(event.target.value)}/></label><label className="history-save-url-toggle"><span>保留完整 URL 路径</span><input type="checkbox" role="switch" checked={keepFullUrl} onChange={(event) => setKeepFullUrl(event.target.checked)}/></label></> : <label><span>请求目标</span><input value={saveDraft.target} disabled/></label>}<label><span>接口目录 <i>*</i></span><select required value={saveCollectionId} onChange={(event) => setSaveCollectionId(event.target.value)}><option value="" disabled>请选择接口目录</option>{collections.map((collection) => { const module = modules.find((item) => item.id === collection.moduleId); return <option key={collection.id} value={collection.id}>{module ? `${module.name} / ` : ""}{collection.name}</option>; })}</select></label></div><footer><button type="button" className="ui-button secondary" disabled={saveBusy} onClick={() => setSaveDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveBusy || !saveName.trim() || !saveCollectionId}>{saveBusy ? "保存中…" : "保存"}</button></footer></form></div>, document.body) : null}
+    {saveDraft && requestEditor ? createPortal(<ModalFrame open onClose={() => !saveBusy && setSaveDraft(null)} closeOnBackdrop={!saveBusy} className="history-save-interface-dialog" ariaLabelledBy="history-save-interface-title" as="form" onSubmit={(event) => { event.preventDefault(); void saveInterface(); }}><header><h2 id="history-save-interface-title">保存为接口</h2><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveBusy} onClick={() => setSaveDraft(null)}><Icon name="close"/></button></header><div className="history-save-interface-fields"><label><span>接口名称 <i>*</i></span><input autoFocus required value={saveName} onChange={(event) => setSaveName(event.target.value)}/></label>{isHttpRequest(saveDraft) ? <><label><span>接口路径</span><input value={savePath} disabled={keepFullUrl} onChange={(event) => setSavePath(event.target.value)}/></label><label className="history-save-url-toggle"><span>保留完整 URL 路径</span><input type="checkbox" role="switch" checked={keepFullUrl} onChange={(event) => setKeepFullUrl(event.target.checked)}/></label></> : <label><span>请求目标</span><input value={saveDraft.target} disabled/></label>}<label><span>接口目录 <i>*</i></span><select required value={saveCollectionId} onChange={(event) => setSaveCollectionId(event.target.value)}><option value="" disabled>请选择接口目录</option>{collections.map((collection) => { const module = modules.find((item) => item.id === collection.moduleId); return <option key={collection.id} value={collection.id}>{module ? `${module.name} / ` : ""}{collection.name}</option>; })}</select></label></div><footer><button type="button" className="ui-button secondary" disabled={saveBusy} onClick={() => setSaveDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveBusy || !saveName.trim() || !saveCollectionId}>{saveBusy ? "保存中…" : "保存"}</button></footer></ModalFrame>, document.body) : null}
 
-    {caseDraft ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !saveBusy && setCaseDraft(null)}><form className="case-save-dialog history-debug-case-dialog" role="dialog" aria-modal="true" aria-labelledby="history-save-case-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveDebugCase(); }}><header><div><h2 id="history-save-case-title">保存为用例</h2></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveBusy} onClick={() => setCaseDraft(null)}><Icon name="close"/></button></header><div className="case-save-fields"><label><span>用例名称 <i>*</i></span><div className="case-name-composer"><input autoFocus aria-label="用例名称" required value={caseName} onChange={(event) => setCaseName(event.target.value)} placeholder="请输入调试用例名称"/></div></label></div><label className={caseDraft.result ? "case-save-response" : "case-save-response is-disabled"}><input type="checkbox" checked={caseSaveResponse} disabled={!caseDraft.result || saveBusy} onChange={(event) => setCaseSaveResponse(event.target.checked)}/><span><strong>同时保存响应</strong><small>{caseDraft.result ? "包含状态码、Headers、Content-Type、耗时和响应正文" : "当前没有响应，仅保存请求配置"}</small></span></label><footer><button type="button" className="ui-button secondary" disabled={saveBusy} onClick={() => setCaseDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveBusy || !caseName.trim()}>{saveBusy ? "保存中…" : "保存"}</button></footer></form></div>, document.body) : null}
+    {caseDraft ? createPortal(<ModalFrame open onClose={() => !saveBusy && setCaseDraft(null)} closeOnBackdrop={!saveBusy} className="case-save-dialog history-debug-case-dialog" ariaLabelledBy="history-save-case-title" as="form" onSubmit={(event) => { event.preventDefault(); void saveDebugCase(); }}><header><div><h2 id="history-save-case-title">保存为用例</h2></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveBusy} onClick={() => setCaseDraft(null)}><Icon name="close"/></button></header><div className="case-save-fields"><label><span>用例名称 <i>*</i></span><div className="case-name-composer"><input autoFocus aria-label="用例名称" required value={caseName} onChange={(event) => setCaseName(event.target.value)} placeholder="请输入调试用例名称"/></div></label></div><label className={caseDraft.result ? "case-save-response" : "case-save-response is-disabled"}><input type="checkbox" checked={caseSaveResponse} disabled={!caseDraft.result || saveBusy} onChange={(event) => setCaseSaveResponse(event.target.checked)}/><span><strong>同时保存响应</strong><small>{caseDraft.result ? "包含状态码、Headers、Content-Type、耗时和响应正文" : "当前没有响应，仅保存请求配置"}</small></span></label><footer><button type="button" className="ui-button secondary" disabled={saveBusy} onClick={() => setCaseDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveBusy || !caseName.trim()}>{saveBusy ? "保存中…" : "保存"}</button></footer></ModalFrame>, document.body) : null}
   </section>;
 }

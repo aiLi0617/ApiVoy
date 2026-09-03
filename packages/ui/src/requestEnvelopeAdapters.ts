@@ -1,0 +1,26 @@
+import type { RequestEnvelope } from "@apivoy/request-model";
+import type { AmqpWorkbenchRequest } from "./AmqpWorkbench";
+import type { GrpcWorkbenchRequest } from "./GrpcWorkbench";
+import type { KafkaWorkbenchRequest } from "./KafkaWorkbench";
+import type { MqttWorkbenchRequest } from "./MqttWorkbench";
+import type { RedisWorkbenchRequest } from "./RedisWorkbench";
+import type { SocketWorkbenchRequest } from "./SocketWorkbench";
+import type { SqlWorkbenchRequest } from "./SqlWorkbench";
+import type { SseWorkbenchRequest } from "./SseWorkbench";
+import type { WebSocketWorkbenchRequest } from "./WebSocketWorkbench";
+
+type EnvelopeInput = { id?: string; name: string; timeoutMs: number };
+
+function envelope(request: EnvelopeInput, protocolId: string, target: string, payload: RequestEnvelope["payload"], metadata: Record<string, string> = {}): RequestEnvelope {
+  return { id: request.id ?? crypto.randomUUID(), protocolId, name: request.name, target, environmentRef: "default-env", authRef: null, timeoutMs: request.timeoutMs, retryPolicy: { max_retries: 0, backoff_ms: 0 }, proxy: null, tls: { verify: true, client_cert_ref: null }, metadata, payload, preScripts: [], postScripts: [], assertions: [], variables: {}, createdAt: new Date().toISOString() };
+}
+
+export const redisRequestEnvelope = (request: RedisWorkbenchRequest) => envelope(request, "redis", request.target, { type: "raw", value: { username: request.username, passwordRef: request.passwordRef, database: request.database, commands: request.commands } });
+export const mqttRequestEnvelope = (request: MqttWorkbenchRequest) => envelope(request, "mqtt", request.target, { type: "raw", value: { mode: request.mode, clientId: request.clientId, username: request.username, passwordRef: request.passwordRef, cleanSession: request.cleanSession, keepAliveSeconds: request.keepAliveSeconds, topic: request.topic, payload: request.payload, encoding: request.encoding, qos: request.qos, retain: request.retain, receiveLimit: request.receiveLimit, caPemRef: request.caPemRef, serverName: request.serverName } });
+export const amqpRequestEnvelope = (request: AmqpWorkbenchRequest) => envelope(request, "amqp", request.target, { type: "raw", value: { mode: request.mode, username: request.username, passwordRef: request.passwordRef, exchange: request.exchange, exchangeType: request.exchangeType, routingKey: request.routingKey, queue: request.queue, declare: request.declare, durable: request.durable, autoAck: request.autoAck, receiveLimit: request.receiveLimit, payload: request.payload, encoding: request.encoding, contentType: request.contentType } });
+export const kafkaRequestEnvelope = (request: KafkaWorkbenchRequest) => envelope(request, "kafka", request.target, { type: "raw", value: { mode: request.mode, topic: request.topic, key: request.key, payload: request.payload, encoding: request.encoding, partition: request.partition, groupId: request.groupId, offsetReset: request.offsetReset, autoCommit: request.autoCommit, receiveLimit: request.receiveLimit, securityProtocol: request.securityProtocol, saslMechanism: request.saslMechanism, username: request.username, passwordRef: request.passwordRef, caPemRef: request.caPemRef, certificatePemRef: request.certificatePemRef, keyPemRef: request.keyPemRef, keyPasswordRef: request.keyPasswordRef } });
+export const sqlRequestEnvelope = (request: SqlWorkbenchRequest) => envelope(request, "sql", request.target, { type: "raw", value: { username: request.username, passwordRef: request.passwordRef, sql: request.sql, parameters: request.parameters, transactional: request.transactional, rowLimit: request.rowLimit } });
+export const sseRequestEnvelope = (request: SseWorkbenchRequest) => envelope(request, "sse", request.url, { type: "sse", headers: request.headers, lastEventId: request.lastEventId ?? null, reconnectMax: request.reconnectMax, reconnectDelayMs: request.reconnectDelayMs });
+export const webSocketRequestEnvelope = (request: WebSocketWorkbenchRequest) => envelope(request, "websocket", request.url, { type: "websocket", headers: request.headers, subprotocols: request.subprotocols, messages: request.messages, receiveLimit: request.receiveLimit, reconnectMax: request.reconnectMax, reconnectDelayMs: request.reconnectDelayMs });
+export const grpcRequestEnvelope = (request: GrpcWorkbenchRequest) => envelope(request, "grpc", request.target, { type: "grpc", service: request.service, method: request.method, messageBase64: request.messageBase64, messageJson: request.messageJson, descriptorSetBase64: request.descriptorSetBase64, mode: request.mode, metadata: request.metadata });
+export const socketRequestEnvelope = (request: SocketWorkbenchRequest) => envelope(request, request.protocol, request.target, request.protocol === "tcp" ? { type: "tcp", data: request.data, encoding: request.encoding, framing: request.framing, delimiter: request.delimiter, fixedLength: request.fixedLength, sendCount: request.sendCount, intervalMs: request.intervalMs, tls: request.tls, serverName: request.serverName, caCertRef: request.caCertRef } : { type: "udp", data: request.data, encoding: request.encoding, sendCount: request.sendCount, intervalMs: request.intervalMs }, { socketPayloadFormat: request.format ?? request.encoding, socketSourceData: request.sourceData ?? request.data });

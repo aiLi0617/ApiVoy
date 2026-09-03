@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
+import { RovingTabList } from "./RovingTabList";
+import { ModalFrame } from "./ModalFrame";
 import { CodeEditor } from "./CodeEditor";
 import { HttpWorkbench, type HttpWorkbenchRequest } from "./HttpWorkbench";
 import { readWorkbenchDraft } from "./draftRecovery";
@@ -341,11 +343,7 @@ export function InterfaceLifecycleShell({
       className={`interface-lifecycle${active === "debug" || active === "definition" ? " has-commandbar" : ""}`}
       aria-label={`${title} \u63a5\u53e3\u5de5\u4f5c\u53f0`}
     >
-      <div
-        className="interface-lifecycle-tabs"
-        role="tablist"
-        aria-label="\u63a5\u53e3\u751f\u547d\u5468\u671f"
-      >
+      <RovingTabList className="interface-lifecycle-tabs" ariaLabel="\u63a5\u53e3\u751f\u547d\u5468\u671f">
         {availableTabs.map((id) => {
           const tab = TABS[id];
           return (
@@ -353,6 +351,7 @@ export function InterfaceLifecycleShell({
               key={id}
               type="button"
               role="tab"
+              tabIndex={active === id ? 0 : -1}
               aria-selected={active === id}
               aria-controls={`interface-lifecycle-${sessionId}-${id}`}
               className={active === id ? "is-active" : ""}
@@ -363,7 +362,7 @@ export function InterfaceLifecycleShell({
             </button>
           );
         })}
-      </div>
+      </RovingTabList>
       <div id={`interface-commandbar-${sessionId}`} data-active-tab={active} className={`interface-lifecycle-commandbar${active === "debug" || active === "definition" ? "" : " is-hidden"}`} />
       <div
         id={`interface-lifecycle-${sessionId}-debug`}
@@ -1801,14 +1800,11 @@ function DefinitionPanel({
               </select>
             </label>
           ) : null}
-          <div
-            className="interface-definition-mode"
-            role="tablist"
-            aria-label="定义编辑模式"
-          >
+          <RovingTabList className="interface-definition-mode" ariaLabel="定义编辑模式">
             <button
               type="button"
               role="tab"
+              tabIndex={mode === "visual" ? 0 : -1}
               aria-selected={mode === "visual"}
               className={mode === "visual" ? "is-active" : ""}
               onClick={enterVisualMode}
@@ -1818,13 +1814,14 @@ function DefinitionPanel({
             <button
               type="button"
               role="tab"
+              tabIndex={mode === "source" ? 0 : -1}
               aria-selected={mode === "source"}
               className={mode === "source" ? "is-active" : ""}
               onClick={enterSourceMode}
             >
               源码
             </button>
-          </div>
+          </RovingTabList>
           <button
             type="button"
             className={`ui-button secondary${structureOpen ? " is-active" : ""}`}
@@ -2132,14 +2129,11 @@ function VisualDefinitionEditor({
   ] as const;
   return (
     <div className="interface-visual-editor">
-      <div
-        className="interface-contract-primary"
-        role="tablist"
-        aria-label="接口定义区域"
-      >
+      <RovingTabList className="interface-contract-primary" ariaLabel="接口定义区域">
         <button
           type="button"
           role="tab"
+          tabIndex={area === "request" ? 0 : -1}
           aria-selected={area === "request"}
           className={area === "request" ? "is-active" : ""}
           onClick={() => setArea("request")}
@@ -2150,6 +2144,7 @@ function VisualDefinitionEditor({
         <button
           type="button"
           role="tab"
+          tabIndex={area === "response" ? 0 : -1}
           aria-selected={area === "response"}
           className={area === "response" ? "is-active" : ""}
           onClick={() => setArea("response")}
@@ -2160,13 +2155,14 @@ function VisualDefinitionEditor({
         <button
           type="button"
           role="tab"
+          tabIndex={area === "security" ? 0 : -1}
           aria-selected={area === "security"}
           className={area === "security" ? "is-active" : ""}
           onClick={() => setArea("security")}
         >
           安全与约权
         </button>
-      </div>
+      </RovingTabList>
       {area === "response" ? (
         <div className="interface-response-scenes" aria-label="响应场景">
           {responses.map((item) => (
@@ -2198,13 +2194,9 @@ function VisualDefinitionEditor({
         </div>
       ) : null}
       {area === "response" && selectedResponse ? <section className="interface-response-detail"><h3><b>{selectedResponse.statusCode || "—"}</b> {selectedResponse.name || "未命名响应"}</h3><div className="interface-response-meta"><label><span>HTTP 状态码：</span><input aria-label="HTTP 状态码" value={selectedResponse.statusCode} onChange={(event) => { const statusCode = event.target.value; onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, statusCode } : item)); onChange(fields.map((field) => field.responseId === selectedResponse.id ? { ...field, status: statusCode } : field)); }}/></label><label><span>名称：</span><input aria-label="响应名称" value={selectedResponse.name} onChange={(event) => onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, name: event.target.value } : item))}/></label><label><span>内容格式：</span><select aria-label="内容格式" value={selectedResponse.bodyType} onChange={(event) => { const bodyType = event.target.value as ResponseBodyType; onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, bodyType, contentType: RESPONSE_BODY_TYPES.find((type) => type.id === bodyType)?.contentType ?? "" } : item)); }}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><span className="interface-response-content-type">{selectedResponse.contentType || "无 Content-Type"}</span>{responses.length > 1 ? <button type="button" className="ui-icon-button compact" aria-label="删除当前响应" onClick={() => { onResponsesChange(responses.filter((item) => item.id !== selectedResponse.id)); onChange(fields.filter((field) => field.responseId !== selectedResponse.id)); }}><Icon name="trash"/></button> : null}</div></section> : null}
-      {blankResponseDialogOpen ? <div className="dialog-backdrop interface-add-response-backdrop" role="presentation" onMouseDown={() => setBlankResponseDialogOpen(false)}><form className="interface-add-response-dialog" role="dialog" aria-modal="true" aria-labelledby="add-response-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); if (!validBlankStatus) return; const bodyType = blankResponseDraft.bodyType; const response: ResponseDefinition = { id: crypto.randomUUID(), name: blankResponseDraft.name.trim(), statusCode: normalizedBlankStatus, bodyType, contentType: RESPONSE_BODY_TYPES.find((item) => item.id === bodyType)?.contentType ?? "" }; onResponsesChange([...responses, response]); setSelectedResponseId(response.id); setBlankResponseDialogOpen(false); }}><header><h2 id="add-response-title">添加响应</h2><button type="button" className="ui-icon-button" aria-label="关闭添加响应" onClick={() => setBlankResponseDialogOpen(false)}><Icon name="close"/></button></header><div className="interface-add-response-fields"><label><span>HTTP 状态码 <em>*</em></span><div className="http-status-combobox"><input autoFocus required type="text" inputMode="numeric" minLength={1} maxLength={9} pattern="[0-9]{1,9}" role="combobox" aria-autocomplete="list" aria-controls="http-response-status-options" aria-expanded={statusPickerOpen} aria-activedescendant={statusPickerOpen ? `http-status-${HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]?.[0]}` : undefined} value={blankResponseDraft.statusCode} onClick={() => setStatusPickerOpen(true)} onBlur={() => setStatusPickerOpen(false)} onChange={(event) => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: event.target.value.replace(/\D/g, "").slice(0, 9) })); }} onKeyDown={(event) => { if (event.key === "Escape") { setStatusPickerOpen(false); return; } if (statusPickerOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; setActiveStatusIndex((index) => (index + delta + HTTP_RESPONSE_STATUS_OPTIONS.length) % HTTP_RESPONSE_STATUS_OPTIONS.length); return; } if (event.key === "Enter" && statusPickerOpen) { event.preventDefault(); const option = HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]; if (option) setBlankResponseDraft((draft) => ({ ...draft, statusCode: option[0], name: option[1] })); setStatusPickerOpen(false); }}} aria-invalid={!validBlankStatus} title="请输入 1–9 位数字"/>{statusPickerOpen ? <div id="http-response-status-options" className="http-status-options" role="listbox">{(["1", "2", "3", "4", "5"] as const).map((group) => <div className={`http-status-group status-${group}xx`} key={group}>{HTTP_RESPONSE_STATUS_OPTIONS.map(([code, label], index) => code.startsWith(group) ? <button id={`http-status-${code}`} type="button" role="option" aria-selected={blankResponseDraft.statusCode === code} className={activeStatusIndex === index ? "is-active" : ""} key={code} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveStatusIndex(index)} onClick={() => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: code, name: label })); setStatusPickerOpen(false); }}><b>{code}</b><span>{label}</span><i className="http-status-info" data-tooltip={httpStatusExplanation(code, label)} aria-label={`${code} 协议说明`}>i</i></button> : null)}<div className="http-status-class"><b>{group}XX</b><span>{group === "1" ? "信息" : group === "2" ? "成功" : group === "3" ? "重定向" : group === "4" ? "客户端错误" : "服务器错误"}</span><i className="http-status-info" data-tooltip={httpStatusClassExplanation(group)} aria-label={`${group}XX 协议说明`}>i</i></div></div>)}</div> : null}</div><small>可选择标准状态码，也可输入 1–9 位数字。</small></label><label><span>名称</span><input value={blankResponseDraft.name} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, name: event.target.value }))}/></label><label><span>内容格式</span><select value={blankResponseDraft.bodyType} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, bodyType: event.target.value as ResponseBodyType }))}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div><footer><button type="button" className="ui-button secondary" onClick={() => setBlankResponseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={!validBlankStatus}>确定</button></footer></form></div> : null}
+      {blankResponseDialogOpen ? <ModalFrame open onClose={() => setBlankResponseDialogOpen(false)} overlayClassName="dialog-backdrop interface-add-response-backdrop" className="interface-add-response-dialog" ariaLabelledBy="add-response-title" as="form" onSubmit={(event) => { event.preventDefault(); if (!validBlankStatus) return; const bodyType = blankResponseDraft.bodyType; const response: ResponseDefinition = { id: crypto.randomUUID(), name: blankResponseDraft.name.trim(), statusCode: normalizedBlankStatus, bodyType, contentType: RESPONSE_BODY_TYPES.find((item) => item.id === bodyType)?.contentType ?? "" }; onResponsesChange([...responses, response]); setSelectedResponseId(response.id); setBlankResponseDialogOpen(false); }}><header><h2 id="add-response-title">添加响应</h2><button type="button" className="ui-icon-button" aria-label="关闭添加响应" onClick={() => setBlankResponseDialogOpen(false)}><Icon name="close"/></button></header><div className="interface-add-response-fields"><label><span>HTTP 状态码 <em>*</em></span><div className="http-status-combobox"><input autoFocus required type="text" inputMode="numeric" minLength={1} maxLength={9} pattern="[0-9]{1,9}" role="combobox" aria-autocomplete="list" aria-controls="http-response-status-options" aria-expanded={statusPickerOpen} aria-activedescendant={statusPickerOpen ? `http-status-${HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]?.[0]}` : undefined} value={blankResponseDraft.statusCode} onClick={() => setStatusPickerOpen(true)} onBlur={() => setStatusPickerOpen(false)} onChange={(event) => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: event.target.value.replace(/\D/g, "").slice(0, 9) })); }} onKeyDown={(event) => { if (event.key === "Escape") { setStatusPickerOpen(false); return; } if (statusPickerOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; setActiveStatusIndex((index) => (index + delta + HTTP_RESPONSE_STATUS_OPTIONS.length) % HTTP_RESPONSE_STATUS_OPTIONS.length); return; } if (event.key === "Enter" && statusPickerOpen) { event.preventDefault(); const option = HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]; if (option) setBlankResponseDraft((draft) => ({ ...draft, statusCode: option[0], name: option[1] })); setStatusPickerOpen(false); }}} aria-invalid={!validBlankStatus} title="请输入 1–9 位数字"/>{statusPickerOpen ? <div id="http-response-status-options" className="http-status-options" role="listbox">{(["1", "2", "3", "4", "5"] as const).map((group) => <div className={`http-status-group status-${group}xx`} key={group}>{HTTP_RESPONSE_STATUS_OPTIONS.map(([code, label], index) => code.startsWith(group) ? <button id={`http-status-${code}`} type="button" role="option" aria-selected={blankResponseDraft.statusCode === code} className={activeStatusIndex === index ? "is-active" : ""} key={code} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveStatusIndex(index)} onClick={() => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: code, name: label })); setStatusPickerOpen(false); }}><b>{code}</b><span>{label}</span><i className="http-status-info" data-tooltip={httpStatusExplanation(code, label)} aria-label={`${code} 协议说明`}>i</i></button> : null)}<div className="http-status-class"><b>{group}XX</b><span>{group === "1" ? "信息" : group === "2" ? "成功" : group === "3" ? "重定向" : group === "4" ? "客户端错误" : "服务器错误"}</span><i className="http-status-info" data-tooltip={httpStatusClassExplanation(group)} aria-label={`${group}XX 协议说明`}>i</i></div></div>)}</div> : null}</div><small>可选择标准状态码，也可输入 1–9 位数字。</small></label><label><span>名称</span><input value={blankResponseDraft.name} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, name: event.target.value }))}/></label><label><span>内容格式</span><select value={blankResponseDraft.bodyType} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, bodyType: event.target.value as ResponseBodyType }))}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div><footer><button type="button" className="ui-button secondary" onClick={() => setBlankResponseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={!validBlankStatus}>确定</button></footer></ModalFrame> : null}
       {area !== "security" ? (
-        <div
-          className="interface-contract-nav"
-          role="tablist"
-          aria-label={area === "request" ? "请求内容" : "响应内容"}
-        >
+        <RovingTabList className="interface-contract-nav" ariaLabel={area === "request" ? "请求内容" : "响应内容"}>
           {(area === "request" ? requestTabs : responseTabs).map(
             ([id, label]) => {
               const tabScope = `${area}.${id}` as DefinitionScope;
@@ -2217,6 +2209,7 @@ function VisualDefinitionEditor({
                 <button
                   type="button"
                   role="tab"
+                  tabIndex={(area === "request" ? requestPart : responsePart) === id ? 0 : -1}
                   aria-selected={
                     (area === "request" ? requestPart : responsePart) === id
                   }
@@ -2238,7 +2231,7 @@ function VisualDefinitionEditor({
               );
             },
           )}
-        </div>
+        </RovingTabList>
       ) : null}
       {area === "request" && requestPart === "body" ? (
         <div

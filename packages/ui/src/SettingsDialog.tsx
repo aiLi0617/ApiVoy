@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useAppStore, type ThemeMode } from "./appStore";
-import { Icon } from "./Icons";
+import { Button, IconButton } from "./Components";
 import { useI18n, type Locale } from "./i18n";
 import {
   getAiEndpoint,
@@ -20,7 +20,7 @@ import {
   setGatewayKey,
   setGatewayUrl,
 } from "./userPreferences";
-import { useDialogFocus } from "./useDialogFocus";
+import { ModalFrame } from "./ModalFrame";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -34,7 +34,6 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
   const setThemeMode = useAppStore((state) => state.setThemeMode);
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
 
   const [collaborationUrl, setCollaborationUrlState] = useState(getCollaborationUrl);
   const [agentUrl, setAgentUrlState] = useState(getAgentUrl);
@@ -63,7 +62,6 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
     setGatewayKeyState(getGatewayKey());
     setSaved(false);
   }, [open]);
-  useDialogFocus(open, dialogRef, onClose, closeRef);
 
   function saveSettings() {
     setCollaborationUrl(collaborationUrl); setAgentUrl(agentUrl); setAgentToken(agentToken);
@@ -74,24 +72,14 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
   if (!open) return null;
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <div
-        ref={dialogRef}
-        className="settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+    <ModalFrame open={open} onClose={onClose} className="settings-dialog" ariaLabelledBy={titleId} initialFocusRef={closeRef}>
         <header className="settings-dialog-header">
           <div>
             <span className="settings-scope-label">{locale === "zh-CN" ? "软件级" : "Application-wide"}</span>
             <h2 id={titleId}>{locale === "zh-CN" ? "软件设置" : "Application settings"}</h2>
             <p>{locale === "zh-CN" ? "应用于 ApiVoy 软件和当前设备，不随项目切换，也不会写入项目文件。" : "Applies to ApiVoy on this device. These values do not change with projects or enter project files."}</p>
           </div>
-          <button ref={closeRef} type="button" className="ui-icon-button" aria-label={t("action.close")} onClick={onClose}>
-            <Icon name="close" />
-          </button>
+          <IconButton ref={closeRef} label={t("action.close")} icon="close" onClick={onClose} />
         </header>
 
         <div className="settings-dialog-body" data-category={category}>
@@ -174,9 +162,9 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
                 spellCheck={false}
               />
             </label>
-            <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-open-collaboration", { detail: "team" })); }}>
+            <Button variant="secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-open-collaboration", { detail: "team" })); }}>
               {t("collaboration.open")}
-            </button>
+            </Button>
           </section>
 
           <section className="settings-section category-ai">
@@ -215,7 +203,7 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
               />
             </label>
             <p className="settings-hint">{t("settings.ai.keyHint")}</p>
-            <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "ai" })); }}>{t("settings.openWorkbench", { name: "AI" })}</button>
+            <Button variant="secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "ai" })); }}>{t("settings.openWorkbench", { name: "AI" })}</Button>
           </section>
 
           <section className="settings-section category-connection">
@@ -243,15 +231,15 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
                 autoComplete="off"
               />
             </label>
-            <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "gateway" })); }}>{t("settings.openWorkbench", { name: "Gateway" })}</button>
+            <Button variant="secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "gateway" })); }}>{t("settings.openWorkbench", { name: "Gateway" })}</Button>
           </section>
 
           <section className="settings-section category-plugins">
             <h3>{t("settings.section.plugins")}</h3>
             <p className="settings-hint">{t("settings.plugins.hint")}</p>
             <div className="environment-editor-actions">
-              <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "plugins" })); }}>{t("settings.openWorkbench", { name: "Plugins" })}</button>
-              <button type="button" className="ui-button secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "ai" })); }}>{t("settings.openWorkbench", { name: "AI" })}</button>
+              <Button variant="secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "plugins" })); }}>{t("settings.openWorkbench", { name: "Plugins" })}</Button>
+              <Button variant="secondary" onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("apivoy-select-workbench", { detail: "ai" })); }}>{t("settings.openWorkbench", { name: "AI" })}</Button>
             </div>
           </section>
           <section className="settings-section category-shortcuts">
@@ -267,10 +255,9 @@ export function SettingsDialog({ open, onClose, channelLabel }: SettingsDialogPr
 
         <footer className="settings-dialog-footer">
           <span role="status" aria-live="polite">{saved ? (locale === "zh-CN" ? "设置已保存；Agent 连接设置将在刷新后完全生效。" : "Settings saved; Agent connection changes fully apply after reload.") : ""}</span>
-          <button type="button" className="ui-button secondary" onClick={onClose}>{t("action.cancel")}</button>
-          <button type="button" className="ui-button primary" onClick={saveSettings}>{t("action.save")}</button>
+          <Button variant="secondary" onClick={onClose}>{t("action.cancel")}</Button>
+          <Button variant="primary" onClick={saveSettings}>{t("action.save")}</Button>
         </footer>
-      </div>
-    </div>
+    </ModalFrame>
   );
 }

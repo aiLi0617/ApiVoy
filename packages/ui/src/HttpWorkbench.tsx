@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import type {
   Assertion,
@@ -17,6 +17,8 @@ import { CodeEditor } from "./CodeEditor";
 import { CodeGenerator } from "./CodeGenerator";
 import { SplitPane, WorkbenchFrame } from "./WorkbenchFrame";
 import { VirtualList } from "./VirtualList";
+import { RovingTabList } from "./RovingTabList";
+import { ModalFrame } from "./ModalFrame";
 import { readWorkbenchDraft, useAutosaveDraft } from "./draftRecovery";
 import { useWorkbenchHydration } from "./useWorkbenchHydration";
 import { ScriptStepEditor } from "./ScriptStepEditor";
@@ -27,6 +29,10 @@ import { useI18n } from "./i18n";
 import { alignRequestToInterface, captureHttpInterfaceStructure, diffHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY, readInterfaceStructureMetadata } from "./interfaceStructureV2";
 import { DEFAULT_RESPONSE_VALIDATION_SETTINGS, readResponseValidationSettings, RESPONSE_VALIDATION_SETTINGS_EVENT, type ProjectResponseValidationSettings } from "./responseValidationSettings";
 import { validateDesignedResponse, type DesignedResponse } from "./designedResponseValidator";
+import { KeyValueRows, cookieRowsFromHeaders, createHeaderRow, createQueryRow, headerRowsFromPairs, keyValueRowHasContent, queryRowsFromUrl, urlWithQueryRows, type HeaderRow, type RowValueType } from "./KeyValueEditor";
+
+export { KeyValueRows, createQueryRow, queryRowsFromUrl, urlWithQueryRows } from "./KeyValueEditor";
+export type { HeaderRow, RowValueType } from "./KeyValueEditor";
 
 export type AuthKind = "none" | "bearer" | "basic" | "api_key" | "oauth2_client_credentials" | "oauth2_authorization_code";
 type BearerTokenSource = "direct" | "secret_ref";
@@ -220,8 +226,6 @@ export interface HistoryFilter {
   requestId?: string;
 }
 
-export type RowValueType = "string" | "integer" | "number" | "boolean" | "array" | "object" | "null";
-
 const ROW_VALUE_TYPES: Array<{ value: RowValueType; label: string }> = [
   { value: "string", label: "String" },
   { value: "integer", label: "Integer" },
@@ -231,17 +235,6 @@ const ROW_VALUE_TYPES: Array<{ value: RowValueType; label: string }> = [
   { value: "object", label: "Object" },
   { value: "null", label: "Null" },
 ];
-
-export interface HeaderRow {
-  id: string;
-  key: string;
-  value: string;
-  enabled: boolean;
-  valueType: RowValueType;
-  typeSelected: boolean;
-  description: string;
-  required: boolean;
-}
 
 function httpRequestFromHydration(value: unknown): HttpWorkbenchRequest | null {
   const wrapped = value as { request?: HttpWorkbenchRequest } | null;
@@ -319,64 +312,12 @@ function snapshotActualRequest(request: HttpWorkbenchRequest): HttpWorkbenchRequ
 function resolveAssets(ids:string[]):string[]{ let assets:ScriptAsset[]=[];try{assets=JSON.parse(localStorage.getItem("apivoy-project-scripts-v1")??"[]") as ScriptAsset[]}catch{return []}return ids.map((id)=>assets.find((item)=>item.id===id)).filter((item):item is ScriptAsset=>!!item).map((item)=>{const source=item.language==="typescript"?ts.transpileModule(item.source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None}}).outputText:item.source;return `// @apivoy-script:${item.id}\n${source}`})}
 function assetIdsFromScripts(scripts:string[]|undefined):string[]{return Array.from(new Set((scripts??[]).map((script)=>script.match(/^\/\/ @apivoy-script:([^\s]+)/m)?.[1]).filter((id):id is string=>Boolean(id))))}
 
-function createHeaderRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
-  return { id: crypto.randomUUID(), key, value, enabled: Boolean(key.trim() || value.trim()), valueType, typeSelected: valueType !== "string", description, required: false };
-}
-
-function headerRowsFromPairs(headers: Array<[string, string]>): HeaderRow[] {
-  return [...headers.map(([key, value]) => createHeaderRow(key, value)), createHeaderRow()];
-}
-
-function cookieRowsFromHeaders(headers: Array<[string, string]>): HeaderRow[] {
-  const parsed = headers
-    .filter(([key]) => key.toLowerCase() === "cookie")
-    .flatMap(([, value]) => value.split(";"))
-    .flatMap((item) => {
-      const trimmed = item.trim();
-      const separator = trimmed.indexOf("=");
-      return separator > 0 ? [createQueryRow(trimmed.slice(0, separator).trim(), trimmed.slice(separator + 1).trim())] : [];
-    });
-  return [...parsed, createQueryRow()];
-}
-
-export function createQueryRow(key = "", value = "", valueType: HeaderRow["valueType"] = "string", description = ""): HeaderRow {
-  return { ...createHeaderRow(key, value, valueType, description), enabled: Boolean(key.trim() || value.trim()) };
-}
-
-function keyValueRowHasContent(row: HeaderRow): boolean {
-  return Boolean(row.key.trim() || row.value.trim() || row.description.trim() || row.typeSelected || row.required);
-}
-
-function editKeyValueRow(row: HeaderRow, patch: Partial<Pick<HeaderRow, "key" | "value" | "valueType" | "typeSelected" | "description" | "required">>): HeaderRow {
-  const wasEmpty = !keyValueRowHasContent(row);
-  const next = { ...row, ...patch };
-  const hasContent = keyValueRowHasContent(next);
-  return { ...next, enabled: hasContent ? row.enabled || wasEmpty : false };
-}
-
-function appendEmptyKeyValueRow(rows: HeaderRow[], editedIndex: number): HeaderRow[] {
-  return editedIndex === rows.length - 1 && keyValueRowHasContent(rows[editedIndex]) ? [...rows, createQueryRow()] : rows;
-}
-
 function createMultipartEditorPart(part: Partial<MultipartPart> = {}): MultipartEditorPart {
   return { id: crypto.randomUUID(), enabled: Boolean(part.name?.trim()), description: "", kind: part.fileName ? "file" : "text", valueType: "string", typeSelected: Boolean(part.fileName), required: false, name: part.name ?? "", value: part.value ?? "", fileName: part.fileName, contentType: part.contentType, base64: part.base64 ?? false };
 }
 
 function multipartPartHasContent(part: MultipartEditorPart): boolean {
   return Boolean(part.name.trim() || part.value || part.fileName || part.description.trim() || part.typeSelected || part.required);
-}
-
-export function queryRowsFromUrl(url: string): HeaderRow[] {
-  const query = url.split("#", 1)[0].split("?", 2)[1] ?? "";
-  return [...Array.from(new URLSearchParams(query).entries()).map(([key, value]) => createQueryRow(key, value)), createQueryRow()];
-}
-
-export function urlWithQueryRows(url: string, rows: HeaderRow[]): string {
-  const hashIndex = url.indexOf("#"); const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
-  const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
-  const base = withoutHash.split("?", 1)[0];
-  const query = new URLSearchParams(rows.filter((row) => row.enabled && row.key.trim()).map((row) => [row.key, row.value])).toString();
-  return `${base}${query ? `?${query}` : ""}${hash}`;
 }
 
 function formatBytes(bytes: number): string {
@@ -419,58 +360,6 @@ export function HttpLiveRequestView({ request }: { request: HttpWorkbenchRequest
 
 function responseHeaderSize(meta: ResponseMeta | null | undefined): number {
   return meta?.headers.reduce((size, [name, value]) => size + new TextEncoder().encode(`${name}: ${value}\r\n`).length, 0) ?? 0;
-}
-
-interface KeyValueRowsProps {
-  rows: HeaderRow[];
-  setRows: Dispatch<SetStateAction<HeaderRow[]>>;
-  kind: string;
-  nameLabel: string;
-  valueLabel: string;
-  addPlaceholder: string;
-  loading?: boolean;
-  onRowsChange?: (rows: HeaderRow[]) => void;
-  inconsistentNames?: string[];
-}
-
-export function KeyValueRows({ rows, setRows, kind, nameLabel, valueLabel, addPlaceholder, loading = false, onRowsChange, inconsistentNames = [] }: KeyValueRowsProps) {
-  const inconsistent = new Set(inconsistentNames.map((name) => name.toLowerCase()));
-  const update = (producer: (current: HeaderRow[]) => HeaderRow[]) => { if (loading) return; setRows((current) => { const next = producer(current); onRowsChange?.(next); return next; }); };
-  const activateTypeSelection = (row: HeaderRow, index: number) => {
-    if (row.typeSelected) return;
-    update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { typeSelected: true }) : item), index));
-  };
-  const activateEmptyRow = (row: HeaderRow, index: number) => {
-    if (row.enabled || keyValueRowHasContent(row)) return;
-    update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, enabled: true } : item); return index === current.length - 1 ? [...next, createQueryRow()] : next; });
-  };
-  const remove = (row: HeaderRow) => {
-    update((current) => { const next = current.filter((item) => item.id !== row.id); return next.length && !keyValueRowHasContent(next[next.length - 1]) ? next : [...next, createQueryRow()]; });
-  };
-  return <div className="http-kv-editor" aria-label={kind}>
-    <div className="http-param-header"><span/><span>{nameLabel}</span><span>{valueLabel}</span><span className="http-type-header"><span>类型</span><button type="button" title="是否全部必需" aria-label="切换全部参数是否必填" disabled={loading} onClick={() => update((current) => { const required = !current.filter(keyValueRowHasContent).every((item) => item.required); return current.map((item) => keyValueRowHasContent(item) ? { ...item, required } : item); })}>*</button></span><span/><span>说明</span><span/></div>
-    {rows.map((row, index) => {
-      const removable = index < rows.length - 1 || keyValueRowHasContent(row);
-      const hasContent = keyValueRowHasContent(row);
-      const isEntry = index < rows.length - 1 || hasContent;
-      const missingName = !row.key.trim() && (row.enabled || hasContent || index < rows.length - 1);
-      const invalidName = row.enabled && missingName;
-      const mutedInvalidName = !row.enabled && missingName;
-      const missingValue = row.required && !row.value.trim();
-      const invalidValue = row.enabled && missingValue;
-      const mutedInvalidValue = !row.enabled && missingValue;
-      const isInconsistent = Boolean(row.key.trim() && inconsistent.has(row.key.trim().toLowerCase()));
-      return <div className={`http-param-row http-apifox-row${hasContent ? " has-content" : ""}${isEntry ? " is-entry" : ""}${row.enabled ? " is-enabled" : ""}${index === rows.length - 1 ? " is-new" : ""}${isInconsistent ? " is-interface-inconsistent" : ""}`} key={row.id} title={isInconsistent ? "此字段与接口文档不一致" : undefined}>
-        <input className="http-row-enabled" type="checkbox" aria-label={`${row.enabled ? "停用" : "启用"} ${kind} ${index + 1}`} checked={row.enabled} onChange={(event) => { const enabled = event.target.checked; update((current) => { const next = current.map((item) => item.id === row.id ? { ...item, enabled } : item); return enabled && index === current.length - 1 ? [...next, createQueryRow()] : next; }); }} disabled={loading}/>
-        <div className={`http-param-name-cell${mutedInvalidName ? " has-muted-error" : ""}`}><input aria-label={`${kind} ${index + 1} 名称`} aria-invalid={invalidName} aria-describedby={missingName ? `${row.id}-name-error` : undefined} title={missingName ? (row.enabled ? "参数名不能为空" : "参数名为空（已停用，不影响发送）") : undefined} style={styles.input} value={row.key} onFocus={() => activateEmptyRow(row, index)} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { key: event.target.value }) : item), index))} placeholder={missingName ? "" : row.enabled ? nameLabel : index === rows.length - 1 ? addPlaceholder : ""} spellCheck={false} disabled={loading}/>{missingName && <span id={`${row.id}-name-error`}>参数名不能为空</span>}</div>
-        <div className={`http-param-value-cell${mutedInvalidValue ? " has-muted-error" : ""}`}><input aria-label={`${kind} ${index + 1} 值`} aria-invalid={invalidValue} aria-describedby={missingValue ? `${row.id}-value-error` : undefined} title={missingValue ? (row.enabled ? "参数值不能为空" : "参数值为空（已停用，不影响发送）") : undefined} style={styles.input} value={row.value} onFocus={() => activateEmptyRow(row, index)} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { value: event.target.value }) : item), index))} placeholder="" spellCheck={false} disabled={loading}/>{missingValue && <span id={`${row.id}-value-error`}>参数值不能为空</span>}</div>
-        <div className="http-param-type-cell"><select className="http-param-type" aria-label={`${kind} ${index + 1} 类型`} style={styles.input} value={row.valueType} onPointerDown={() => activateTypeSelection(row, index)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") activateTypeSelection(row, index); }} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { valueType: event.target.value as HeaderRow["valueType"], typeSelected: true }) : item), index))} disabled={loading}>{ROW_VALUE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></div>
-        <span className="http-required-row"><button type="button" className={row.required ? "is-required" : ""} aria-pressed={row.required} aria-label={`${kind} ${index + 1} ${row.required ? "取消必填" : "设为必填"}`} title={row.required ? "取消必填" : "设为必填"} disabled={loading} onClick={() => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { required: !item.required }) : item), index))}>*</button></span>
-        <input aria-label={`${kind} ${index + 1} 说明`} style={styles.input} value={row.description} onChange={(event) => update((current) => appendEmptyKeyValueRow(current.map((item) => item.id === row.id ? editKeyValueRow(item, { description: event.target.value }) : item), index))} placeholder="" disabled={loading}/>
-        {removable ? <button type="button" className="http-kv-delete" aria-label={`删除 ${kind} ${index + 1}`} title={`删除此 ${kind}`} onClick={() => remove(row)} disabled={loading}><Icon name="trash"/></button> : <span className="http-kv-delete-placeholder" aria-hidden="true"/>}
-      </div>;
-    })}
-  </div>;
 }
 
 export interface HttpWorkbenchProps {
@@ -1647,10 +1536,10 @@ export function HttpWorkbench({
           {assertionNeedsSelector(rule) ? <input aria-label="定位信息" value={rule.selector ?? ""} placeholder={rule.target === "header" ? "Header 名称" : "$.data.id"} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, selector: event.target.value } : item))}/> : null}
           <select aria-label="比较操作" value={rule.operator} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, operator: event.target.value as AssertionOperator } : item))}>{ASSERTION_OPERATORS[rule.target].map((value) => <option key={value} value={value}>{ASSERTION_OPERATOR_LABELS[value]}</option>)}</select>
           {assertionNeedsExpected(rule) ? <input aria-label="预期值" value={rule.expected ?? ""} placeholder={rule.operator === "in" ? "200, 201" : "预期值"} onChange={(event) => setAssertionsDraft((list) => list.map((item) => item.id === rule.id ? { ...item, expected: event.target.value } : item))}/> : null}
-          <div className="http-assertion-rule-actions"><button type="button" title="上移" disabled={!index} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}>↑</button><button type="button" title="下移" disabled={index === assertionsDraft.length - 1} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next; })}>↓</button><button type="button" title="复制" onClick={() => setAssertionsDraft((list) => [...list.slice(0, index + 1), { ...rule, id: crypto.randomUUID() }, ...list.slice(index + 1)])}>⧉</button><button type="button" title="删除" onClick={() => setAssertionsDraft((list) => list.filter((item) => item.id !== rule.id))}>×</button></div>
+          <div className="http-assertion-rule-actions"><button type="button" aria-label="上移" title="上移" disabled={!index} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}><Icon name="arrow-up"/></button><button type="button" aria-label="下移" title="下移" disabled={index === assertionsDraft.length - 1} onClick={() => setAssertionsDraft((list) => { const next = [...list]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next; })}><Icon name="arrow-down"/></button><button type="button" aria-label="复制" title="复制" onClick={() => setAssertionsDraft((list) => [...list.slice(0, index + 1), { ...rule, id: crypto.randomUUID() }, ...list.slice(index + 1)])}><Icon name="copy"/></button><button type="button" aria-label="删除" title="删除" onClick={() => setAssertionsDraft((list) => list.filter((item) => item.id !== rule.id))}><Icon name="trash"/></button></div>
         </div>)}</div>
-        <button type="button" className="http-assertion-add" onClick={() => setAssertionsDraft((list) => [...list, createAssertion()])}>＋ 新增规则</button>
-        <div className="http-assertion-editor-actions"><button type="button" style={styles.secondaryButton} onClick={() => setAssertionConfigOpen(false)}>取消</button><button type="button" style={styles.primaryButton} disabled={assertionsDraft.some((rule) => !assertionValid(rule))} onClick={() => { setAssertionRules(assertionsDraft); setAssertionConfigOpen(false); setStatusMsg("响应校验配置已保存"); }}>保存</button></div>
+        <button type="button" className="http-assertion-add" onClick={() => setAssertionsDraft((list) => [...list, createAssertion()])}><Icon name="plus"/>新增规则</button>
+        <div className="http-assertion-editor-actions"><button type="button" style={styles.secondaryButton} onClick={() => setAssertionConfigOpen(false)}>取消</button><button type="button" className="ui-button primary" disabled={assertionsDraft.some((rule) => !assertionValid(rule))} onClick={() => { setAssertionRules(assertionsDraft); setAssertionConfigOpen(false); setStatusMsg("响应校验配置已保存"); }}>保存</button></div>
       </div> : null}
     </div> : null}
     {result && !result.error ? <div className="http-response-metrics">{responseMetrics}</div> : loading ? <span className="http-response-pending">请求中…</span> : null}
@@ -1698,8 +1587,7 @@ export function HttpWorkbench({
   </div>;
 
   return (
-    <>{saveInterfaceDraft ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !saveInterfaceBusy && setSaveInterfaceDraft(null)}><form className="save-interface-dialog" role="dialog" aria-modal="true" aria-labelledby="save-interface-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!saveInterfaceName.trim() || !saveCollectionId || !onSaveToCollection) return; setSaveInterfaceBusy(true); try { const request = { ...saveInterfaceDraft.request, name: saveInterfaceName.trim() }; const savedId = await onSaveToCollection(sanitizeHttpRequestForPersistence(request), saveCollectionId); const persistedId = savedId || request.id; setName(request.name); setRequestId(persistedId); onTitleChange?.(request.name); setStatusMsg("请求已保存到本地库"); const shouldSaveDefinition = saveInterfaceDraft.saveDefinition; setSaveInterfaceDraft(null); if (shouldSaveDefinition) window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId: persistedId } })); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="save-interface-title">保存接口</h2><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}><Icon name="close"/></button></header><div className="save-interface-fields"><label><span>名称 <i>*</i></span><input className="save-interface-name-input" autoFocus required value={saveInterfaceName} onChange={(event) => setSaveInterfaceName(event.target.value)} /></label><fieldset><legend>目录 <i>*</i></legend><div className={`save-interface-directory-picker${saveDirectoryOpen ? " is-open" : ""}`}><button type="button" className="save-interface-directory-trigger" role="combobox" aria-label="目录" aria-haspopup="tree" aria-expanded={saveDirectoryOpen} onClick={() => setSaveDirectoryOpen((open) => !open)}><Icon name="folder"/><span>{selectedSaveCollection?.name ?? "请选择目录"}</span><Icon name="chevron"/></button>{saveDirectoryOpen ? <div className="save-interface-directory-tree" role="tree" aria-label="选择保存目录">{displayedSaveModules.map((module) => { const moduleCollections = saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === module.id : module.isDefault); const moduleExpanded = expandedSaveModules.has(module.id); const rootCollection = moduleCollections.find((collection) => !collection.parentId) ?? moduleCollections[0]; return <div className="save-interface-module-group" role="group" key={module.id}><div className="save-interface-module-row" role="treeitem" aria-expanded={moduleExpanded}><button type="button" className="save-interface-tree-toggle" aria-label={moduleExpanded ? `收起${module.name}` : `展开${module.name}`} onClick={() => setExpandedSaveModules((current) => { const next = new Set(current); next.has(module.id) ? next.delete(module.id) : next.add(module.id); return next; })}><Icon name="chevron"/></button><button type="button" className="save-interface-tree-select" onClick={() => { setSaveModuleId(module.id); if (rootCollection) { setSaveCollectionId(rootCollection.id); setSaveDirectoryOpen(false); } }}><Icon name="folder"/><span>{module.name}</span></button></div>{moduleExpanded ? <SaveDirectoryBranch collections={moduleCollections} parentId={null} depth={0} selectedId={saveCollectionId} expandedIds={expandedSaveCollections} onSelect={(collectionId) => { setSaveModuleId(module.id); setSaveCollectionId(collectionId); setSaveDirectoryOpen(false); }} onToggle={(collectionId, expanded) => setExpandedSaveCollections((current) => { const next = new Set(current); expanded ? next.add(collectionId) : next.delete(collectionId); return next; })}/> : null}</div>; })}{!saveCollections.length ? <p>当前模块暂无目录，请先新建目录。</p> : null}<button type="button" className="save-interface-new-directory" onClick={() => { setNewCollectionName(""); setNewCollectionParentId(""); setNewCollectionOpen(true); }}><Icon name="plus"/>新建目录</button></div> : null}</div></fieldset></div><footer><button type="button" className="ui-button secondary" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !saveInterfaceName.trim() || !saveCollectionId}>{saveInterfaceBusy ? "保存中…" : "保存"}</button></footer></form>{newCollectionOpen ? <div className="save-interface-nested-backdrop" role="presentation" onMouseDown={() => setNewCollectionOpen(false)}><form className="save-interface-new-dialog" role="dialog" aria-modal="true" aria-labelledby="new-save-directory-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!newCollectionName.trim() || !onCreateCollection) return; setSaveInterfaceBusy(true); try { const created = await onCreateCollection(newCollectionParentId || null, newCollectionName.trim(), saveModuleId || selectedSaveModule?.id); setSaveCollectionId(created.id); setNewCollectionOpen(false); setSaveDirectoryOpen(false); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="new-save-directory-title">新建目录</h2><button type="button" className="ui-icon-button" aria-label="关闭" onClick={() => setNewCollectionOpen(false)}><Icon name="close"/></button></header><label><span>名称 <i>*</i></span><input autoFocus value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)}/></label><label><span>父级目录 <i>*</i></span><select value={newCollectionParentId} onChange={(event) => setNewCollectionParentId(event.target.value)}><option value="">{selectedSaveModule?.name ?? "模块根目录"}</option>{saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === selectedSaveModule?.id : selectedSaveModule?.isDefault).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label><footer><button type="button" className="ui-button secondary" onClick={() => setNewCollectionOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !newCollectionName.trim()}>{saveInterfaceBusy ? "创建中…" : "创建"}</button></footer></form></div> : null}</div>, document.body) : null}{caseDialogOpen ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !caseSaving && setCaseDialogOpen(false)}>
-      <form className="case-save-dialog" role="dialog" aria-modal="true" aria-labelledby="case-save-title" onSubmit={(event) => { event.preventDefault(); void saveAsCase(); }} onMouseDown={(event) => event.stopPropagation()}>
+    <>{saveInterfaceDraft ? createPortal(<div className="dialog-backdrop" role="presentation" onMouseDown={() => !saveInterfaceBusy && setSaveInterfaceDraft(null)}><form className="save-interface-dialog" role="dialog" aria-modal="true" aria-labelledby="save-interface-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!saveInterfaceName.trim() || !saveCollectionId || !onSaveToCollection) return; setSaveInterfaceBusy(true); try { const request = { ...saveInterfaceDraft.request, name: saveInterfaceName.trim() }; const savedId = await onSaveToCollection(sanitizeHttpRequestForPersistence(request), saveCollectionId); const persistedId = savedId || request.id; setName(request.name); setRequestId(persistedId); onTitleChange?.(request.name); setStatusMsg("请求已保存到本地库"); const shouldSaveDefinition = saveInterfaceDraft.saveDefinition; setSaveInterfaceDraft(null); if (shouldSaveDefinition) window.dispatchEvent(new CustomEvent("apivoy-save-interface-definition", { detail: { requestId: persistedId } })); } catch (error) { setStatusMsg(error instanceof Error ? error.message : String(error)); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="save-interface-title">保存接口</h2><button type="button" className="ui-icon-button" aria-label="关闭" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}><Icon name="close"/></button></header><div className="save-interface-fields"><label><span>名称 <i>*</i></span><input className="save-interface-name-input" autoFocus required value={saveInterfaceName} onChange={(event) => setSaveInterfaceName(event.target.value)} /></label><fieldset><legend>目录 <i>*</i></legend><div className={`save-interface-directory-picker${saveDirectoryOpen ? " is-open" : ""}`}><button type="button" className="save-interface-directory-trigger" role="combobox" aria-label="目录" aria-haspopup="tree" aria-expanded={saveDirectoryOpen} onClick={() => setSaveDirectoryOpen((open) => !open)}><Icon name="folder"/><span>{selectedSaveCollection?.name ?? "请选择目录"}</span><Icon name="chevron"/></button>{saveDirectoryOpen ? <div className="save-interface-directory-tree" role="tree" aria-label="选择保存目录">{displayedSaveModules.map((module) => { const moduleCollections = saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === module.id : module.isDefault); const moduleExpanded = expandedSaveModules.has(module.id); const rootCollection = moduleCollections.find((collection) => !collection.parentId) ?? moduleCollections[0]; return <div className="save-interface-module-group" role="group" key={module.id}><div className="save-interface-module-row" role="treeitem" aria-expanded={moduleExpanded}><button type="button" className="save-interface-tree-toggle" aria-label={moduleExpanded ? `收起${module.name}` : `展开${module.name}`} onClick={() => setExpandedSaveModules((current) => { const next = new Set(current); next.has(module.id) ? next.delete(module.id) : next.add(module.id); return next; })}><Icon name="chevron"/></button><button type="button" className="save-interface-tree-select" onClick={() => { setSaveModuleId(module.id); if (rootCollection) { setSaveCollectionId(rootCollection.id); setSaveDirectoryOpen(false); } }}><Icon name="folder"/><span>{module.name}</span></button></div>{moduleExpanded ? <SaveDirectoryBranch collections={moduleCollections} parentId={null} depth={0} selectedId={saveCollectionId} expandedIds={expandedSaveCollections} onSelect={(collectionId) => { setSaveModuleId(module.id); setSaveCollectionId(collectionId); setSaveDirectoryOpen(false); }} onToggle={(collectionId, expanded) => setExpandedSaveCollections((current) => { const next = new Set(current); expanded ? next.add(collectionId) : next.delete(collectionId); return next; })}/> : null}</div>; })}{!saveCollections.length ? <p>当前模块暂无目录，请先新建目录。</p> : null}<button type="button" className="save-interface-new-directory" onClick={() => { setNewCollectionName(""); setNewCollectionParentId(""); setNewCollectionOpen(true); }}><Icon name="plus"/>新建目录</button></div> : null}</div></fieldset></div><footer><button type="button" className="ui-button secondary" disabled={saveInterfaceBusy} onClick={() => setSaveInterfaceDraft(null)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !saveInterfaceName.trim() || !saveCollectionId}>{saveInterfaceBusy ? "保存中…" : "保存"}</button></footer></form>{newCollectionOpen ? <div className="save-interface-nested-backdrop" role="presentation" onMouseDown={() => setNewCollectionOpen(false)}><form className="save-interface-new-dialog" role="dialog" aria-modal="true" aria-labelledby="new-save-directory-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={async (event) => { event.preventDefault(); if (!newCollectionName.trim() || !onCreateCollection) return; setSaveInterfaceBusy(true); try { const created = await onCreateCollection(newCollectionParentId || null, newCollectionName.trim(), saveModuleId || selectedSaveModule?.id); setSaveCollectionId(created.id); setNewCollectionOpen(false); setSaveDirectoryOpen(false); } finally { setSaveInterfaceBusy(false); } }}><header><h2 id="new-save-directory-title">新建目录</h2><button type="button" className="ui-icon-button" aria-label="关闭" onClick={() => setNewCollectionOpen(false)}><Icon name="close"/></button></header><label><span>名称 <i>*</i></span><input autoFocus value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)}/></label><label><span>父级目录 <i>*</i></span><select value={newCollectionParentId} onChange={(event) => setNewCollectionParentId(event.target.value)}><option value="">{selectedSaveModule?.name ?? "模块根目录"}</option>{saveCollections.filter((collection) => collection.moduleId ? collection.moduleId === selectedSaveModule?.id : selectedSaveModule?.isDefault).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label><footer><button type="button" className="ui-button secondary" onClick={() => setNewCollectionOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={saveInterfaceBusy || !newCollectionName.trim()}>{saveInterfaceBusy ? "创建中…" : "创建"}</button></footer></form></div> : null}</div>, document.body) : null}{caseDialogOpen ? createPortal(<ModalFrame open onClose={() => !caseSaving && setCaseDialogOpen(false)} closeOnBackdrop={!caseSaving} className="case-save-dialog" ariaLabelledBy="case-save-title" as="form" onSubmit={(event) => { event.preventDefault(); void saveAsCase(); }}>
         <header><div><h2 id="case-save-title">保存为用例</h2></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={caseSaving} onClick={() => setCaseDialogOpen(false)}><Icon name="close"/></button></header>
         <div className="case-save-fields">
           <label><span>用例名称 <i>*</i></span><div className="case-name-composer"><input autoFocus list="case-name-presets" aria-label="用例场景名称" value={caseName} onChange={(event) => setCaseName(event.target.value)} placeholder="选择预设或输入自定义名称" /><datalist id="case-name-presets">{CASE_NAME_PRESETS.map((preset) => <option key={preset} value={preset}/>)}</datalist></div></label>
@@ -1717,8 +1605,7 @@ export function HttpWorkbench({
           <span><strong>同时保存响应</strong><small>{hasResponseResult ? "包含状态码、Headers、Content-Type、耗时和响应正文" : "当前没有响应，仅保存请求配置"}</small></span>
         </label> : null}
         <footer><button type="button" className="ui-button secondary" disabled={caseSaving} onClick={() => setCaseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={caseSaving || !caseName.trim()}>{caseSaving ? "保存中…" : "保存"}</button></footer>
-      </form>
-    </div>, document.body) : null}{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}{commandbarTarget ? createPortal(requestCommandbar, commandbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={embeddedPreview ? undefined : statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
+      </ModalFrame>, document.body) : null}{toolbarTarget ? createPortal(environmentControl, toolbarTarget) : null}{commandbarTarget ? createPortal(requestCommandbar, commandbarTarget) : null}<WorkbenchFrame title="HTTP" hideHeader busy={loading} status={embeddedPreview ? undefined : statusMsg ? <span role="status">{statusMsg}</span> : <span>{t("status.ready")}</span>}>
       <div className={`http-workbench-layout${commandbarTarget || embeddedPreview ? " has-external-commandbar" : ""}${embeddedPreview ? " is-embedded-preview" : ""}`}>
       {commandbarTarget || embeddedPreview ? null : requestCommandbar}
       {historyStartedAt ? <div className="http-history-sent-at">{historyInterfaceName && onOpenHistoryInterface ? <button type="button" className="http-history-interface-link" aria-label={"\u6253\u5f00\u63a5\u53e3 " + historyInterfaceName} onClick={onOpenHistoryInterface}><Icon name="folder"/><span>{historyInterfaceName}</span></button> : null}<span className="http-history-time"><Icon name="activity"/><span>{"\u5386\u53f2\u53d1\u9001\u65f6\u95f4"}</span><time dateTime={historyStartedAt}>{new Date(historyStartedAt).toLocaleString("zh-CN", { hour12: false })}</time></span></div> : null}
@@ -1738,15 +1625,7 @@ export function HttpWorkbench({
         ];
         const activeTab = requestTabs.some((tab) => tab.id === requestTab) ? requestTab : "params";
         return <div className="http-request-tabs">
-          <div style={styles.requestTabs} role="tablist" aria-label="请求配置" onKeyDown={(event) => {
-            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const current = requestTabs.findIndex((tab) => tab.id === activeTab);
-            const next = event.key === "Home" ? 0 : event.key === "End" ? requestTabs.length - 1 : event.key === "ArrowRight" ? (current + 1) % requestTabs.length : (current - 1 + requestTabs.length) % requestTabs.length;
-            const tabsRoot = event.currentTarget;
-            setRequestTab(requestTabs[next].id);
-            queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus());
-          }}>
+          <RovingTabList style={styles.requestTabs} ariaLabel="请求配置">
             {requestTabs.map((tab) => <button key={tab.id} type="button" role="tab" tabIndex={activeTab === tab.id ? 0 : -1} aria-selected={activeTab === tab.id} id={`http-request-tab-${tab.id}`} aria-controls={`http-request-panel-${tab.id}`} className={tab.id === "params" && paramDifferenceCount ? "has-interface-difference" : undefined} style={activeTab === tab.id ? styles.tabActive : styles.tab} onClick={() => setRequestTab(tab.id)}>{tab.label}{tab.hint != null && tab.hint !== "" ? <span aria-label={`${tab.hint} 项`} style={styles.count}>{tab.hint}</span> : null}{tab.id === "params" && paramDifferenceCount ? <span className="http-tab-difference" title={`${paramDifferenceCount} 个参数与接口文档不一致`} aria-label={`${paramDifferenceCount} 个参数不一致`}>{paramDifferenceCount}</span> : null}</button>)}
             {openedCaseParentId && caseStructureState?.differences.length ? <div className="http-case-consistency" onMouseEnter={() => setCaseDifferenceOpen(true)} onMouseLeave={() => setCaseDifferenceOpen(false)} onFocusCapture={() => setCaseDifferenceOpen(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setCaseDifferenceOpen(false); }}>
               <button type="button" className="http-case-consistency-trigger" aria-haspopup="dialog" aria-expanded={caseDifferenceOpen} onClick={() => setCaseDifferenceOpen((open) => !open)}><Icon name="activity"/><span>不一致</span><small>{caseStructureState.differences.length}</small></button>
@@ -1755,7 +1634,7 @@ export function HttpWorkbench({
                 <div><button type="button" disabled={caseStructureBusy} onClick={() => { syncCaseWithInterface(); setCaseDifferenceOpen(false); }}>同步接口</button><button type="button" disabled={caseStructureBusy || !onUpdateInterface} onClick={() => { void updateInterfaceFromCase(); setCaseDifferenceOpen(false); }}>更新接口</button></div>
               </div> : null}
             </div> : null}
-          </div>
+          </RovingTabList>
           <div className="http-request-tab-panel" role="tabpanel" id={`http-request-panel-${activeTab}`} aria-labelledby={`http-request-tab-${activeTab}`}>
             {activeTab === "params" && <div className="http-kv-editor" aria-label="URL Query Params">
               <div className="http-section-heading">Query 参数</div>
@@ -1766,9 +1645,9 @@ export function HttpWorkbench({
               <KeyValueRows rows={headerRows} setRows={setHeaderRows} kind="Header" nameLabel="Header 名称" valueLabel="Header 值" addPlaceholder="例如 Content-Type" loading={loading} inconsistentNames={caseStructureState?.differences.filter((item) => item.field.location === "header").map((item) => item.field.name)}/>
             </div>}
             {activeTab === "body" && <div style={styles.label}>
-              <div className="http-body-mode-tabs" role="tablist" aria-label="请求体类型">
-                {BODY_MODES.map((mode) => <button key={mode.id} type="button" role="tab" aria-selected={bodyMode === mode.id} className={bodyMode === mode.id ? "is-active" : ""} onClick={() => selectBodyMode(mode.id)} disabled={loading}>{mode.label}</button>)}
-              </div>
+              <RovingTabList className="http-body-mode-tabs" ariaLabel="请求体类型">
+                {BODY_MODES.map((mode) => <button key={mode.id} type="button" role="tab" tabIndex={bodyMode === mode.id ? 0 : -1} aria-selected={bodyMode === mode.id} className={bodyMode === mode.id ? "is-active" : ""} onClick={() => selectBodyMode(mode.id)} disabled={loading}>{mode.label}</button>)}
+              </RovingTabList>
               {bodyMode === "none" && <div className="http-body-empty">当前请求不发送 Body。选择上方类型开始编辑。</div>}
               {bodyMode === "json" && <>
                 <div className="http-body-editor-heading"><span className="http-body-editor-label">请求内容</span><span className="http-body-editor-actions"><button type="button" className="http-body-icon-action" onClick={formatBodyJson} disabled={loading || !body.trim()} title="格式化 JSON" aria-label="格式化 JSON Body"><Icon name="code"/></button><button type="button" className="http-body-icon-action" onClick={() => setBody("")} disabled={loading || !body} title="清除 JSON" aria-label="清除 JSON Body"><Icon name="broom"/></button></span></div>
@@ -1970,23 +1849,14 @@ export function HttpWorkbench({
             <div style={styles.error}>{result.error}</div>
           ) : (
             <>
-              <div style={styles.responseTabs} role="tablist" aria-label="响应内容视图" onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return; event.preventDefault(); const tabs = ["body", "cookies", "headers", "console", "request"] as const; const current = tabs.indexOf(responseTab); const next = event.key === "ArrowRight" ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length; const tabsRoot = event.currentTarget; setResponseTab(tabs[next]); queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()); }}>
+              <RovingTabList style={styles.responseTabs} ariaLabel="响应内容视图">
                 <button role="tab" tabIndex={responseTab === "body" ? 0 : -1} aria-selected={responseTab === "body"} style={responseTab === "body" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("body")}>Body</button>
                 <button role="tab" tabIndex={responseTab === "cookies" ? 0 : -1} aria-selected={responseTab === "cookies"} style={responseTab === "cookies" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("cookies")}>Cookie <span style={styles.count}>{responseCookies.length}</span></button>
                 <button role="tab" tabIndex={responseTab === "headers" ? 0 : -1} aria-selected={responseTab === "headers"} style={responseTab === "headers" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("headers")}>Header <span style={styles.count}>{result.responseMeta?.headers.length ?? 0}</span></button>
                 <button role="tab" tabIndex={responseTab === "console" ? 0 : -1} aria-selected={responseTab === "console"} style={responseTab === "console" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("console")}>控制台</button>
                 <button role="tab" tabIndex={responseTab === "request" ? 0 : -1} aria-selected={responseTab === "request"} style={responseTab === "request" ? styles.tabActive : styles.tab} onClick={() => setResponseTab("request")}>实时请求</button>
-              </div>
-              {responseTab === "body" && responseHasBody && <div className="http-response-view-toolbar" role="tablist" aria-label="响应显示模式" onKeyDown={(event) => {
-                  if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-                  event.preventDefault();
-                  const modes: Array<"pretty" | "raw" | "hex" | "table" | "preview"> = ["pretty", "raw", "hex", ...(responseTable ? ["table" as const] : []), ...(responsePreviewKind ? ["preview" as const] : [])];
-                  const current = modes.indexOf(responseView);
-                  const next = event.key === "ArrowRight" ? (current + 1) % modes.length : (current - 1 + modes.length) % modes.length;
-                  const tabsRoot = event.currentTarget;
-                  setResponseView(modes[next]);
-                  queueMicrotask(() => tabsRoot.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')[next]?.focus());
-                }}>
+              </RovingTabList>
+              {responseTab === "body" && responseHasBody && <RovingTabList className="http-response-view-toolbar" ariaLabel="响应显示模式">
                   <button role="tab" tabIndex={responseView === "pretty" ? 0 : -1} aria-selected={responseView === "pretty"} style={responseView === "pretty" ? styles.tabActive : styles.tab} onClick={() => setResponseView("pretty")}>美化</button>
                   <button role="tab" tabIndex={responseView === "raw" ? 0 : -1} aria-selected={responseView === "raw"} style={responseView === "raw" ? styles.tabActive : styles.tab} onClick={() => setResponseView("raw")}>原文</button>
                   <button role="tab" tabIndex={responseView === "hex" ? 0 : -1} aria-selected={responseView === "hex"} style={responseView === "hex" ? styles.tabActive : styles.tab} onClick={() => setResponseView("hex")}>Hex</button>
@@ -2002,12 +1872,12 @@ export function HttpWorkbench({
                     {responseSearchOpen && <div className="http-response-find" role="search">
                       <div className="http-response-find-input"><input autoFocus value={responseSearch} onChange={(event) => setResponseSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && responseSearchCount) setResponseSearchIndex((index) => event.shiftKey ? (index - 1 + responseSearchCount) % responseSearchCount : (index + 1) % responseSearchCount); if (event.key === "Escape") setResponseSearchOpen(false); }} placeholder="Find" aria-label="搜索响应内容"/><button type="button" className={responseSearchCase ? "is-active" : ""} aria-label="区分大小写" title="区分大小写" onClick={() => setResponseSearchCase((value) => !value)}>Aa</button><button type="button" className={responseSearchWord ? "is-active" : ""} aria-label="全词匹配" title="全词匹配" onClick={() => setResponseSearchWord((value) => !value)}><u>ab</u></button><button type="button" className={responseSearchRegex ? "is-active" : ""} aria-label="使用正则表达式" title="使用正则表达式" onClick={() => setResponseSearchRegex((value) => !value)}>.*</button></div>
                       <span className="http-response-find-count">{responseSearch ? (responseSearchCount ? `${responseSearchIndex + 1} / ${responseSearchCount}` : "No results") : "No results"}</span>
-                      <button type="button" aria-label="上一个结果" title="上一个结果" disabled={!responseSearchCount} onClick={() => setResponseSearchIndex((index) => (index - 1 + responseSearchCount) % responseSearchCount)}>↑</button>
-                      <button type="button" aria-label="下一个结果" title="下一个结果" disabled={!responseSearchCount} onClick={() => setResponseSearchIndex((index) => (index + 1) % responseSearchCount)}>↓</button>
-                      <button type="button" aria-label="关闭搜索" title="关闭搜索" onClick={() => setResponseSearchOpen(false)}>×</button>
+                      <button type="button" aria-label="上一个结果" title="上一个结果" disabled={!responseSearchCount} onClick={() => setResponseSearchIndex((index) => (index - 1 + responseSearchCount) % responseSearchCount)}><Icon name="arrow-up"/></button>
+                      <button type="button" aria-label="下一个结果" title="下一个结果" disabled={!responseSearchCount} onClick={() => setResponseSearchIndex((index) => (index + 1) % responseSearchCount)}><Icon name="arrow-down"/></button>
+                      <button type="button" aria-label="关闭搜索" title="关闭搜索" onClick={() => setResponseSearchOpen(false)}><Icon name="close"/></button>
                     </div>}
                   </div>
-              </div>}
+              </RovingTabList>}
               <div className={`http-response-scroll is-${responseTab}`}>
               {responseTab === "console" && <div className="http-response-console"><VirtualList items={scriptConsoleEvents} itemHeight={31} height={260} getKey={({ at, event }, index) => `${at}-${event.type}-${index}`} ariaLabel="脚本控制台" className="http-timeline" renderItem={({ at, event }) => <div style={styles.timelineRow} className={`http-timeline-event event-${event.type}`}><time>+{timeline.length ? (at - timeline[0].at).toFixed(1) : "0.0"}ms</time><b>{event.type === "log" ? "script_log" : event.type}</b><span>{event.type === "log" ? event.message : event.type === "variables_extracted" ? Object.entries(event.variables).map(([key, value]) => `${key}=${value}`).join(", ") : event.type === "failed" ? event.message : ""}</span></div>} empty={<div className="http-console-empty"><Icon name="code"/><strong>没有脚本输出</strong><span>前置或后置脚本中的 console.log、变量提取和脚本错误会显示在这里。</span></div>} /></div>}
               {responseTab === "headers" && !result.responseMeta?.headers.length && <div className="http-response-no-data"><Icon name="archive"/><span>No data</span></div>}
@@ -2120,10 +1990,11 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 13,
     fontWeight: 600,
     color: "var(--apivoy-text)",
-    background: "#0d131b",
-    border: "1px solid var(--apivoy-border)",
-    borderRadius: 8,
-    padding: "10px 12px",
+    background: "var(--apivoy-control-bg)",
+    border: "1px solid var(--apivoy-control-border)",
+    borderRadius: "var(--apivoy-control-radius)",
+    minHeight: "var(--apivoy-control-height)",
+    padding: "0 var(--apivoy-control-padding-x)",
   },
 
   authCredentialLabel: {
@@ -2143,20 +2014,22 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "var(--apivoy-mono)",
     fontSize: 12,
     color: "var(--apivoy-text)",
-    background: "#0d131b",
-    border: "1px solid var(--apivoy-border)",
-    borderRadius: 10,
-    padding: "12px 14px",
+    background: "var(--apivoy-control-bg)",
+    border: "1px solid var(--apivoy-control-border)",
+    borderRadius: "var(--apivoy-control-radius)",
+    minHeight: "var(--apivoy-control-height)",
+    padding: "0 var(--apivoy-control-padding-x)",
     outline: "none",
   },
   timeout: {
     fontFamily: "var(--apivoy-mono)",
     fontSize: 12,
     color: "var(--apivoy-text)",
-    background: "#0d131b",
-    border: "1px solid var(--apivoy-border)",
-    borderRadius: 10,
-    padding: "12px 14px",
+    background: "var(--apivoy-control-bg)",
+    border: "1px solid var(--apivoy-control-border)",
+    borderRadius: "var(--apivoy-control-radius)",
+    minHeight: "var(--apivoy-control-height)",
+    padding: "0 var(--apivoy-control-padding-x)",
     outline: "none",
   },
   textarea: {
@@ -2176,8 +2049,9 @@ const styles: Record<string, CSSProperties> = {
     color: "#041018",
     background: "var(--apivoy-accent)",
     border: "none",
-    borderRadius: 10,
-    padding: "12px 18px",
+    borderRadius: "var(--apivoy-button-radius)",
+    minHeight: "var(--apivoy-control-height)",
+    padding: "0 var(--apivoy-button-padding-x)",
     cursor: "pointer",
     boxShadow: "0 8px 22px rgba(31,111,184,.22)",
   },
@@ -2185,10 +2059,11 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 14,
     fontWeight: 600,
     color: "var(--apivoy-text)",
-    background: "rgba(255,255,255,.025)",
-    border: "1px solid var(--apivoy-border)",
-    borderRadius: 10,
-    padding: "12px 18px",
+    background: "var(--apivoy-control-bg)",
+    border: "1px solid var(--apivoy-control-border)",
+    borderRadius: "var(--apivoy-button-radius)",
+    minHeight: "var(--apivoy-control-height)",
+    padding: "0 var(--apivoy-button-padding-x)",
     cursor: "pointer",
   },
   linkButton: {
@@ -2238,11 +2113,11 @@ const styles: Record<string, CSSProperties> = {
   },
   tab: {
     border: 0, background: "transparent", color: "var(--apivoy-muted)",
-    height: 34, display: "flex", alignItems: "center", padding: "0 8px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid transparent", fontSize: 11,
+    height: "var(--apivoy-tab-height)", display: "flex", alignItems: "center", padding: "0 var(--apivoy-tab-padding-x)", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid transparent", fontSize: 11,
   },
   tabActive: {
     border: 0, background: "transparent", color: "var(--apivoy-accent)",
-    height: 34, display: "flex", alignItems: "center", padding: "0 8px", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid var(--apivoy-accent)", fontSize: 11,
+    height: "var(--apivoy-tab-height)", display: "flex", alignItems: "center", padding: "0 var(--apivoy-tab-padding-x)", marginBottom: -1, cursor: "pointer", borderRadius: 0, borderBottom: "2px solid var(--apivoy-accent)", fontSize: 11,
   },
   pre: {
     margin: 0,

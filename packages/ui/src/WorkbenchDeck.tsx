@@ -1,5 +1,6 @@
 import { Children, cloneElement, isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
+import { ModalFrame } from "./ModalFrame";
 import { useAppStore } from "./appStore";
 import { translateWorkbench, useI18n } from "./i18n";
 import { stashHydrate } from "./openRequestPipeline";
@@ -13,6 +14,7 @@ import { captureHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY } from 
 import { consumeCaseInterfaceStructure } from "./caseStructureBridge";
 import { validateDesignedResponse, type DesignedResponse } from "./designedResponseValidator";
 import { readResponseValidationSettings } from "./responseValidationSettings";
+import { ClosableTabStrip } from "./ClosableTabStrip";
 
 export interface WorkbenchDefinition { id: string; label: string; protocol?: string; protocols?: string[]; group?: string; icon?: IconName }
 export type WorkbenchTab = WorkbenchDefinition;
@@ -127,8 +129,6 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   const selected = activeSession?.workbenchId ?? ""; const selectedIndex = tabs.findIndex((tab) => tab.id === selected);
   const [codeOpen, setCodeOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [tabsMoreOpen, setTabsMoreOpen] = useState(false);
-  const [tabsMenuAlign, setTabsMenuAlign] = useState<"left" | "right">("left");
   const [homeMoreOpen, setHomeMoreOpen] = useState(false);
   const [curlImportOpen, setCurlImportOpen] = useState(false);
   const [curlImportTarget, setCurlImportTarget] = useState<{ projectId?: string; collectionId?: string }>({});
@@ -143,14 +143,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [projectActionError, setProjectActionError] = useState("");
   const pickerRef = useRef<HTMLDivElement>(null);
-  const tabScrollRef = useRef<HTMLDivElement>(null);
-  const tabsMoreRef = useRef<HTMLDivElement>(null);
   const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
-
-  useEffect(() => {
-    const activeTab = tabScrollRef.current?.querySelector<HTMLElement>(".workbench-tab.is-active");
-    activeTab?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-  }, [activeSessionId, sessions.length]);
 
   useEffect(() => {
     const markRequestDeleted = (event: Event) => {
@@ -207,7 +200,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     const index = sessions.findIndex((session) => session.id === id); if (index < 0) return;
     const remaining = sessions.filter((session) => session.id !== id);
     if (!remaining.length) {
-      setSessions([]); setActiveSessionId(""); setPickerOpen(false); setTabsMoreOpen(false);
+      setSessions([]); setActiveSessionId(""); setPickerOpen(false);
       if (typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.delete("workbench"); history.pushState(null, "", `#${params}`); }
       return;
     }
@@ -215,24 +208,12 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     if (id === activeSessionId) activateSession(remaining[Math.min(index, remaining.length - 1)]);
   }
   function closeAllSessions() {
-    setSessions([]); setActiveSessionId(""); setTabsMoreOpen(false);
+    setSessions([]); setActiveSessionId("");
     if (typeof window !== "undefined") { const params = new URLSearchParams(window.location.hash.replace(/^#/, "")); params.delete("workbench"); history.pushState(null, "", `#${params}`); }
   }
   function closeOtherSessions() {
     if (!activeSession) return;
-    setSessions([activeSession]); setTabsMoreOpen(false);
-  }
-  function openTabsMoreMenu() {
-    const triggerBounds = tabsMoreRef.current?.getBoundingClientRect();
-    const contentBounds = tabsMoreRef.current?.closest(".workbench-content")?.getBoundingClientRect();
-    if (triggerBounds && contentBounds) {
-      const menuWidth = 240;
-      const leftCandidate = triggerBounds.left;
-      const rightCandidate = triggerBounds.right - menuWidth;
-      const overflow = (left: number) => Math.max(0, contentBounds.left - left) + Math.max(0, left + menuWidth - contentBounds.right);
-      setTabsMenuAlign(overflow(rightCandidate) < overflow(leftCandidate) ? "right" : "left");
-    }
-    setTabsMoreOpen(true);
+    setSessions([activeSession]);
   }
   useEffect(() => {
     const openRequest = async (event: Event) => {
@@ -403,7 +384,6 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     setSessions([]);
     setActiveSessionId("");
     setPickerOpen(false);
-    setTabsMoreOpen(false);
   }
   function renderHomePage(sessionId: string) {
     const visibleProjects = projects.filter((project) => project.name.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()));
@@ -437,8 +417,8 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
         </article>)}
         <button type="button" className="project-card project-card-create" onClick={openCreateProject}><span className="project-create-icon"><Icon name="plus"/></span><strong>创建新项目</strong><p>从空项目开始，或导入已有 API 定义</p></button>
       </div>
-      {projectDialogOpen ? <div className="dialog-backdrop" role="presentation" onMouseDown={() => !projectCreateBusy && setProjectDialogOpen(false)}><div className="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-create-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="project-create-title">新建项目</h2><p>项目用于隔离资源、环境和运行配置。</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}><Icon name="close"/></button></header><label><span>项目名称</span><input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="请输入项目名称"/></label>{projectCreateError ? <p className="project-create-error" role="alert">{projectCreateError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}>取消</button><button type="button" className="ui-button primary" disabled={projectCreateBusy || !projectName.trim()} onClick={async () => { if (!onCreateProject) return; setProjectCreateBusy(true); setProjectCreateError(""); try { await onCreateProject(projectName.trim()); setProjectDialogOpen(false); setProjectName(""); enterProjectEmptySession(); } catch (error) { setProjectCreateError(error instanceof Error ? error.message : String(error)); } finally { setProjectCreateBusy(false); } }}>{projectCreateBusy ? "创建中…" : "创建项目"}</button></footer></div></div> : null}
-      {projectAction ? <div className="dialog-backdrop" role="presentation" onMouseDown={() => !projectActionBusy && setProjectAction(null)}><div className="project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-action-title" onMouseDown={(event) => event.stopPropagation()}><header><div><h2 id="project-action-title">{projectAction.kind === "rename" ? "修改项目名称" : projectAction.kind === "clone" ? "克隆项目" : "删除项目"}</h2><p>{projectAction.kind === "delete" ? `删除“${projectAction.originalName}”后，其中的集合和请求也会被删除。` : projectAction.kind === "clone" ? "将复制项目中的集合层级和全部请求。" : "修改后会同步更新项目入口和项目导航。"}</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectActionBusy} onClick={() => setProjectAction(null)}><Icon name="close"/></button></header>{projectAction.kind !== "delete" ? <label><span>项目名称</span><input autoFocus value={projectActionName} onChange={(event) => setProjectActionName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectActionName.trim()) void runProjectAction(); }}/></label> : null}{projectActionError ? <p className="project-create-error" role="alert">{projectActionError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectActionBusy} onClick={() => setProjectAction(null)}>取消</button><button type="button" className={`ui-button ${projectAction.kind === "delete" ? "danger" : "primary"}`} disabled={projectActionBusy || (projectAction.kind !== "delete" && !projectActionName.trim())} onClick={() => void runProjectAction()}>{projectActionBusy ? "处理中…" : projectAction.kind === "delete" ? "确认删除" : projectAction.kind === "clone" ? "创建副本" : "保存"}</button></footer></div></div> : null}
+      {projectDialogOpen ? <ModalFrame open={projectDialogOpen} onClose={() => !projectCreateBusy && setProjectDialogOpen(false)} closeOnBackdrop={!projectCreateBusy} className="project-create-dialog" ariaLabelledBy="project-create-title"><header><div><h2 id="project-create-title">新建项目</h2><p>项目用于隔离资源、环境和运行配置。</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}><Icon name="close"/></button></header><label><span>项目名称</span><input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="请输入项目名称"/></label>{projectCreateError ? <p className="project-create-error" role="alert">{projectCreateError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectCreateBusy} onClick={() => setProjectDialogOpen(false)}>取消</button><button type="button" className="ui-button primary" disabled={projectCreateBusy || !projectName.trim()} onClick={async () => { if (!onCreateProject) return; setProjectCreateBusy(true); setProjectCreateError(""); try { await onCreateProject(projectName.trim()); setProjectDialogOpen(false); setProjectName(""); enterProjectEmptySession(); } catch (error) { setProjectCreateError(error instanceof Error ? error.message : String(error)); } finally { setProjectCreateBusy(false); } }}>{projectCreateBusy ? "创建中…" : "创建项目"}</button></footer></ModalFrame> : null}
+      {projectAction ? <ModalFrame open={Boolean(projectAction)} onClose={() => !projectActionBusy && setProjectAction(null)} closeOnBackdrop={!projectActionBusy} className="project-create-dialog" ariaLabelledBy="project-action-title"><header><div><h2 id="project-action-title">{projectAction.kind === "rename" ? "修改项目名称" : projectAction.kind === "clone" ? "克隆项目" : "删除项目"}</h2><p>{projectAction.kind === "delete" ? `删除“${projectAction.originalName}”后，其中的集合和请求也会被删除。` : projectAction.kind === "clone" ? "将复制项目中的集合层级和全部请求。" : "修改后会同步更新项目入口和项目导航。"}</p></div><button type="button" className="ui-icon-button" aria-label="关闭" disabled={projectActionBusy} onClick={() => setProjectAction(null)}><Icon name="close"/></button></header>{projectAction.kind !== "delete" ? <label><span>项目名称</span><input autoFocus value={projectActionName} onChange={(event) => setProjectActionName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && projectActionName.trim()) void runProjectAction(); }}/></label> : null}{projectActionError ? <p className="project-create-error" role="alert">{projectActionError}</p> : null}<footer><button type="button" className="ui-button secondary" disabled={projectActionBusy} onClick={() => setProjectAction(null)}>取消</button><button type="button" className={`ui-button ${projectAction.kind === "delete" ? "danger" : "primary"}`} disabled={projectActionBusy || (projectAction.kind !== "delete" && !projectActionName.trim())} onClick={() => void runProjectAction()}>{projectActionBusy ? "处理中…" : projectAction.kind === "delete" ? "确认删除" : projectAction.kind === "clone" ? "创建副本" : "保存"}</button></footer></ModalFrame> : null}
     </main>;
   }
   function renderProjectHomePage(sessionId: string) {
@@ -537,7 +517,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
       </aside>
       <CurlImportDialog open={curlImportOpen} onClose={() => setCurlImportOpen(false)} onCreate={createCurlRequest}/>
       <div className="workbench-content" data-workbench-label={selectedTab ? translateWorkbench(selectedTab.id, selectedTab.label) : selected === "__scripts" ? "脚本库" : ""}>
-        {selected !== "__new" ? <div className="workbench-tabs"><div className="workbench-tab-scroll" ref={tabScrollRef} role="tablist" aria-label="已打开的工作台">{sessions.map((session) => <div className={`workbench-tab${session.id === activeSessionId ? " is-active" : ""}`} key={session.id}><button type="button" role="tab" aria-selected={session.id === activeSessionId} onClick={() => activateSession(session)}><Icon name={session.icon ?? WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button><button type="button" className="workbench-tab-close" aria-label={`关闭 ${session.title}`} onClick={() => closeSession(session.id)}><Icon name="close"/></button></div>)}</div><div className="workbench-tab-tools"><button type="button" className="ui-icon-button compact" aria-label="新建" title="新建" onClick={createNewPage}><Icon name="plus"/></button><div ref={tabsMoreRef} className={`workbench-tabs-more is-align-${tabsMenuAlign}`} onMouseEnter={openTabsMoreMenu} onMouseLeave={() => setTabsMoreOpen(false)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setTabsMoreOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") setTabsMoreOpen(false); }}><button type="button" className="ui-icon-button compact" aria-label="更多页签操作" title="更多" aria-haspopup="menu" aria-expanded={tabsMoreOpen} onFocus={openTabsMoreMenu}><Icon name="more"/></button>{tabsMoreOpen ? <div className="workbench-tabs-menu" role="menu" aria-label="页签列表与操作"><div className="workbench-tabs-menu-list">{sessions.length ? sessions.map((session) => <button type="button" role="menuitem" className={session.id === activeSessionId ? "is-active" : undefined} key={session.id} onClick={() => { activateSession(session); setTabsMoreOpen(false); }}><Icon name={session.icon ?? WORKBENCH_ICONS[session.workbenchId] ?? "plus"}/><span>{session.title}</span></button>) : <span className="workbench-tabs-empty">暂无打开的页签</span>}</div><div className="workbench-tabs-menu-actions"><button type="button" role="menuitem" disabled={!sessions.length} onClick={closeAllSessions}>关闭全部标签页</button><button type="button" role="menuitem" disabled={!activeSession} onClick={() => activeSession && closeSession(activeSession.id)}>关闭当前标签页</button><button type="button" role="menuitem" disabled={!activeSession || sessions.length < 2} onClick={closeOtherSessions}>关闭其他标签页</button></div></div> : null}</div></div>{sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}</div> : null}
+        {selected !== "__new" ? <ClosableTabStrip items={sessions.map((session) => ({ id: session.id, title: session.title, icon: session.icon ?? WORKBENCH_ICONS[session.workbenchId] ?? "plus" }))} activeId={activeSessionId} ariaLabel="已打开的工作台" menuLabel="页签列表与操作" menuMode="hover" menuAlign="auto" showItemsInMenu onActivate={(id) => { const session = sessions.find((item) => item.id === id); if (session) activateSession(session); }} onClose={closeSession} onCloseAll={closeAllSessions} onCloseOthers={closeOtherSessions} onCreate={createNewPage}>{sessions.length ? <div className="workbench-context-actions" aria-label="当前工作台选项">{sessions.map((session) => <div id={`workbench-context-${session.id}`} key={session.id} hidden={session.id !== activeSessionId}/>)}</div> : null}</ClosableTabStrip> : null}
         <div className="workbench-session-stack">{sessions.length ? sessions.map((session) => <div key={session.id} role="tabpanel" aria-label={session.title} hidden={session.id !== activeSessionId} className="workbench-panel">{renderSession(session)}</div>) : <div className="workbench-panel workbench-empty-session">{renderProjectHomePage("empty")}</div>}</div>
         {items.slice(tabs.length)}
       </div>

@@ -1,0 +1,8 @@
+.http-code-generator { margin-top: 10px; overflow: hidden; border: 1px solid var(--apivoy-border); border-radius: 8px; background: var(--apivoy-bg); }
+.code-generator-heading { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 12px; color: var(--apivoy-text); }
+.code-generator-language-tabs { display: flex; gap: 2px; padding: 0 10px; overflow-x: auto; border-bottom: 1px solid var(--apivoy-border); }
+.code-generator-language-tabs button { flex: 0 0 auto; padding: 9px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--apivoy-muted); font-size: 12px; }
+.code-generator-language-tabs button.is-active { border-bottom-color: var(--apivoy-accent); color: var(--apivoy-accent); font-weight: 700; }
+.code-generator-variant-tabs { min-height: 40px; display: flex; align-items: center; gap: 5px; padding: 5px 12px; overflow-x: auto; border-bottom: 1px solid var(--apivoy-border); }
+.code-generator-variant-tabs button { flex: 0 0 auto; padding: 6px 9px; border: 0; background: transparent; color: var(--apivoy-muted); font-size: 11px; }
+.code-generator-variant-tabs button.is-active { background: var(--apivoy-bg-elevated); color: var(--apivoy-text); }

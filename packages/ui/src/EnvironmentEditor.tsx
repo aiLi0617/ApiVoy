@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createEnvironmentResource, deleteEnvironmentResource, listEnvironmentResources, updateEnvironmentResource, type EnvironmentResource } from "./agentResources";
 import { Icon } from "./Icons";
+import { Button } from "./Components";
 
 export interface EnvironmentEditorProps {
   onLoad: () => Promise<{ variables: Record<string, string>; secretRefs?: string[] }>;
@@ -195,10 +196,10 @@ export function EnvironmentEditor({ onLoad, onSave, onPutSecret }: EnvironmentEd
       <div className="environment-editor-panel">
         {active === "vault" ? <>
           <label className="settings-field"><span>已关联的密钥引用</span><input value={secretRefs} onChange={(event) => setSecretRefs(event.target.value)} placeholder="例如：api_token, client_secret" disabled={busy}/></label>
-          {onPutSecret ? <div className="environment-vault-card"><div><strong>添加或更新密钥</strong><small>保存后无法读取明文，只能通过引用名称使用。</small></div><div className="environment-secret-row"><input aria-label="密钥名称" value={secretName} onChange={(event) => setSecretName(event.target.value)} placeholder="密钥名称" disabled={busy}/><input aria-label="密钥值" type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} placeholder="密钥值" disabled={busy}/><button className="ui-button secondary" disabled={busy || !secretName.trim() || !secretValue} onClick={() => void putSecret()}>保存密钥</button></div></div> : null}
+          {onPutSecret ? <div className="environment-vault-card"><div><strong>添加或更新密钥</strong><small>保存后无法读取明文，只能通过引用名称使用。</small></div><div className="environment-secret-row"><input aria-label="密钥名称" value={secretName} onChange={(event) => setSecretName(event.target.value)} placeholder="密钥名称" disabled={busy}/><input aria-label="密钥值" type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} placeholder="密钥值" disabled={busy}/><Button variant="secondary" disabled={busy || !secretName.trim() || !secretValue} onClick={() => void putSecret()}>保存密钥</Button></div></div> : null}
         </> : <KeyValueEditor kind={active === "global-parameters" ? "参数" : "变量"} value={active === "global-parameters" ? globalParameters : text} onChange={active === "global-parameters" ? setGlobalParameters : setText} disabled={busy}/>} 
       </div>
-      <footer><div className="environment-footer-leading">{selectedEnvironment ? <button className="ui-button danger" disabled={busy} onClick={() => void removeEnvironment()}><Icon name="trash"/>删除环境</button> : null}<span role="status">{message}</span></div><div>{selectedEnvironment ? <button className="ui-button secondary" disabled={busy || selectedEnvironment.id.startsWith("draft-")} onClick={() => void copyEnvironment()}><Icon name="copy"/>复制</button> : null}<button className="ui-button secondary" disabled={busy} onClick={() => void reload()}>重新加载</button><button className="ui-button primary" disabled={busy} onClick={() => void saveCurrent()}>保存</button></div></footer>
+      <footer><div className="environment-footer-leading">{selectedEnvironment ? <Button variant="danger" icon="trash" disabled={busy} onClick={() => void removeEnvironment()}>删除环境</Button> : null}<span role="status">{message}</span></div><div>{selectedEnvironment ? <Button variant="secondary" icon="copy" disabled={busy || selectedEnvironment.id.startsWith("draft-")} onClick={() => void copyEnvironment()}>复制</Button> : null}<Button variant="secondary" disabled={busy} onClick={() => void reload()}>重新加载</Button><Button variant="primary" disabled={busy} onClick={() => void saveCurrent()}>保存</Button></div></footer>
     </main>
   </div>;
 }

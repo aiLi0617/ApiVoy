@@ -1,0 +1,16 @@
+.workspace-explorer-tree { min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.workspace-tree-empty { padding: 10px; color: var(--apivoy-muted); font-size: 12px; }
+.workspace-tree-heading { display: flex; align-items: center; justify-content: space-between; padding: 12px 10px 7px; color: var(--apivoy-muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+.workspace-tree-heading > span { display: inline-flex; align-items: center; gap: 6px; }
+.workspace-batch-bar { display: flex; align-items: center; gap: 5px; margin: 0 7px 7px; padding: 6px; border-radius: 7px; background: var(--apivoy-accent-soft); font-size: 10px; }
+.workspace-batch-bar .ui-select { flex: 1; min-height: 26px; padding: 2px 5px; font-size: 10px; }
+.tree-chevron, .tree-action-button { flex-shrink: 0; display: inline-flex; align-items: center; padding: 2px; border: 0; background: transparent; color: var(--apivoy-muted); }
+.tree-action-button { padding: 3px; }.tree-action-button:hover { color: var(--apivoy-accent); }
+.tree-module-row { display: flex; align-items: center; gap: 6px; margin: 4px 6px 2px; padding: 7px 6px; border-radius: 7px; color: var(--apivoy-text); font-size: 12px; }
+.tree-module-badge { margin-left: auto; color: var(--apivoy-muted); font-size: 9px; font-weight: 500; }
+.tree-collection-row { width: 100%; display: flex; align-items: center; gap: 4px; padding-block: 2px; padding-right: 5px; border-radius: 7px; background: transparent; color: var(--apivoy-text); font-size: 12px; }
+.tree-collection-main { flex: 1; min-width: 0; display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: center; gap: 5px; padding: 5px 4px; overflow: hidden; border: 0; background: transparent; color: inherit; text-align: left; }
+.tree-tags { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 3px; color: var(--apivoy-subtle); font-size: 9px; }
+.tree-request-row { min-width: 0; display: flex; align-items: center; gap: 4px; border-radius: 7px; }
+.tree-request-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; padding: 7px 4px; overflow: hidden; border: 0; background: transparent; color: inherit; text-align: left; }
+.tree-row.is-active { background: var(--apivoy-accent-soft); color: var(--apivoy-accent); }

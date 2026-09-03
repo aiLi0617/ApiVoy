@@ -1,0 +1,17 @@
+.graphql-workbench { margin-top: 22px; padding: 20px; border: 1px solid var(--apivoy-border); border-radius: 12px; background: var(--apivoy-workspace); box-shadow: 0 18px 48px rgba(0,0,0,.18); }
+.graphql-title { display: flex; justify-content: space-between; align-items: flex-start; }
+.graphql-title small { color: var(--apivoy-accent); font-weight: 700; letter-spacing: 1.6px; }
+.graphql-title h2 { margin: 4px 0 16px; font-size: 20px; }
+.graphql-commandbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.graphql-url { flex: 1 1 320px; }.graphql-operation { width: 200px; }
+.graphql-headers { display: grid; gap: 6px; margin-top: 12px; color: var(--apivoy-muted); font-size: 11px; }
+.graphql-schema { margin-top: 12px; padding: 11px; border: 1px solid var(--apivoy-border); border-radius: 10px; background: var(--apivoy-bg-elevated); }
+.graphql-schema > strong { display: flex; justify-content: space-between; font-size: 12px; }
+.graphql-schema > div { display: flex; flex-wrap: wrap; gap: 5px; max-height: 95px; margin-top: 9px; overflow: auto; }
+.graphql-schema button { padding: 4px 8px; border: 1px solid var(--apivoy-border); border-radius: 999px; background: var(--apivoy-bg); color: var(--apivoy-muted); font-size: 11px; }
+.graphql-schema button:hover { border-color: var(--apivoy-accent); color: var(--apivoy-accent); }
+.graphql-editors { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(220px,.6fr); gap: 10px; margin-top: 12px; color: var(--apivoy-muted); font-size: 11px; }
+.graphql-editors label { display: grid; gap: 6px; }
+.graphql-response-head { display: flex; justify-content: space-between; margin-top: 13px; color: var(--apivoy-subtle); font-size: 10px; letter-spacing: 1.2px; }
+.graphql-output { min-height: 100px; max-height: 350px; padding: 12px; overflow: auto; border: 1px solid var(--apivoy-border); border-radius: 9px; background: var(--apivoy-bg); color: var(--apivoy-text); font: 11px/1.5 var(--apivoy-mono); white-space: pre-wrap; }
+@media (max-width: 760px) { .graphql-editors { grid-template-columns: minmax(0,1fr); }.graphql-operation { width: 100%; } }
