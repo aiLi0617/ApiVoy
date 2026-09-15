@@ -17,6 +17,7 @@
 @import "./WorkspaceExplorer.css";
 :root {
   --apivoy-bg: #0b0d10; --apivoy-nav: #101216; --apivoy-workspace: #111419; --apivoy-bg-elevated: #171a20;
+  --apivoy-project-rail: color-mix(in srgb,var(--apivoy-nav) 82%,#05070a);
   --apivoy-overlay: #1d2128; --apivoy-border: #2a2f38; --apivoy-border-strong: #3b4350;
   --apivoy-text: #eef1f5; --apivoy-muted: #a5adb9; --apivoy-subtle: #7f8997;
   --apivoy-accent: #4c9aff; --apivoy-accent-hover: #67a9ff; --apivoy-accent-soft: rgba(76,154,255,.13);
@@ -32,6 +33,7 @@
 }
 :root[data-theme="light"] {
   --apivoy-bg: #eef1f5; --apivoy-nav: #f7f8fa; --apivoy-workspace: #fff; --apivoy-bg-elevated: #f7f8fa; --apivoy-overlay: #fff;
+  --apivoy-project-rail: var(--apivoy-nav);
   --apivoy-border: #d8dde5; --apivoy-border-strong: #b8c0cc; --apivoy-text: #172033; --apivoy-muted: #4f5c6e; --apivoy-subtle: #667386;
   --apivoy-accent: #1769d2; --apivoy-accent-hover: #0f57b4; --apivoy-accent-soft: rgba(23,105,210,.1);
   --apivoy-success: #18794e; --apivoy-warning: #9a6700; --apivoy-danger: #c9363e; color-scheme: light;
@@ -84,7 +86,7 @@ kbd { padding: 2px 5px; border: 1px solid var(--apivoy-border); border-radius: 4
 .app-workspace.has-project-rail { grid-template-columns: 68px var(--explorer-width,232px) minmax(0,1fr); }
 .app-workspace.explorer-collapsed { grid-template-columns: 0 minmax(0,1fr); }
 .app-workspace.has-project-rail.explorer-collapsed { grid-template-columns: 68px 0 minmax(0,1fr); }
-.project-module-nav { grid-column: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 4px; padding: 8px 6px; border-right: 1px solid var(--apivoy-border); background: color-mix(in srgb,var(--apivoy-nav) 82%,#05070a); }
+.project-module-nav { grid-column: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 4px; padding: 8px 6px; border-right: 1px solid var(--apivoy-border); background: var(--apivoy-project-rail); }
 .project-module-nav button { min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 5px 2px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--apivoy-subtle); font-size: 9px; line-height: 1.15; }
 .project-module-nav button svg { width: 15px; height: 15px; }
 .project-module-nav button:hover,.project-module-nav button:focus-visible { background: var(--apivoy-bg-elevated); color: var(--apivoy-text); }

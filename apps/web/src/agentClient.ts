@@ -86,7 +86,7 @@ interface StoredRequest {
   envelope: RequestEnvelope;
 }
 export interface ApiDefinitionRecord { id: string; projectId: string; moduleId?: string | null; name: string; format: string; fileName: string; content: string; createdAt: string; updatedAt: string }
-export interface RequestDefinitionBindingRecord { requestId: string; definitionId: string; operationRef?: string | null; updatedAt: string }
+export interface RequestDefinitionBindingRecord { requestId: string; definitionId: string; mockOperationId?: string; operationRef?: string | null; updatedAt: string }
 export async function loadEnvelopeViaAgent(id: string): Promise<RequestEnvelope | null> {
   await checkAgentHandshake();
   const response = await fetch(`${agentBase()}/v1/requests/${id}`, { headers: agentHeaders() });
@@ -95,7 +95,7 @@ export async function loadEnvelopeViaAgent(id: string): Promise<RequestEnvelope 
 }
 
 export async function listApiDefinitionsViaAgent(projectId: string): Promise<ApiDefinitionRecord[]> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/api-definitions?projectId=${encodeURIComponent(projectId)}`, { headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
-export async function saveApiDefinitionViaAgent(input: { projectId: string; name: string; format: string; fileName: string; content: string }): Promise<ApiDefinitionRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/api-definitions`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(input) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function saveApiDefinitionViaAgent(input: { id?: string; projectId: string; moduleId?: string | null; name: string; format: string; fileName: string; content: string }): Promise<ApiDefinitionRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/api-definitions`, { method: "POST", headers: agentHeaders(), body: JSON.stringify(input) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
 export async function getRequestDefinitionBindingViaAgent(requestId: string): Promise<RequestDefinitionBindingRecord | null> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
 export async function bindRequestDefinitionViaAgent(requestId: string, definitionId: string, operationRef?: string): Promise<RequestDefinitionBindingRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { method: "PUT", headers: agentHeaders(), body: JSON.stringify({ definitionId, operationRef }) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
 export async function unbindRequestDefinitionViaAgent(requestId: string): Promise<void> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/requests/${requestId}/definition-binding`, { method: "DELETE", headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); }
@@ -408,7 +408,12 @@ export const moveRequestViaAgent = (id: string, projectId: string, collectionId:
 
 export async function listMockRulesViaAgent(): Promise<MockRule[]> { await checkAgentHandshake(); const res = await fetch(`${agentBase()}/v1/mock-rules`, { headers: agentHeaders() }); if (!res.ok) throw new Error(await res.text()); return res.json(); }
 export async function createMockRuleViaAgent(rule: Omit<MockRule, "id">): Promise<void> { await mutateWorkspace("/v1/mock-rules", "POST", rule); }
+export async function updateMockRuleViaAgent(id: string, rule: Omit<MockRule, "id">): Promise<void> { await mutateWorkspace(`/v1/mock-rules/${id}`, "PATCH", rule); }
 export async function deleteMockRuleViaAgent(id: string): Promise<void> { await mutateWorkspace(`/v1/mock-rules/${id}`, "DELETE"); }
+export interface MockServerStatusRecord { running: boolean; bind: string; requestCount: number; activeWebsockets: number; lastError?: string | null }
+export async function getMockServerStatusViaAgent(): Promise<MockServerStatusRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/mock-server/status`, { headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function startMockServerViaAgent(bind: string, allowRemote: boolean): Promise<MockServerStatusRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/mock-server/start`, { method: "POST", headers: agentHeaders(), body: JSON.stringify({ bind, allowRemote }) }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
+export async function stopMockServerViaAgent(): Promise<MockServerStatusRecord> { await checkAgentHandshake(); const response = await fetch(`${agentBase()}/v1/mock-server/stop`, { method: "POST", headers: agentHeaders() }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
 export const agentBaseUrl = agentBase();
 export async function tcpSessionConnectionViaAgent(target: string): Promise<TcpSessionConnection> {
   await checkAgentHandshake();

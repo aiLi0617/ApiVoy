@@ -92,7 +92,7 @@ HTTP 请求（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
 | F-012 | 导入导出 | P0 | P0 | ✅ | cURL、OpenAPI JSON/YAML、HAR、Postman v2 与 ApiVoy 项目包已接入；支持 OpenAPI 内部及跨文件 `$ref`、循环检测、Schema 请求示例、server variables 与 Postman variables 映射，文件夹/tag/page 映射子集合及敏感扫描 |
 | F-013 | 代码生成 | P1 | P1 | ✅ | HTTP 工作台支持 cURL、JavaScript Fetch、Python Requests、Go net/http、Rust reqwest、Java HttpClient；GraphQL/gRPC/WebSocket/SSE/TCP/UDP 均有专用生成器，并开放 HTTP 与协议模板注册/卸载插件点 |
 | F-014 | 集合运行器 | P1 | P1 | ✅ | CLI 支持 RequestEnvelope/ApiVoy 项目集合、顺序/并发、失败即停、跨请求变量、JSON/CSV 数据迭代、JSON/JUnit 报告和结构化退出码；Desktop 支持当前集合运行、失败即停与断言报告 |
-| F-015 | Mock 服务 | P1 | P1 | ✅ | Agent HTTP/WebSocket Mock、规则 CRUD/持久化、确定性优先级/方法精确度匹配、Status/Header/Body、连接消息/回显、延迟、周期错误注入及 Web/Desktop 管理入口均已实现 |
+| F-015 | Mock 服务 | P1 | P1 | ✅ | 独立 `apivoy-mock` 进程统一承载所有项目，默认仅回环监听且显式启停；支持项目/服务/接口隔离、路径与 ID 两种地址、设计响应自动生效、规则启停、条件匹配、HTTP/WebSocket、延迟、周期错误与试跑，详见 [MOCK_SERVICE.md](MOCK_SERVICE.md) |
 | F-016 | 团队协作 | P1 | **P2** | ✅ | Java 21 / Spring Boot 3 协作服务与双端 Team/Comments/SSO 工作台已覆盖 Owner 引导、邮箱密码及企业 OIDC 登录、已验证邮箱 JIT 入组、联合身份绑定、设备会话、组织成员、五级 RBAC、脱敏资源树快照、幂等层级恢复、revision/增量同步、冲突合并 UI、评论主题/回复/解决状态、SSE 实时变更与审计 |
 | F-017 | 插件中心 | P1 | P1 | ✅ | Wasmtime Component-only 宿主、Transformer/Protocol/Auth/Importer 专用 WIT 入口、权限校验、SHA-256、防篡改、Ed25519 发布者信任链、内存/fuel 限制、Agent/Desktop 安装/启停/卸载/按类型调用 API 与 Web/Desktop 插件中心已实现 |
 | F-018 | AI 辅助 | P2 | P2 | ✅ | Web/Desktop AI 工作台支持自然语言生成 HTTP 请求、响应解释、断言与文档生成；OpenAI-compatible/Ollama BYOK，密钥仅进入 Keychain/Agent secret-store，远程 HTTPS 强制、结果预览后应用、双端共享 Rust 客户端与 Provider 契约测试均已完成 |

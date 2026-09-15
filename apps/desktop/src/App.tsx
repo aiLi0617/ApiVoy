@@ -38,6 +38,7 @@ import {
   type InstalledPlugin,
   type PluginManifest,
   type MockRule,
+  type MockServerStatus,
 } from "@apivoy/ui";
 import {
   CLIENT_VERSION,
@@ -299,6 +300,7 @@ export function App() {
     const data = await invoke<ExecuteResponse>("execute_protocol", { request });
     return { summary: data.summary, eventCount: data.eventCount, preview: selectResponsePreview(data.responseBody, data.preview), executionId: data.executionId, assertions: data.assertions ?? [], responseMeta: data.responseMeta ?? null };
   };
+  const selectedMockServiceKey = tree?.collections.find((item) => item.id === selectedCollectionId)?.moduleId ?? tree?.modules?.find((item) => item.projectId === selectedProjectId && item.isDefault)?.id ?? "default";
   return (
     <AppShell
       channelLabel="Desktop ↔ Rust Core"
@@ -492,9 +494,15 @@ export function App() {
       <SqlWorkbench onSend={async(request,hooks)=>{const stop=await listen<string>("execution-started",event=>hooks?.onStarted?.(event.payload));try{const data=await invoke<ExecuteResponse>("execute_protocol",{request:sqlRequestEnvelope(request)});return{summary:data.summary,eventCount:data.eventCount,preview:data.responseBody??data.preview,executionId:data.executionId,assertions:[],responseMeta:data.responseMeta??null};}finally{stop();}}} onSave={async(request)=>{await invoke("save_envelope",{request:sqlRequestEnvelope(request),projectId:selectedProjectId,collectionId:selectedCollectionId});await refreshTree();}} onCancel={async(executionId)=>{await invoke<boolean>("cancel_execution",{id:executionId});}} />
       <MockWorkbench
         baseUrl={agentBaseUrl()}
+        projectKey={selectedProjectId}
+        serviceKey={selectedMockServiceKey}
         onList={() => agentJson<MockRule[]>("/v1/mock-rules")}
         onCreate={async (rule) => { await agentJson<MockRule>("/v1/mock-rules", { method: "POST", body: JSON.stringify(rule) }); }}
+        onUpdate={async (id, rule) => { await agentJson<MockRule>(`/v1/mock-rules/${id}`, { method: "PATCH", body: JSON.stringify(rule) }); }}
         onDelete={async (id) => { await agentJson<void>(`/v1/mock-rules/${id}`, { method: "DELETE" }); }}
+        onStatus={() => agentJson<MockServerStatus>("/v1/mock-server/status")}
+        onStart={(bind, allowRemote) => agentJson<MockServerStatus>("/v1/mock-server/start", { method: "POST", body: JSON.stringify({ bind, allowRemote }) })}
+        onStop={() => agentJson<MockServerStatus>("/v1/mock-server/stop", { method: "POST" })}
       />
       <GatewayWorkbench />
       <CaptureWorkbench onStatus={()=>invoke<CaptureStatus>("capture_status")} onStart={(bind)=>invoke<CaptureStatus>("start_capture",{request:{bind,allowRemote:false}})} onStop={()=>invoke<CaptureStatus>("stop_capture")} onList={()=>invoke<CapturedExchange[]>("capture_exchanges")} onClear={()=>invoke("clear_capture")} />

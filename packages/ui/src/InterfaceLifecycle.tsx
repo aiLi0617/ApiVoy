@@ -5,6 +5,9 @@ import { ModalFrame } from "./ModalFrame";
 import { CodeEditor } from "./CodeEditor";
 import { HttpWorkbench, type HttpWorkbenchRequest } from "./HttpWorkbench";
 import { readWorkbenchDraft } from "./draftRecovery";
+import { LoadingState } from "./Feedback";
+import { MockWorkbench, type MockWorkbenchProps } from "./MockWorkbench";
+import type { MockDraftSeed } from "./mockGeneration";
 import { peekHydrate, stashHydrate } from "./openRequestPipeline";
 import { RESPONSE_BODY_TYPES, normalizeResponseBodyType, readResponseComponents, type ResponseBodyType } from "./responseComponents";
 
@@ -115,6 +118,8 @@ export interface InterfaceLifecycleShellProps {
   onCopyCurl?: (caseId: string) => Promise<string>;
   onLoadCase?: (caseId: string) => Promise<HttpWorkbenchRequest | null>;
   onRunRequest?: (request: HttpWorkbenchRequest) => Promise<import("./HttpWorkbench").HttpRunResult>;
+  mockClient?: MockWorkbenchProps;
+  onLoadMockSeed?: () => Promise<MockDraftSeed>;
 }
 
 export interface InterfaceCaseSummary {
@@ -151,6 +156,7 @@ export interface ApiDefinition {
 export interface RequestDefinitionBinding {
   requestId: string;
   definitionId: string;
+  mockOperationId?: string;
   operationRef?: string | null;
   updatedAt: string;
 }
@@ -214,7 +220,7 @@ export function readableDefinitionError(error: unknown, fallback: string) {
   return decoded && decoded !== "{}" ? decoded : fallback;
 }
 
-function agentDefinitionClient(): InterfaceDefinitionClient | undefined {
+export function agentDefinitionClient(): InterfaceDefinitionClient | undefined {
   if (typeof window === "undefined") return undefined;
   const base =
     localStorage.getItem("apivoy:agent-url")?.trim() ||
@@ -287,6 +293,8 @@ export function InterfaceLifecycleShell({
   onCopyCurl,
   onLoadCase,
   onRunRequest,
+  mockClient,
+  onLoadMockSeed,
 }: InterfaceLifecycleShellProps) {
   const availableTabs = visibleLifecycleTabsFor(workbenchId, isSaved);
   const [activeTab, setActiveTab] = useState<InterfaceLifecycleTab>("debug");
@@ -382,12 +390,29 @@ export function InterfaceLifecycleShell({
           <DocumentPreviewPanel client={client} projectId={projectId} requestId={requestId} workbenchId={workbenchId} title={title} onOpenDesign={() => setActiveTab("definition")} />
         ) : active === "examples" ? (
           <InterfaceCasesPanel requestId={requestId} cases={cases} onOpenCase={onOpenCase} onSaveCase={onSaveCase} onDeleteCase={onDeleteCase} onDuplicateCase={onDuplicateCase} onRunCases={onRunCases} onRunRequest={onRunRequest} onCopyCurl={onCopyCurl} onLoadCase={onLoadCase} />
+        ) : active === "mock" && mockClient && onLoadMockSeed ? (
+          <InterfaceMockPanel client={mockClient} onLoadSeed={onLoadMockSeed} />
         ) : (
-          <LifecycleEmptyState tab={active} workbenchId={workbenchId} sessionId={sessionId} />
+          <LifecycleEmptyState tab={active} workbenchId={workbenchId} sessionId={sessionId} projectId={projectId} requestId={requestId} title={title} />
         )}
       </div> : null}
     </section>
   );
+}
+
+function InterfaceMockPanel({ client, onLoadSeed }: { client: MockWorkbenchProps; onLoadSeed: () => Promise<MockDraftSeed> }) {
+  const [seed, setSeed] = useState<MockDraftSeed | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    setSeed(null);
+    setError("");
+    void onLoadSeed().then((value) => { if (!cancelled) setSeed(value); }).catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { cancelled = true; };
+  }, [onLoadSeed]);
+  if (error) return <div className="interface-lifecycle-empty"><span><Icon name="bolt" /></span><strong>无法读取接口 Mock 信息</strong><p>{error}</p></div>;
+  if (!seed) return <LoadingState label="正在加载接口 Mock…" />;
+  return <MockWorkbench {...client} variant="interface" contextSeed={seed} />;
 }
 
 function InterfaceCasesPanel({ requestId, cases, onOpenCase, onSaveCase, onDeleteCase, onDuplicateCase, onRunCases, onRunRequest, onCopyCurl, onLoadCase }: Pick<InterfaceLifecycleShellProps, "requestId" | "cases" | "onOpenCase" | "onSaveCase" | "onDeleteCase" | "onDuplicateCase" | "onRunCases" | "onRunRequest" | "onCopyCurl" | "onLoadCase">) {
@@ -592,11 +617,15 @@ function httpStatusExplanation(code: string, label: string) {
   return HTTP_STATUS_EXPLANATIONS[code] ?? `${code} ${label}：${httpStatusClassExplanation(code[0] ?? "5")}`;
 }
 
-function defaultResponseDefinition(statusCode = "200"): ResponseDefinition {
-  return { id: crypto.randomUUID(), name: statusCode.startsWith("2") ? "成功" : "未命名响应", statusCode, bodyType: "json", contentType: "application/json" };
+function temporaryResponseId() {
+  return `client:${crypto.randomUUID()}`;
 }
 
-function parseResponseDefinitions(content: string, fields: DefinitionField[]): ResponseDefinition[] {
+function defaultResponseDefinition(statusCode = "200"): ResponseDefinition {
+  return { id: temporaryResponseId(), name: statusCode.startsWith("2") ? "成功" : "未命名响应", statusCode, bodyType: "json", contentType: "application/json" };
+}
+
+export function parseResponseDefinitions(content: string, fields: DefinitionField[]): ResponseDefinition[] {
   const source = content.match(/^x-apivoy-responses:\s*(\[.*\])\s*$/m)?.[1];
   if (source) try {
     const parsed = JSON.parse(source) as ResponseDefinition[];
@@ -1542,7 +1571,7 @@ function DefinitionPanel({
     const inferredBodyMode: BodyDesignMode = liveDraft?.body?.trim() ? "json" : "none";
     const defaultComponents = !current ? readResponseComponents(projectId).filter((item) => item.addToNewInterfaces) : [];
     const currentFields = current ? parseDefinitionFields(current.content, workbenchId) : inferredFields;
-    const initialResponses = current ? parseResponseDefinitions(current.content, currentFields) : defaultComponents.length ? defaultComponents.map((item) => ({ id: crypto.randomUUID(), name: item.name, statusCode: item.statusCode || "200", bodyType: item.bodyType, contentType: item.contentType, componentId: item.id, referenceMode: "linked" as const })) : [defaultResponseDefinition()];
+    const initialResponses = current ? parseResponseDefinitions(current.content, currentFields) : defaultComponents.length ? defaultComponents.map((item) => ({ id: temporaryResponseId(), name: item.name, statusCode: item.statusCode || "200", bodyType: item.bodyType, contentType: item.contentType, componentId: item.id, referenceMode: "linked" as const })) : [defaultResponseDefinition()];
     const defaultComponentFields = defaultComponents.flatMap((component, index) => Array.isArray(component.fields) ? component.fields.filter((field): field is DefinitionField => Boolean(field && typeof field === "object")).map((field) => ({ ...field, id: crypto.randomUUID(), parentId: undefined, scope: field.scope?.startsWith("response.") ? field.scope : "response.body" as DefinitionScope, status: initialResponses[index]?.statusCode || "200", responseId: initialResponses[index]?.id })) : []);
     const initialFields = [...inferredFields, ...defaultComponentFields];
     const nextContent = current?.content ?? (initialFields.length || defaultComponents.length ? fieldsToDefinition(initialFields, workbenchId, "3.1", inferredBodyMode, DEFAULT_SECURITY_DESIGN, initialResponses) : "");
@@ -1610,6 +1639,13 @@ function DefinitionPanel({
         content: definitionContent,
       });
       setDefinitionId(saved.id);
+      if (saved.content !== definitionContent) {
+        const canonicalFields = parseDefinitionFields(saved.content, workbenchId);
+        setContent(saved.content);
+        setFields(canonicalFields);
+        setResponses(parseResponseDefinitions(saved.content, canonicalFields));
+        lastVisualContent.current = saved.content;
+      }
       setLastSavedAt(saved.updatedAt || new Date().toISOString());
     } catch (error) {
       setMessage(
@@ -2109,7 +2145,7 @@ function VisualDefinitionEditor({
   const validBlankStatus = /^\d{1,9}$/.test(normalizedBlankStatus);
   const responseComponents = readResponseComponents(projectId).filter((component) => !componentQuery.trim() || `${component.name} ${component.statusCode ?? ""}`.toLocaleLowerCase().includes(componentQuery.trim().toLocaleLowerCase()));
   const addComponentResponse = (component: ReturnType<typeof readResponseComponents>[number]) => {
-    const response: ResponseDefinition = { id: crypto.randomUUID(), name: component.name, statusCode: component.statusCode || "200", bodyType: component.bodyType, contentType: component.contentType, componentId: component.id, referenceMode: "linked" };
+    const response: ResponseDefinition = { id: temporaryResponseId(), name: component.name, statusCode: component.statusCode || "200", bodyType: component.bodyType, contentType: component.contentType, componentId: component.id, referenceMode: "linked" };
     const componentFields = Array.isArray(component.fields) ? component.fields.filter((field): field is DefinitionField => Boolean(field && typeof field === "object")).map((field) => ({ ...field, id: crypto.randomUUID(), parentId: undefined, scope: field.scope?.startsWith("response.") ? field.scope : "response.body" as DefinitionScope, status: response.statusCode, responseId: response.id })) : [];
     onResponsesChange([...responses, response]);
     if (componentFields.length) onChange([...fields, ...componentFields]);
@@ -2194,7 +2230,7 @@ function VisualDefinitionEditor({
         </div>
       ) : null}
       {area === "response" && selectedResponse ? <section className="interface-response-detail"><h3><b>{selectedResponse.statusCode || "—"}</b> {selectedResponse.name || "未命名响应"}</h3><div className="interface-response-meta"><label><span>HTTP 状态码：</span><input aria-label="HTTP 状态码" value={selectedResponse.statusCode} onChange={(event) => { const statusCode = event.target.value; onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, statusCode } : item)); onChange(fields.map((field) => field.responseId === selectedResponse.id ? { ...field, status: statusCode } : field)); }}/></label><label><span>名称：</span><input aria-label="响应名称" value={selectedResponse.name} onChange={(event) => onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, name: event.target.value } : item))}/></label><label><span>内容格式：</span><select aria-label="内容格式" value={selectedResponse.bodyType} onChange={(event) => { const bodyType = event.target.value as ResponseBodyType; onResponsesChange(responses.map((item) => item.id === selectedResponse.id ? { ...item, bodyType, contentType: RESPONSE_BODY_TYPES.find((type) => type.id === bodyType)?.contentType ?? "" } : item)); }}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><span className="interface-response-content-type">{selectedResponse.contentType || "无 Content-Type"}</span>{responses.length > 1 ? <button type="button" className="ui-icon-button compact" aria-label="删除当前响应" onClick={() => { onResponsesChange(responses.filter((item) => item.id !== selectedResponse.id)); onChange(fields.filter((field) => field.responseId !== selectedResponse.id)); }}><Icon name="trash"/></button> : null}</div></section> : null}
-      {blankResponseDialogOpen ? <ModalFrame open onClose={() => setBlankResponseDialogOpen(false)} overlayClassName="dialog-backdrop interface-add-response-backdrop" className="interface-add-response-dialog" ariaLabelledBy="add-response-title" as="form" onSubmit={(event) => { event.preventDefault(); if (!validBlankStatus) return; const bodyType = blankResponseDraft.bodyType; const response: ResponseDefinition = { id: crypto.randomUUID(), name: blankResponseDraft.name.trim(), statusCode: normalizedBlankStatus, bodyType, contentType: RESPONSE_BODY_TYPES.find((item) => item.id === bodyType)?.contentType ?? "" }; onResponsesChange([...responses, response]); setSelectedResponseId(response.id); setBlankResponseDialogOpen(false); }}><header><h2 id="add-response-title">添加响应</h2><button type="button" className="ui-icon-button" aria-label="关闭添加响应" onClick={() => setBlankResponseDialogOpen(false)}><Icon name="close"/></button></header><div className="interface-add-response-fields"><label><span>HTTP 状态码 <em>*</em></span><div className="http-status-combobox"><input autoFocus required type="text" inputMode="numeric" minLength={1} maxLength={9} pattern="[0-9]{1,9}" role="combobox" aria-autocomplete="list" aria-controls="http-response-status-options" aria-expanded={statusPickerOpen} aria-activedescendant={statusPickerOpen ? `http-status-${HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]?.[0]}` : undefined} value={blankResponseDraft.statusCode} onClick={() => setStatusPickerOpen(true)} onBlur={() => setStatusPickerOpen(false)} onChange={(event) => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: event.target.value.replace(/\D/g, "").slice(0, 9) })); }} onKeyDown={(event) => { if (event.key === "Escape") { setStatusPickerOpen(false); return; } if (statusPickerOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; setActiveStatusIndex((index) => (index + delta + HTTP_RESPONSE_STATUS_OPTIONS.length) % HTTP_RESPONSE_STATUS_OPTIONS.length); return; } if (event.key === "Enter" && statusPickerOpen) { event.preventDefault(); const option = HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]; if (option) setBlankResponseDraft((draft) => ({ ...draft, statusCode: option[0], name: option[1] })); setStatusPickerOpen(false); }}} aria-invalid={!validBlankStatus} title="请输入 1–9 位数字"/>{statusPickerOpen ? <div id="http-response-status-options" className="http-status-options" role="listbox">{(["1", "2", "3", "4", "5"] as const).map((group) => <div className={`http-status-group status-${group}xx`} key={group}>{HTTP_RESPONSE_STATUS_OPTIONS.map(([code, label], index) => code.startsWith(group) ? <button id={`http-status-${code}`} type="button" role="option" aria-selected={blankResponseDraft.statusCode === code} className={activeStatusIndex === index ? "is-active" : ""} key={code} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveStatusIndex(index)} onClick={() => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: code, name: label })); setStatusPickerOpen(false); }}><b>{code}</b><span>{label}</span><i className="http-status-info" data-tooltip={httpStatusExplanation(code, label)} aria-label={`${code} 协议说明`}>i</i></button> : null)}<div className="http-status-class"><b>{group}XX</b><span>{group === "1" ? "信息" : group === "2" ? "成功" : group === "3" ? "重定向" : group === "4" ? "客户端错误" : "服务器错误"}</span><i className="http-status-info" data-tooltip={httpStatusClassExplanation(group)} aria-label={`${group}XX 协议说明`}>i</i></div></div>)}</div> : null}</div><small>可选择标准状态码，也可输入 1–9 位数字。</small></label><label><span>名称</span><input value={blankResponseDraft.name} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, name: event.target.value }))}/></label><label><span>内容格式</span><select value={blankResponseDraft.bodyType} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, bodyType: event.target.value as ResponseBodyType }))}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div><footer><button type="button" className="ui-button secondary" onClick={() => setBlankResponseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={!validBlankStatus}>确定</button></footer></ModalFrame> : null}
+      {blankResponseDialogOpen ? <ModalFrame open onClose={() => setBlankResponseDialogOpen(false)} overlayClassName="dialog-backdrop interface-add-response-backdrop" className="interface-add-response-dialog" ariaLabelledBy="add-response-title" as="form" onSubmit={(event) => { event.preventDefault(); if (!validBlankStatus) return; const bodyType = blankResponseDraft.bodyType; const response: ResponseDefinition = { id: temporaryResponseId(), name: blankResponseDraft.name.trim(), statusCode: normalizedBlankStatus, bodyType, contentType: RESPONSE_BODY_TYPES.find((item) => item.id === bodyType)?.contentType ?? "" }; onResponsesChange([...responses, response]); setSelectedResponseId(response.id); setBlankResponseDialogOpen(false); }}><header><h2 id="add-response-title">添加响应</h2><button type="button" className="ui-icon-button" aria-label="关闭添加响应" onClick={() => setBlankResponseDialogOpen(false)}><Icon name="close"/></button></header><div className="interface-add-response-fields"><label><span>HTTP 状态码 <em>*</em></span><div className="http-status-combobox"><input autoFocus required type="text" inputMode="numeric" minLength={1} maxLength={9} pattern="[0-9]{1,9}" role="combobox" aria-autocomplete="list" aria-controls="http-response-status-options" aria-expanded={statusPickerOpen} aria-activedescendant={statusPickerOpen ? `http-status-${HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]?.[0]}` : undefined} value={blankResponseDraft.statusCode} onClick={() => setStatusPickerOpen(true)} onBlur={() => setStatusPickerOpen(false)} onChange={(event) => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: event.target.value.replace(/\D/g, "").slice(0, 9) })); }} onKeyDown={(event) => { if (event.key === "Escape") { setStatusPickerOpen(false); return; } if (statusPickerOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; setActiveStatusIndex((index) => (index + delta + HTTP_RESPONSE_STATUS_OPTIONS.length) % HTTP_RESPONSE_STATUS_OPTIONS.length); return; } if (event.key === "Enter" && statusPickerOpen) { event.preventDefault(); const option = HTTP_RESPONSE_STATUS_OPTIONS[activeStatusIndex]; if (option) setBlankResponseDraft((draft) => ({ ...draft, statusCode: option[0], name: option[1] })); setStatusPickerOpen(false); }}} aria-invalid={!validBlankStatus} title="请输入 1–9 位数字"/>{statusPickerOpen ? <div id="http-response-status-options" className="http-status-options" role="listbox">{(["1", "2", "3", "4", "5"] as const).map((group) => <div className={`http-status-group status-${group}xx`} key={group}>{HTTP_RESPONSE_STATUS_OPTIONS.map(([code, label], index) => code.startsWith(group) ? <button id={`http-status-${code}`} type="button" role="option" aria-selected={blankResponseDraft.statusCode === code} className={activeStatusIndex === index ? "is-active" : ""} key={code} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveStatusIndex(index)} onClick={() => { setBlankResponseDraft((draft) => ({ ...draft, statusCode: code, name: label })); setStatusPickerOpen(false); }}><b>{code}</b><span>{label}</span><i className="http-status-info" data-tooltip={httpStatusExplanation(code, label)} aria-label={`${code} 协议说明`}>i</i></button> : null)}<div className="http-status-class"><b>{group}XX</b><span>{group === "1" ? "信息" : group === "2" ? "成功" : group === "3" ? "重定向" : group === "4" ? "客户端错误" : "服务器错误"}</span><i className="http-status-info" data-tooltip={httpStatusClassExplanation(group)} aria-label={`${group}XX 协议说明`}>i</i></div></div>)}</div> : null}</div><small>可选择标准状态码，也可输入 1–9 位数字。</small></label><label><span>名称</span><input value={blankResponseDraft.name} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, name: event.target.value }))}/></label><label><span>内容格式</span><select value={blankResponseDraft.bodyType} onChange={(event) => setBlankResponseDraft((draft) => ({ ...draft, bodyType: event.target.value as ResponseBodyType }))}>{RESPONSE_BODY_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div><footer><button type="button" className="ui-button secondary" onClick={() => setBlankResponseDialogOpen(false)}>取消</button><button type="submit" className="ui-button primary" disabled={!validBlankStatus}>确定</button></footer></ModalFrame> : null}
       {area !== "security" ? (
         <RovingTabList className="interface-contract-nav" ariaLabel={area === "request" ? "请求内容" : "响应内容"}>
           {(area === "request" ? requestTabs : responseTabs).map(
@@ -2673,10 +2709,16 @@ function LifecycleEmptyState({
   tab,
   workbenchId,
   sessionId,
+  projectId,
+  requestId,
+  title,
 }: {
   tab: Exclude<InterfaceLifecycleTab, "debug">;
   workbenchId: string;
   sessionId: string;
+  projectId?: string;
+  requestId?: string;
+  title: string;
 }) {
   const copy = EMPTY_COPY[tab];
   return (
@@ -2691,7 +2733,7 @@ function LifecycleEmptyState({
         className="ui-button primary"
         onClick={() =>
           window.dispatchEvent(
-            new CustomEvent(copy.event, { detail: { workbenchId, sessionId } }),
+            new CustomEvent(copy.event, { detail: { workbenchId, sessionId, projectId, requestId, title } }),
           )
         }
       >

@@ -33,6 +33,10 @@ import {
   listMockRulesViaAgent,
   createMockRuleViaAgent,
   deleteMockRuleViaAgent,
+  updateMockRuleViaAgent,
+  getMockServerStatusViaAgent,
+  startMockServerViaAgent,
+  stopMockServerViaAgent,
   listPluginsViaAgent,
   installPluginViaAgent,
   enablePluginViaAgent,
@@ -129,6 +133,7 @@ export function App() {
     if (selectedRequestId) params.set("request", selectedRequestId); else params.delete("request");
     history.replaceState(null, "", `#${params}`);
   }, [selectedProjectId, selectedCollectionId, selectedRequestId]);
+  const selectedMockServiceKey = tree?.collections.find((item) => item.id === selectedCollectionId)?.moduleId ?? tree?.modules?.find((item) => item.projectId === selectedProjectId && item.isDefault)?.id ?? "default";
 
   return (
     <AppShell
@@ -194,7 +199,7 @@ export function App() {
       <AmqpWorkbench onSend={(request,hooks)=>executeEnvelopeViaAgent(amqpRequestEnvelope(request),hooks)} onSave={async(request)=>{await saveEnvelopeViaAgent(amqpRequestEnvelope(request),selectedProjectId,selectedCollectionId);await refreshTree();}} onCancel={cancelViaAgent} />
       <KafkaWorkbench onSend={(request,hooks)=>executeEnvelopeViaAgent(kafkaRequestEnvelope(request),hooks)} onSave={async(request)=>{await saveEnvelopeViaAgent(kafkaRequestEnvelope(request),selectedProjectId,selectedCollectionId);await refreshTree();}} onCancel={cancelViaAgent} />
       <SqlWorkbench onSend={(request,hooks)=>executeEnvelopeViaAgent(sqlRequestEnvelope(request),hooks)} onSave={async(request)=>{await saveEnvelopeViaAgent(sqlRequestEnvelope(request),selectedProjectId,selectedCollectionId);await refreshTree();}} onCancel={cancelViaAgent} />
-      <MockWorkbench baseUrl={agentBaseUrl} onList={listMockRulesViaAgent} onCreate={createMockRuleViaAgent} onDelete={deleteMockRuleViaAgent} />
+      <MockWorkbench baseUrl={agentBaseUrl} projectKey={selectedProjectId} serviceKey={selectedMockServiceKey} onList={listMockRulesViaAgent} onCreate={createMockRuleViaAgent} onUpdate={updateMockRuleViaAgent} onDelete={deleteMockRuleViaAgent} onStatus={getMockServerStatusViaAgent} onStart={startMockServerViaAgent} onStop={stopMockServerViaAgent} />
       <GatewayWorkbench />
       <CaptureWorkbench onStatus={captureStatusViaAgent} onStart={startCaptureViaAgent} onStop={stopCaptureViaAgent} onList={listCapturesViaAgent} onClear={clearCapturesViaAgent} />
       <PluginCenter onList={listPluginsViaAgent} onInstall={installPluginViaAgent} onEnable={enablePluginViaAgent} onDelete={deletePluginViaAgent} onInvoke={invokePluginViaAgent} />

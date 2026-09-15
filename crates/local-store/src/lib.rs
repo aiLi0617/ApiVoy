@@ -1,6 +1,6 @@
 //! Local SQLite store: workspace, requests, environments, execution history, blobs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -189,6 +189,8 @@ pub struct ApiDefinitionRecord {
 pub struct RequestDefinitionBinding {
     pub request_id: String,
     pub definition_id: String,
+    /// Stable numeric identifier exposed by the precise Mock URL.
+    pub mock_operation_id: String,
     /// Adapter-specific operation locator, for example `GET /users` or `UserService.GetUser`.
     pub operation_ref: Option<String>,
     pub updated_at: DateTime<Utc>,
@@ -333,9 +335,15 @@ impl LocalStore {
             CREATE TABLE IF NOT EXISTS request_definition_bindings (
               request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
               definition_id TEXT NOT NULL REFERENCES api_definitions(id) ON DELETE CASCADE,
+              mock_operation_id TEXT NOT NULL UNIQUE,
               operation_ref TEXT,
               updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS mock_id_allocations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT
+            );
+            INSERT OR IGNORE INTO mock_id_allocations (id) VALUES (99999999);
 
             CREATE TABLE IF NOT EXISTS blob_index (
               id TEXT PRIMARY KEY,
@@ -385,8 +393,116 @@ impl LocalStore {
         let _ = self
             .conn
             .execute("ALTER TABLE collections ADD COLUMN module_id TEXT", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE request_definition_bindings ADD COLUMN mock_operation_id TEXT",
+            [],
+        );
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS request_definition_bindings_mock_operation_idx ON request_definition_bindings(mock_operation_id) WHERE mock_operation_id IS NOT NULL",
+            [],
+        )?;
+        let missing_mock_ids = {
+            let mut statement = self.conn.prepare(
+                "SELECT request_id FROM request_definition_bindings WHERE mock_operation_id IS NULL OR mock_operation_id = ''",
+            )?;
+            let values = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            values
+        };
+        for request_id in missing_mock_ids {
+            let mock_operation_id = self.allocate_mock_id()?;
+            self.conn.execute(
+                "UPDATE request_definition_bindings SET mock_operation_id = ?2 WHERE request_id = ?1",
+                params![request_id, mock_operation_id],
+            )?;
+        }
+        let definitions_to_canonicalize = {
+            let mut statement = self
+                .conn
+                .prepare("SELECT id, content FROM api_definitions")?;
+            let values = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            values
+        };
+        for (definition_id, content) in definitions_to_canonicalize {
+            let canonical = self.canonicalize_mock_response_ids(&content, Some(&content))?;
+            if canonical != content {
+                self.conn.execute(
+                    "UPDATE api_definitions SET content = ?2 WHERE id = ?1",
+                    params![definition_id, canonical],
+                )?;
+            }
+        }
 
         Ok(())
+    }
+
+    /// Allocate and permanently reserve a database-wide Mock identifier. The
+    /// AUTOINCREMENT sequence is seeded so the first public value is 100000000.
+    pub fn allocate_mock_id(&self) -> StoreResult<String> {
+        self.conn
+            .execute("INSERT INTO mock_id_allocations DEFAULT VALUES", [])?;
+        let id = self.conn.last_insert_rowid();
+        Ok(id.to_string())
+    }
+
+    /// Replace frontend-temporary or legacy response identifiers with formal
+    /// database-generated numeric Mock identifiers while preserving references.
+    pub fn canonicalize_mock_response_ids(
+        &self,
+        content: &str,
+        existing_content: Option<&str>,
+    ) -> StoreResult<String> {
+        const RESPONSES_PREFIX: &str = "x-apivoy-responses:";
+        const FIELDS_PREFIX: &str = "x-apivoy-visual-fields:";
+        let mut id_map = HashMap::<String, String>::new();
+        let preserved_ids = existing_content
+            .map(formal_mock_response_ids)
+            .unwrap_or_default();
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            let Some(source) = trimmed.strip_prefix(RESPONSES_PREFIX) else {
+                continue;
+            };
+            let responses = serde_json::from_str::<serde_json::Value>(source.trim())?;
+            if let Some(items) = responses.as_array() {
+                for response in items {
+                    if let Some(id) = response.get("id").and_then(serde_json::Value::as_str) {
+                        if (!is_formal_mock_id(id) || !preserved_ids.contains(id))
+                            && !id_map.contains_key(id)
+                        {
+                            id_map.insert(id.to_string(), self.allocate_mock_id()?);
+                        }
+                    }
+                }
+            }
+        }
+        if id_map.is_empty() {
+            return Ok(content.to_string());
+        }
+        content
+            .lines()
+            .map(|line| {
+                let indentation = &line[..line.len() - line.trim_start().len()];
+                let trimmed = line.trim_start();
+                let (prefix, source) = if let Some(source) = trimmed.strip_prefix(RESPONSES_PREFIX)
+                {
+                    (RESPONSES_PREFIX, source)
+                } else if let Some(source) = trimmed.strip_prefix(FIELDS_PREFIX) {
+                    (FIELDS_PREFIX, source)
+                } else {
+                    return Ok(line.to_string());
+                };
+                let mut value = serde_json::from_str::<serde_json::Value>(source.trim())?;
+                replace_mock_response_ids(&mut value, &id_map);
+                Ok(format!("{indentation}{prefix} {value}"))
+            })
+            .collect::<StoreResult<Vec<_>>>()
+            .map(|lines| lines.join("\n"))
     }
 
     fn ensure_defaults(&self) -> StoreResult<()> {
@@ -1095,10 +1211,10 @@ impl LocalStore {
 
     pub fn bind_request_definition(&self, binding: &RequestDefinitionBinding) -> StoreResult<()> {
         self.conn.execute(
-            r#"INSERT INTO request_definition_bindings (request_id, definition_id, operation_ref, updated_at)
-               VALUES (?1, ?2, ?3, ?4)
-               ON CONFLICT(request_id) DO UPDATE SET definition_id = excluded.definition_id, operation_ref = excluded.operation_ref, updated_at = excluded.updated_at"#,
-            params![binding.request_id, binding.definition_id, binding.operation_ref, binding.updated_at.to_rfc3339()],
+            r#"INSERT INTO request_definition_bindings (request_id, definition_id, mock_operation_id, operation_ref, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5)
+               ON CONFLICT(request_id) DO UPDATE SET definition_id = excluded.definition_id, mock_operation_id = excluded.mock_operation_id, operation_ref = excluded.operation_ref, updated_at = excluded.updated_at"#,
+            params![binding.request_id, binding.definition_id, binding.mock_operation_id, binding.operation_ref, binding.updated_at.to_rfc3339()],
         )?;
         Ok(())
     }
@@ -1108,10 +1224,27 @@ impl LocalStore {
         request_id: &str,
     ) -> StoreResult<Option<RequestDefinitionBinding>> {
         self.conn.query_row(
-            "SELECT request_id, definition_id, operation_ref, updated_at FROM request_definition_bindings WHERE request_id = ?1",
+            "SELECT request_id, definition_id, mock_operation_id, operation_ref, updated_at FROM request_definition_bindings WHERE request_id = ?1",
             params![request_id],
-            |row| Ok(RequestDefinitionBinding { request_id: row.get(0)?, definition_id: row.get(1)?, operation_ref: row.get(2)?, updated_at: parse_time(&row.get::<_, String>(3)?) }),
+            |row| Ok(RequestDefinitionBinding { request_id: row.get(0)?, definition_id: row.get(1)?, mock_operation_id: row.get(2)?, operation_ref: row.get(3)?, updated_at: parse_time(&row.get::<_, String>(4)?) }),
         ).optional().map_err(StoreError::from)
+    }
+
+    pub fn list_request_definition_bindings(&self) -> StoreResult<Vec<RequestDefinitionBinding>> {
+        let mut statement = self.conn.prepare(
+            "SELECT request_id, definition_id, mock_operation_id, operation_ref, updated_at FROM request_definition_bindings ORDER BY updated_at",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(RequestDefinitionBinding {
+                request_id: row.get(0)?,
+                definition_id: row.get(1)?,
+                mock_operation_id: row.get(2)?,
+                operation_ref: row.get(3)?,
+                updated_at: parse_time(&row.get::<_, String>(4)?),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
     }
 
     pub fn unbind_request_definition(&self, request_id: &str) -> StoreResult<()> {
@@ -1944,10 +2077,120 @@ fn hex_sha256(data: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+fn is_formal_mock_id(id: &str) -> bool {
+    id.len() >= 9 && id.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn formal_mock_response_ids(content: &str) -> HashSet<String> {
+    content
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("x-apivoy-responses:"))
+        .filter_map(|source| serde_json::from_str::<serde_json::Value>(source.trim()).ok())
+        .flat_map(|value| value.as_array().cloned().unwrap_or_default())
+        .filter_map(|response| response.get("id")?.as_str().map(str::to_owned))
+        .filter(|id| is_formal_mock_id(id))
+        .collect()
+}
+
+fn replace_mock_response_ids(value: &mut serde_json::Value, id_map: &HashMap<String, String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                if (key == "id" || key == "responseId") && child.as_str().is_some() {
+                    if let Some(replacement) = child.as_str().and_then(|id| id_map.get(id)) {
+                        *child = serde_json::Value::String(replacement.clone());
+                    }
+                } else {
+                    replace_mock_response_ids(child, id_map);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                replace_mock_response_ids(item, id_map);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use core_domain::RequestEnvelope;
+
+    #[test]
+    fn assigns_numeric_mock_ids_and_preserves_response_references() {
+        let store = LocalStore::open_in_memory().expect("open");
+        let content = "openapi: 3.1.0\nx-apivoy-visual-fields: [{\"id\":\"field\",\"responseId\":\"client:one\"}]\nx-apivoy-responses: [{\"id\":\"client:one\",\"name\":\"成功\",\"statusCode\":\"200\"}]";
+        let canonical = store
+            .canonicalize_mock_response_ids(content, None)
+            .expect("canonical definition");
+        assert!(canonical.contains("\"id\":\"100000000\""));
+        assert!(canonical.contains("\"responseId\":\"100000000\""));
+        assert!(!canonical.contains("client:one"));
+
+        let unchanged = store
+            .canonicalize_mock_response_ids(&canonical, Some(&canonical))
+            .expect("preserve formal identifiers");
+        assert_eq!(unchanged, canonical);
+
+        let client_supplied = "x-apivoy-responses: [{\"id\":\"999999999\",\"name\":\"伪造 ID\",\"statusCode\":\"201\"}]";
+        let reassigned = store
+            .canonicalize_mock_response_ids(client_supplied, None)
+            .expect("replace a client-supplied numeric identifier");
+        assert!(reassigned.contains("\"id\":\"100000001\""));
+        assert!(!reassigned.contains("999999999"));
+    }
+
+    #[test]
+    fn migrates_legacy_mock_identifiers_to_numeric_ids() {
+        let root =
+            std::env::temp_dir().join(format!("apivoy-mock-id-migration-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create migration test directory");
+        let path = root.join("legacy.db");
+        {
+            let connection = Connection::open(&path).expect("open legacy database");
+            connection
+                .execute_batch(
+                    r#"
+                    CREATE TABLE api_definitions (
+                      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, module_id TEXT,
+                      name TEXT NOT NULL, format TEXT NOT NULL, file_name TEXT NOT NULL,
+                      content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                    );
+                    CREATE TABLE request_definition_bindings (
+                      request_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
+                      operation_ref TEXT, updated_at TEXT NOT NULL
+                    );
+                    INSERT INTO api_definitions VALUES (
+                      'definition', 'default-project', NULL, 'Legacy', 'openapi', 'openapi.yaml',
+                      'x-apivoy-responses: [{"id":"resp_legacy","name":"成功","statusCode":"200"}]',
+                      '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                    );
+                    INSERT INTO request_definition_bindings VALUES (
+                      '00000000-0000-0000-0000-000000000001', 'definition', 'GET /legacy',
+                      '2026-01-01T00:00:00Z'
+                    );
+                    "#,
+                )
+                .expect("seed legacy schema");
+        }
+
+        let store = LocalStore::open(&path).expect("migrate legacy database");
+        let binding = store
+            .get_request_definition_binding("00000000-0000-0000-0000-000000000001")
+            .expect("read migrated binding")
+            .expect("binding exists");
+        assert_eq!(binding.mock_operation_id, "100000000");
+        let definition = store
+            .get_api_definition("definition")
+            .expect("read migrated definition")
+            .expect("definition exists");
+        assert!(definition.content.contains("\"id\":\"100000001\""));
+        drop(store);
+        std::fs::remove_dir_all(root).expect("remove migration test directory");
+    }
 
     #[test]
     fn api_definition_and_request_binding_roundtrip() {
@@ -1978,10 +2221,14 @@ mod tests {
         let binding = RequestDefinitionBinding {
             request_id: request.id.0.to_string(),
             definition_id: definition.id.clone(),
+            mock_operation_id: store
+                .allocate_mock_id()
+                .expect("allocate Mock operation ID"),
             operation_ref: Some("GET /users".into()),
             updated_at: now,
         };
         store.bind_request_definition(&binding).expect("bind");
+        assert_eq!(binding.mock_operation_id, "100000000");
         assert_eq!(
             store
                 .get_request_definition_binding(&binding.request_id)

@@ -732,11 +732,17 @@ async fn save_api_definition(
     state: State<'_, AppState>,
 ) -> Result<ApiDefinitionRecord, String> {
     let id = request.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let existing = state
-        .store
-        .lock()
-        .await
+    let store = state.store.lock().await;
+    let existing = store
         .get_api_definition(&id)
+        .map_err(|error| error.to_string())?;
+    let canonical_content = store
+        .canonicalize_mock_response_ids(
+            &request.content,
+            existing
+                .as_ref()
+                .map(|definition| definition.content.as_str()),
+        )
         .map_err(|error| error.to_string())?;
     let now = chrono::Utc::now();
     let record = ApiDefinitionRecord {
@@ -746,14 +752,11 @@ async fn save_api_definition(
         name: request.name,
         format: request.format,
         file_name: request.file_name,
-        content: request.content,
+        content: canonical_content,
         created_at: existing.map(|item| item.created_at).unwrap_or(now),
         updated_at: now,
     };
-    state
-        .store
-        .lock()
-        .await
+    store
         .save_api_definition(&record)
         .map_err(|error| error.to_string())?;
     Ok(record)
@@ -779,16 +782,21 @@ async fn bind_request_definition(
     operation_ref: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<RequestDefinitionBinding, String> {
+    let store = state.store.lock().await;
+    let mock_operation_id = store
+        .get_request_definition_binding(&request_id)
+        .map_err(|error| error.to_string())?
+        .map(|binding| binding.mock_operation_id)
+        .map(Ok)
+        .unwrap_or_else(|| store.allocate_mock_id().map_err(|error| error.to_string()))?;
     let binding = RequestDefinitionBinding {
         request_id,
         definition_id,
+        mock_operation_id,
         operation_ref,
         updated_at: chrono::Utc::now(),
     };
-    state
-        .store
-        .lock()
-        .await
+    store
         .bind_request_definition(&binding)
         .map_err(|error| error.to_string())?;
     Ok(binding)

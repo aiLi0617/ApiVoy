@@ -20,8 +20,10 @@ members = [
   "crates/plugin-runtime",
   "crates/capture-proxy",
   "crates/local-store",
+  "crates/mock-server-core",
   "apps/desktop/src-tauri",
   "apps/local-agent",
+  "apps/mock-server",
   "apps/protocol-gateway",
   "apps/cli",
 ]
@@ -74,6 +76,7 @@ driver-sql = { path = "crates/driver-sql" }
 plugin-runtime = { path = "crates/plugin-runtime" }
 capture-proxy = { path = "crates/capture-proxy" }
 local-store = { path = "crates/local-store" }
+mock-server-core = { path = "crates/mock-server-core" }
 
 [profile.release]
 lto = true

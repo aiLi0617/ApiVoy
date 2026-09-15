@@ -1,7 +1,8 @@
 {
   "bundle": {
     "externalBin": [
-      "binaries/apivoy-agent"
+      "binaries/apivoy-agent",
+      "binaries/apivoy-mock"
     ]
   }
 }

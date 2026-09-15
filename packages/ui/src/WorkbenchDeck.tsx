@@ -1,4 +1,4 @@
-import { Children, cloneElement, isValidElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
 import { ModalFrame } from "./ModalFrame";
 import { useAppStore } from "./appStore";
@@ -9,17 +9,39 @@ import { clearWorkbenchDraft } from "./draftRecovery";
 import { ScriptLibraryWorkbench } from "./ScriptLibraryWorkbench";
 import { CurlImportDialog } from "./CurlImportDialog";
 import type { HttpWorkbenchProps, HttpWorkbenchRequest } from "./HttpWorkbench";
-import { InterfaceLifecycleShell, type InterfaceCaseRunOutcome, type InterfaceCaseSummary, type InterfaceDefinitionClient } from "./InterfaceLifecycle";
+import { agentDefinitionClient, InterfaceLifecycleShell, parseDefinitionFields, parseResponseDefinitions, type DefinitionField, type InterfaceCaseRunOutcome, type InterfaceCaseSummary, type InterfaceDefinitionClient } from "./InterfaceLifecycle";
 import { captureHttpInterfaceStructure, INTERFACE_STRUCTURE_METADATA_KEY } from "./interfaceStructureV2";
 import { consumeCaseInterfaceStructure } from "./caseStructureBridge";
 import { validateDesignedResponse, type DesignedResponse } from "./designedResponseValidator";
 import { readResponseValidationSettings } from "./responseValidationSettings";
 import { ClosableTabStrip } from "./ClosableTabStrip";
+import { mockPathFromUrl, type MockDraftSeed, type MockSeedResponse } from "./mockGeneration";
+import type { MockWorkbenchProps } from "./MockWorkbench";
 
 export interface WorkbenchDefinition { id: string; label: string; protocol?: string; protocols?: string[]; group?: string; icon?: IconName }
 export type WorkbenchTab = WorkbenchDefinition;
 export interface WorkbenchGroup { id: string; label: string; icon: IconName; workbenchIds: string[] }
 interface WorkbenchSession { id: string; workbenchId: string; title: string; requestId?: string; icon?: IconName; caseInterfaceName?: string; caseParentId?: string }
+interface InterfaceMockEventDetail { workbenchId?: string; sessionId?: string; projectId?: string; requestId?: string; title?: string }
+
+function mockResponsesFromMetadata(value: unknown): MockSeedResponse[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const response = item as Record<string, unknown>;
+    const statusCode = String(response.statusCode ?? response.status ?? "200");
+    const rawFields = Array.isArray(response.fields) ? response.fields : [];
+    const fields = rawFields.filter((field): field is DefinitionField => Boolean(field && typeof field === "object" && "id" in field && "name" in field && "type" in field && (field as { scope?: unknown }).scope === "response.body"));
+    return [{
+      id: String(response.id ?? `response-${index}`),
+      name: String(response.name ?? (statusCode.startsWith("2") ? "成功" : "异常响应")),
+      statusCode,
+      contentType: String(response.contentType ?? "application/json"),
+      fields,
+      exampleBody: response.exampleBody,
+    }];
+  });
+}
 export interface WorkbenchDeckProps {
   tabs: WorkbenchTab[];
   children: ReactNode;
@@ -114,8 +136,9 @@ function openDebugTab(sessionId: string) {
   })));
 }
 
-export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow, definitionClient, onCreateHttpInterface, saveCollections, saveModules, onCreateSaveCollection, onLoadHttpInterface, interfaceCases = [], onDeleteHttpInterface }: WorkbenchDeckProps) {
+export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], selectedProjectId, onSelectProject, onCreateProject, onRenameProject, onCloneProject, onDeleteProject, onOpenProjectInNewWindow, definitionClient: providedDefinitionClient, onCreateHttpInterface, saveCollections, saveModules, onCreateSaveCollection, onLoadHttpInterface, interfaceCases = [], onDeleteHttpInterface }: WorkbenchDeckProps) {
   const items = Children.toArray(children); const { t } = useI18n();
+  const definitionClient = useMemo(() => providedDefinitionClient ?? agentDefinitionClient(), [providedDefinitionClient]);
   const active = useAppStore((state) => state.activeWorkbench); const setActive = useAppStore((state) => state.setActiveWorkbench);
   const favorites = useAppStore((state) => state.favoriteWorkbenches); const recent = useAppStore((state) => state.recentWorkbenches);
   const toggleFavorite = useAppStore((state) => state.toggleFavorite); const collapsed = useAppStore((state) => state.collapsedNavigation); const toggleNavigation = useAppStore((state) => state.toggleNavigation);
@@ -144,6 +167,46 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
   const [projectActionError, setProjectActionError] = useState("");
   const pickerRef = useRef<HTMLDivElement>(null);
   const selectedTab = selectedIndex >= 0 ? tabs[selectedIndex] : null;
+  const mockTabIndex = tabs.findIndex((tab) => tab.id === "mock");
+  const mockClient = mockTabIndex >= 0 && isValidElement(items[mockTabIndex])
+    ? (items[mockTabIndex] as ReactElement<MockWorkbenchProps>).props
+    : undefined;
+
+  async function loadInterfaceMockSeed(detail: InterfaceMockEventDetail): Promise<MockDraftSeed> {
+    const request = detail.requestId && onLoadHttpInterface
+      ? await onLoadHttpInterface(detail.requestId).catch(() => null)
+      : null;
+    let responses = mockResponsesFromMetadata(request?.metadata?.__apivoyResponseDefinitions);
+    let resolvedServiceKey: string | undefined;
+    let resolvedOperationId: string | undefined;
+    if (detail.projectId && detail.requestId && definitionClient) {
+      try {
+        const [definitions, binding] = await Promise.all([definitionClient.list(detail.projectId), definitionClient.binding(detail.requestId)]);
+        resolvedOperationId = binding?.mockOperationId || undefined;
+        const definition = definitions.find((item) => item.id === binding?.definitionId);
+        if (definition) {
+          resolvedServiceKey = definition.moduleId || resolvedServiceKey;
+          if (!responses.length) {
+            const fields = parseDefinitionFields(definition.content, detail.workbenchId ?? "http");
+            responses = parseResponseDefinitions(definition.content, fields).map((response) => ({
+              id: response.id, name: response.name, statusCode: response.statusCode, contentType: response.contentType,
+              fields: fields.filter((field) => field.scope === "response.body" && (field.responseId ? field.responseId === response.id : (field.status || "200") === response.statusCode)),
+            }));
+          }
+        }
+      } catch { /* The interface Mock page can still use a basic custom response. */ }
+    }
+    return {
+      interfaceName: request?.name?.trim() || detail.title?.replace(/^[A-Z]+\s+/, "") || "接口 Mock",
+      projectKey: detail.projectId || selectedProjectId || "default-project",
+      serviceKey: resolvedServiceKey,
+      operationId: resolvedOperationId || detail.requestId || request?.id || "",
+      persisted: Boolean(detail.requestId),
+      method: request?.method || "GET",
+      path: mockPathFromUrl(request?.url || "/"),
+      responses,
+    };
+  }
 
   useEffect(() => {
     const markRequestDeleted = (event: Event) => {
@@ -253,6 +316,52 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     };
     const selectWorkbench = (event: Event) => activate((event as CustomEvent<string>).detail);
     const createWorkbenchEvent = (event: Event) => createWorkbench((event as CustomEvent<string>).detail);
+    const createInterfaceMock = (event: Event) => {
+      const detail = (event as CustomEvent<InterfaceMockEventDetail>).detail ?? {};
+      activate("mock");
+      void (async () => {
+        const request = detail.requestId && onLoadHttpInterface
+          ? await onLoadHttpInterface(detail.requestId).catch(() => null)
+          : null;
+        let responses = mockResponsesFromMetadata(request?.metadata?.__apivoyResponseDefinitions);
+        let resolvedServiceKey: string | undefined;
+        let resolvedOperationId: string | undefined;
+        if (detail.projectId && detail.requestId && definitionClient) {
+          try {
+            const [definitions, binding] = await Promise.all([
+              definitionClient.list(detail.projectId),
+              definitionClient.binding(detail.requestId),
+            ]);
+            resolvedOperationId = binding?.mockOperationId || undefined;
+            const definition = definitions.find((item) => item.id === binding?.definitionId);
+            if (definition) {
+              resolvedServiceKey = definition.moduleId || resolvedServiceKey;
+              if (!responses.length) {
+                const fields = parseDefinitionFields(definition.content, detail.workbenchId ?? "http");
+                responses = parseResponseDefinitions(definition.content, fields).map((response) => ({
+                  id: response.id,
+                  name: response.name,
+                  statusCode: response.statusCode,
+                  contentType: response.contentType,
+                  fields: fields.filter((field) => field.scope === "response.body" && (field.responseId ? field.responseId === response.id : (field.status || "200") === response.statusCode)),
+                }));
+              }
+            }
+          } catch { /* The manual Mock editor remains available when a definition cannot be loaded. */ }
+        }
+        const seed: MockDraftSeed = {
+          interfaceName: request?.name?.trim() || detail.title?.replace(/^[A-Z]+\s+/, "") || "接口 Mock",
+          projectKey: detail.projectId || selectedProjectId || "default-project",
+          serviceKey: resolvedServiceKey,
+          operationId: resolvedOperationId || detail.requestId || request?.id || "",
+          persisted: Boolean(detail.requestId),
+          method: request?.method || "GET",
+          path: mockPathFromUrl(request?.url || "/"),
+          responses,
+        };
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent("apivoy-create-mock-rule", { detail: { ...detail, seed } })), 0);
+      })();
+    };
     const openProjectHome = () => {
       const existing = sessions.find((session) => session.workbenchId === "__new");
       if (existing) activateSession(existing, false);
@@ -267,6 +376,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
     window.addEventListener("apivoy-open-request", openRequest);
     window.addEventListener("apivoy-select-workbench", selectWorkbench);
     window.addEventListener("apivoy-create-workbench", createWorkbenchEvent);
+    window.addEventListener("apivoy-create-interface-mock", createInterfaceMock);
     window.addEventListener("apivoy-open-script-library", openScriptLibrary);
     window.addEventListener("apivoy-project-home", openProjectHome);
     const openCurlImport = (event: Event) => { setCurlImportTarget(((event as CustomEvent<{ projectId?: string; collectionId?: string }>).detail) ?? {}); setCurlImportOpen(true); };
@@ -275,6 +385,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
       window.removeEventListener("apivoy-open-request", openRequest);
       window.removeEventListener("apivoy-select-workbench", selectWorkbench);
       window.removeEventListener("apivoy-create-workbench", createWorkbenchEvent);
+      window.removeEventListener("apivoy-create-interface-mock", createInterfaceMock);
       window.removeEventListener("apivoy-open-script-library", openScriptLibrary);
       window.removeEventListener("apivoy-project-home", openProjectHome);
       window.removeEventListener("apivoy-open-curl-import", openCurlImport);
@@ -477,7 +588,7 @@ export function WorkbenchDeck({ tabs, children, saveTargetLabel, projects = [], 
         })));
       } : undefined;
       const deleteCase = onDeleteHttpInterface ?? (async (caseId: string) => { window.dispatchEvent(new CustomEvent("apivoy-delete-test-case", { detail: { caseId } })); });
-      return <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} isSaved={Boolean(session.requestId)} definitionClient={definitionClient} caseMode={Boolean(session.caseParentId)} caseInterfaceName={session.caseInterfaceName} caseName={caseName} cases={cases} onOpenCase={openCase} onSaveCase={saveCase} onDeleteCase={deleteCase} onDuplicateCase={duplicateCase} onRunCases={runCases} onRunRequest={sendCase} onCopyCurl={copyCurl} onLoadCase={onLoadHttpInterface}>{content}</InterfaceLifecycleShell>;
+      return <InterfaceLifecycleShell workbenchId={session.workbenchId} sessionId={session.id} title={session.title} projectId={selectedProjectId} requestId={session.requestId ?? session.id} isSaved={Boolean(session.requestId)} definitionClient={definitionClient} caseMode={Boolean(session.caseParentId)} caseInterfaceName={session.caseInterfaceName} caseName={caseName} cases={cases} onOpenCase={openCase} onSaveCase={saveCase} onDeleteCase={deleteCase} onDuplicateCase={duplicateCase} onRunCases={runCases} onRunRequest={sendCase} onCopyCurl={copyCurl} onLoadCase={onLoadHttpInterface} mockClient={mockClient} onLoadMockSeed={() => loadInterfaceMockSeed({ workbenchId: session.workbenchId, sessionId: session.id, projectId: selectedProjectId, requestId: session.requestId ?? session.id, title: session.title })}>{content}</InterfaceLifecycleShell>;
     };
     const sourceWithSaveIdentity = isValidElement(source) ? (() => {
       const element = source as ReactElement<{ onSave?: (request: Record<string, unknown>) => Promise<void>; onSaveAsCase?: (request: Record<string, unknown>) => Promise<void>; onUpdateInterface?: (request: Record<string, unknown>) => Promise<void> }>;

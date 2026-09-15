@@ -143,8 +143,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked -p apivoy-local-agent -p apivoy-cli
-      - name: Package CLI and Agent
+      - run: cargo build --release --locked -p apivoy-local-agent -p apivoy-mock-server -p apivoy-cli
+      - name: Package CLI, Agent, and Mock server
         shell: bash
         run: |
           set -euo pipefail
@@ -153,9 +153,11 @@ jobs:
           mkdir -p "$STAGING"
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp target/release/apivoy-agent.exe "$STAGING/apivoy-agent.exe"
+            cp target/release/apivoy-mock.exe "$STAGING/apivoy-mock.exe"
             cp target/release/apivoy-cli.exe "$STAGING/apivoy-cli.exe"
           else
             cp target/release/apivoy-agent "$STAGING/apivoy-agent"
+            cp target/release/apivoy-mock "$STAGING/apivoy-mock"
             cp target/release/apivoy-cli "$STAGING/apivoy-cli"
             chmod +x "$STAGING"/*
           fi

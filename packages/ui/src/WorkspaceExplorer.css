@@ -13,4 +13,13 @@
 .tree-tags { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 3px; color: var(--apivoy-subtle); font-size: 9px; }
 .tree-request-row { min-width: 0; display: flex; align-items: center; gap: 4px; border-radius: 7px; }
 .tree-request-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; padding: 7px 4px; overflow: hidden; border: 0; background: transparent; color: inherit; text-align: left; }
+.tree-request-method { min-width: 31px; flex: 0 0 auto; color: var(--apivoy-accent); font: 750 11px var(--apivoy-mono); }
+.tree-request-method[data-method="GET"] { color: var(--apivoy-success); }
+.tree-request-method[data-method="POST"] { color: var(--apivoy-warning); }
+.tree-request-method[data-method="PUT"] { color: var(--apivoy-accent); }
+.tree-request-method[data-method="PATCH"],
+.tree-request-method[data-method="TRACE"] { color: color-mix(in srgb,var(--apivoy-accent) 55%,var(--apivoy-danger)); }
+.tree-request-method[data-method="DELETE"] { color: var(--apivoy-danger); }
+.tree-request-method[data-method="HEAD"] { color: color-mix(in srgb,var(--apivoy-accent) 62%,var(--apivoy-success)); }
+.tree-request-method[data-method="OPTIONS"] { color: var(--apivoy-subtle); }
 .tree-row.is-active { background: var(--apivoy-accent-soft); color: var(--apivoy-accent); }

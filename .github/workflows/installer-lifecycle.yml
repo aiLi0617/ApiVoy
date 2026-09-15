@@ -86,6 +86,7 @@ jobs:
           ditto "$app" "$installed"
           plutil -lint "$installed/Contents/Info.plist"
           find "$installed/Contents" -name 'apivoy-agent*' -type f -perm -111 | grep -q .
+          find "$installed/Contents" -name 'apivoy-mock*' -type f -perm -111 | grep -q .
           rm -rf "$installed"
           test ! -e "$installed"
           hdiutil detach "$mount"
@@ -118,7 +119,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked -p apivoy-local-agent -p apivoy-cli -p apivoy-protocol-gateway
+      - run: cargo build --release --locked -p apivoy-local-agent -p apivoy-mock-server -p apivoy-cli -p apivoy-protocol-gateway
       - name: Unix tools lifecycle
         if: runner.os != 'Windows'
         shell: bash
@@ -126,7 +127,7 @@ jobs:
           set -euo pipefail
           install="$RUNNER_TEMP/apivoy-tools/bin"
           mkdir -p "$install"
-          cp target/release/apivoy-cli target/release/apivoy-agent target/release/apivoy-protocol-gateway "$install/"
+          cp target/release/apivoy-cli target/release/apivoy-agent target/release/apivoy-mock target/release/apivoy-protocol-gateway "$install/"
           "$install/apivoy-cli" --version
           APIVOY_AGENT_BIND=127.0.0.1:39227 APIVOY_AGENT_TOKEN=release-smoke-token APIVOY_CONFIG_DIR="$RUNNER_TEMP/apivoy-agent-data" "$install/apivoy-agent" >"$RUNNER_TEMP/apivoy-agent.log" 2>&1 &
           agent_pid=$!
@@ -144,7 +145,7 @@ jobs:
         run: |
           $install = Join-Path $env:RUNNER_TEMP 'apivoy-tools\bin'
           New-Item -ItemType Directory -Force $install | Out-Null
-          Copy-Item target/release/apivoy-cli.exe,target/release/apivoy-agent.exe,target/release/apivoy-protocol-gateway.exe $install
+          Copy-Item target/release/apivoy-cli.exe,target/release/apivoy-agent.exe,target/release/apivoy-mock.exe,target/release/apivoy-protocol-gateway.exe $install
           & "$install\apivoy-cli.exe" --version
           $env:APIVOY_AGENT_BIND = '127.0.0.1:39227'
           $env:APIVOY_AGENT_TOKEN = 'release-smoke-token'

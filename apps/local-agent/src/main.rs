@@ -8,6 +8,7 @@ use std::convert::Infallible;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,7 +19,7 @@ use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode}
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, patch, post, put};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use capture_proxy::{CaptureProxy, CaptureStatus, CapturedExchange};
@@ -47,11 +48,13 @@ use local_store::{
     LocalStore, ModuleRecord, ProjectRecord, RequestDefinitionBinding, ScriptRecord, StoredRequest,
     WorkspaceRecord,
 };
+use mock_server_core::{normalize_mock_path, MockMatchConditions, MockRule};
 use plugin_runtime::{InstalledPlugin, PluginManager, PluginManifest, PluginPermission};
 use secret_store::{SecretBackendKind, SecretStore};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::process::Child;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use tracing::{info, warn};
@@ -80,43 +83,24 @@ struct AppState {
     executions: Arc<Mutex<HashMap<Uuid, ExecutionSlot>>>,
     mock_rules: Arc<Mutex<HashMap<Uuid, MockRuleState>>>,
     mock_rules_path: Arc<PathBuf>,
+    mock_server: Arc<Mutex<MockServerProcess>>,
     plugins: Arc<PluginManager>,
     capture: CaptureProxy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MockRule {
-    id: Uuid,
-    name: String,
-    method: String,
-    path: String,
-    status: u16,
-    #[serde(default)]
-    headers: HashMap<String, String>,
-    #[serde(default)]
-    body: String,
-    #[serde(default)]
-    delay_ms: u64,
-    #[serde(default)]
-    error_every: Option<u64>,
-    #[serde(default)]
-    priority: i32,
-    #[serde(default)]
-    ws_messages: Vec<String>,
-    #[serde(default)]
-    ws_echo: bool,
-    #[serde(default)]
-    ws_interval_ms: u64,
-}
 struct MockRuleState {
     rule: MockRule,
-    hits: u64,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateMockRule {
+    project_key: String,
+    service_key: String,
+    operation_id: Option<String>,
+    response_id: Option<String>,
+    #[serde(default = "default_true")]
+    enabled: bool,
     name: String,
     method: String,
     path: String,
@@ -125,6 +109,8 @@ struct CreateMockRule {
     headers: HashMap<String, String>,
     #[serde(default)]
     body: String,
+    #[serde(default)]
+    match_conditions: MockMatchConditions,
     #[serde(default)]
     delay_ms: u64,
     #[serde(default)]
@@ -137,6 +123,46 @@ struct CreateMockRule {
     ws_echo: bool,
     #[serde(default)]
     ws_interval_ms: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+struct MockServerProcess {
+    child: Option<Child>,
+    bind: String,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartMockServerBody {
+    #[serde(default = "default_mock_bind")]
+    bind: String,
+    #[serde(default)]
+    allow_remote: bool,
+}
+
+fn default_mock_bind() -> String {
+    "127.0.0.1:39218".into()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MockServerStatus {
+    running: bool,
+    bind: String,
+    request_count: u64,
+    active_websockets: u64,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MockServerHealth {
+    request_count: u64,
+    active_websockets: u64,
 }
 
 #[derive(Deserialize)]
@@ -332,6 +358,40 @@ struct SaveApiDefinitionBody {
     content: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MockDesignResponse {
+    id: String,
+    name: String,
+    status_code: String,
+    #[serde(default = "default_mock_content_type")]
+    content_type: String,
+    #[serde(default)]
+    example_body: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MockDesignField {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    example: Option<String>,
+    #[serde(default)]
+    parent_id: Option<String>,
+    scope: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    response_id: Option<String>,
+}
+
+fn default_mock_content_type() -> String {
+    "application/json".into()
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BindRequestDefinitionBody {
@@ -439,9 +499,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         executions: Arc::new(Mutex::new(HashMap::new())),
         mock_rules: Arc::new(Mutex::new(mock_rules)),
         mock_rules_path: Arc::new(mock_rules_path),
+        mock_server: Arc::new(Mutex::new(MockServerProcess {
+            child: None,
+            bind: default_mock_bind(),
+            last_error: None,
+        })),
         plugins: Arc::new(plugins),
         capture: CaptureProxy::new(),
     };
+    let existing_bindings = state
+        .store
+        .lock()
+        .await
+        .list_request_definition_bindings()?;
+    for binding in existing_bindings {
+        sync_design_mock_rules(&state, &binding)
+            .await
+            .map_err(|(_, error)| error)?;
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
@@ -545,6 +620,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/mock-rules/{id}",
             patch(update_mock_rule).delete(delete_mock_rule),
         )
+        .route("/v1/mock-server/status", get(mock_server_status))
+        .route("/v1/mock-server/start", post(start_mock_server))
+        .route("/v1/mock-server/stop", post(stop_mock_server))
         .route("/v1/plugins", get(list_plugins).post(install_plugin))
         .route(
             "/v1/plugins/{id}",
@@ -560,8 +638,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/mock/{*path}", any(serve_mock))
-        .route("/mock-ws/{*path}", get(serve_mock_ws))
         .route("/v1/tcp-session", get(tcp_session))
         .merge(protected)
         .layer(cors)
@@ -862,12 +938,19 @@ async fn create_mock_rule(
     validate_mock_rule(&input)?;
     let rule = MockRule {
         id: Uuid::new_v4(),
+        source: "custom".into(),
+        project_key: input.project_key,
+        service_key: input.service_key,
+        operation_id: input.operation_id,
+        response_id: input.response_id,
+        enabled: input.enabled,
         name: input.name,
         method: input.method.to_uppercase(),
         path: normalize_mock_path(&input.path),
         status: input.status,
         headers: input.headers,
         body: input.body,
+        match_conditions: input.match_conditions,
         delay_ms: input.delay_ms,
         error_every: input.error_every.filter(|value| *value > 0),
         priority: input.priority,
@@ -875,13 +958,11 @@ async fn create_mock_rule(
         ws_echo: input.ws_echo,
         ws_interval_ms: input.ws_interval_ms,
     };
-    state.mock_rules.lock().await.insert(
-        rule.id,
-        MockRuleState {
-            rule: rule.clone(),
-            hits: 0,
-        },
-    );
+    state
+        .mock_rules
+        .lock()
+        .await
+        .insert(rule.id, MockRuleState { rule: rule.clone() });
     persist_mock_rules(&state).await?;
     Ok((StatusCode::CREATED, Json(rule)))
 }
@@ -900,12 +981,19 @@ async fn update_mock_rule(
         .ok_or((StatusCode::NOT_FOUND, "mock rule not found".into()))?;
     entry.rule = MockRule {
         id,
+        source: "custom".into(),
+        project_key: input.project_key,
+        service_key: input.service_key,
+        operation_id: input.operation_id,
+        response_id: input.response_id,
+        enabled: input.enabled,
         name: input.name,
         method: input.method.to_uppercase(),
         path: normalize_mock_path(&input.path),
         status: input.status,
         headers: input.headers,
         body: input.body,
+        match_conditions: input.match_conditions,
         delay_ms: input.delay_ms,
         error_every: input.error_every.filter(|value| *value > 0),
         priority: input.priority,
@@ -937,6 +1025,12 @@ async fn delete_mock_rule(
 }
 
 fn validate_mock_rule(input: &CreateMockRule) -> Result<(), (StatusCode, String)> {
+    if input.project_key.trim().is_empty() || input.service_key.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "mock projectKey and serviceKey are required".into(),
+        ));
+    }
     if input.name.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "mock rule name is required".into()));
     }
@@ -951,9 +1045,6 @@ fn validate_mock_rule(input: &CreateMockRule) -> Result<(), (StatusCode, String)
     }
     Ok(())
 }
-fn normalize_mock_path(value: &str) -> String {
-    format!("/{}", value.trim().trim_start_matches('/'))
-}
 
 fn load_mock_rules(path: &PathBuf) -> HashMap<Uuid, MockRuleState> {
     let rules = fs::read_to_string(path)
@@ -962,7 +1053,7 @@ fn load_mock_rules(path: &PathBuf) -> HashMap<Uuid, MockRuleState> {
         .unwrap_or_default();
     rules
         .into_iter()
-        .map(|rule| (rule.id, MockRuleState { rule, hits: 0 }))
+        .map(|rule| (rule.id, MockRuleState { rule }))
         .collect()
 }
 
@@ -984,113 +1075,196 @@ async fn persist_mock_rules(state: &AppState) -> Result<(), (StatusCode, String)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
-async fn serve_mock(
+async fn mock_server_status(
     State(state): State<AppState>,
-    method: Method,
-    Path(path): Path<String>,
-) -> Response {
-    let requested_path = normalize_mock_path(&path);
-    let selected = {
-        let mut rules = state.mock_rules.lock().await;
-        let selected_id = select_mock_rule_id(&rules, method.as_str(), &requested_path);
-        selected_id.and_then(|id| rules.get_mut(&id)).map(|entry| {
-            entry.hits += 1;
-            (entry.rule.clone(), entry.hits)
-        })
-    };
-    let Some((rule, hits)) = selected else {
-        return Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("No ApiVoy mock rule matched"))
-            .unwrap();
-    };
-    if rule.delay_ms > 0 {
-        tokio::time::sleep(std::time::Duration::from_millis(rule.delay_ms)).await;
-    }
-    if rule.error_every.is_some_and(|every| hits % every == 0) {
-        return Response::builder()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .header("X-ApiVoy-Mock-Injected", "true")
-            .body(Body::from("Injected mock failure"))
-            .unwrap();
-    }
-    let mut response = Response::builder()
-        .status(rule.status)
-        .header("X-ApiVoy-Mock-Rule", rule.id.to_string());
-    for (name, value) in rule.headers {
-        response = response.header(name, value);
-    }
-    response
-        .body(Body::from(rule.body))
-        .unwrap_or_else(|error| {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(error.to_string()))
-                .unwrap()
-        })
+    headers: HeaderMap,
+) -> Result<Json<MockServerStatus>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    Ok(Json(read_mock_server_status(&state).await))
 }
 
-async fn serve_mock_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-    Path(path): Path<String>,
-) -> Response {
-    let requested_path = normalize_mock_path(&path);
-    let selected = {
-        let mut rules = state.mock_rules.lock().await;
-        let selected_id = select_mock_rule_id(&rules, "WS", &requested_path);
-        selected_id.and_then(|id| rules.get_mut(&id)).map(|entry| {
-            entry.hits += 1;
-            entry.rule.clone()
-        })
+async fn read_mock_server_status(state: &AppState) -> MockServerStatus {
+    let (running, bind, last_error) = {
+        let mut process = state.mock_server.lock().await;
+        let running = if let Some(child) = process.child.as_mut() {
+            match child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
+                    process.last_error = if status.success() {
+                        None
+                    } else {
+                        Some(format!("Mock 服务已退出：{status}"))
+                    };
+                    process.child = None;
+                    false
+                }
+                Err(error) => {
+                    process.last_error = Some(format!("无法读取 Mock 服务状态：{error}"));
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        (running, process.bind.clone(), process.last_error.clone())
     };
-    let Some(rule) = selected else {
-        return (
-            StatusCode::NOT_FOUND,
-            "No ApiVoy WebSocket mock rule matched",
+    let health = if running {
+        if let Ok(url) = mock_health_url(&bind) {
+            match reqwest::get(url).await {
+                Ok(response) => response.json::<MockServerHealth>().await.ok(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    MockServerStatus {
+        running,
+        bind,
+        request_count: health.as_ref().map_or(0, |value| value.request_count),
+        active_websockets: health.map_or(0, |value| value.active_websockets),
+        last_error,
+    }
+}
+
+async fn start_mock_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<StartMockServerBody>,
+) -> Result<Json<MockServerStatus>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    let bind = body.bind.parse::<SocketAddr>().map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("无效的 Mock 监听地址：{error}"),
         )
-            .into_response();
-    };
-    ws.on_upgrade(move |socket| run_websocket_mock(socket, rule))
-        .into_response()
+    })?;
+    if bind.port() == 0 {
+        return Err((StatusCode::BAD_REQUEST, "Mock 监听端口不能为 0".into()));
+    }
+    if !bind.ip().is_loopback() && !body.allow_remote {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "局域网监听必须显式确认 allowRemote；Mock 响应可能被同网段设备访问".into(),
+        ));
+    }
+    if read_mock_server_status(&state).await.running {
+        return Err((StatusCode::CONFLICT, "Mock 服务已经在运行".into()));
+    }
+    std::net::TcpListener::bind(bind)
+        .map_err(|error| (StatusCode::CONFLICT, format!("Mock 端口无法监听：{error}")))?;
+    let mut command = tokio::process::Command::new(mock_server_binary());
+    command
+        .env("APIVOY_MOCK_BIND", bind.to_string())
+        .env("APIVOY_MOCK_RULES_PATH", state.mock_rules_path.as_ref())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = command.spawn().map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("无法启动 apivoy-mock：{error}"),
+        )
+    })?;
+    {
+        let mut process = state.mock_server.lock().await;
+        process.child = Some(child);
+        process.bind = bind.to_string();
+        process.last_error = None;
+    }
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let status = read_mock_server_status(&state).await;
+        if status.running {
+            if let Ok(url) = mock_health_url(&status.bind) {
+                if reqwest::get(url)
+                    .await
+                    .is_ok_and(|response| response.status().is_success())
+                {
+                    return Ok(Json(status));
+                }
+            }
+        }
+        if !status.running {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                status
+                    .last_error
+                    .unwrap_or_else(|| "Mock 服务启动后立即退出".into()),
+            ));
+        }
+    }
+    Err((StatusCode::GATEWAY_TIMEOUT, "Mock 服务启动超时".into()))
 }
 
-async fn run_websocket_mock(mut socket: WebSocket, rule: MockRule) {
-    if rule.delay_ms > 0 {
-        tokio::time::sleep(std::time::Duration::from_millis(rule.delay_ms)).await;
-    }
-    for (index, message) in rule.ws_messages.iter().enumerate() {
-        if socket
-            .send(AxumWsMessage::Text(message.clone().into()))
+async fn stop_mock_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MockServerStatus>, (StatusCode, String)> {
+    check_protocol_version(&headers)?;
+    let child = state.mock_server.lock().await.child.take();
+    if let Some(mut child) = child {
+        child
+            .kill()
             .await
-            .is_err()
-        {
-            return;
-        }
-        if index + 1 < rule.ws_messages.len() && rule.ws_interval_ms > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(rule.ws_interval_ms)).await;
-        }
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        let _ = child.wait().await;
     }
-    if !rule.ws_echo {
-        let _ = socket.close().await;
-        return;
+    Ok(Json(read_mock_server_status(&state).await))
+}
+
+fn mock_server_binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("APIVOY_MOCK_BIN") {
+        return PathBuf::from(path);
     }
-    while let Some(Ok(message)) = socket.next().await {
-        match message {
-            AxumWsMessage::Text(value) => {
-                if socket.send(AxumWsMessage::Text(value)).await.is_err() {
-                    break;
+    let file_name = if cfg!(windows) {
+        "apivoy-mock.exe"
+    } else {
+        "apivoy-mock"
+    };
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(parent) = current.parent() {
+            if let Some(current_name) = current.file_name().and_then(|name| name.to_str()) {
+                let packaged_name = current_name.replacen("apivoy-agent", "apivoy-mock", 1);
+                let packaged = parent.join(packaged_name);
+                if packaged.is_file() {
+                    return packaged;
                 }
             }
-            AxumWsMessage::Binary(value) => {
-                if socket.send(AxumWsMessage::Binary(value)).await.is_err() {
-                    break;
-                }
+            let development = parent.join(file_name);
+            if development.is_file() {
+                return development;
             }
-            AxumWsMessage::Close(_) => break,
-            _ => {}
         }
     }
+    PathBuf::from(file_name)
+}
+
+fn mock_health_url(bind: &str) -> Result<String, String> {
+    let address = bind
+        .parse::<SocketAddr>()
+        .map_err(|error| error.to_string())?;
+    let host = if address.is_ipv4() {
+        if address.ip().is_unspecified() {
+            "127.0.0.1".into()
+        } else {
+            address.ip().to_string()
+        }
+    } else if address.ip().is_unspecified() {
+        "[::1]".into()
+    } else {
+        format!("[{}]", address.ip())
+    };
+    Ok(format!("http://{host}:{}/health", address.port()))
 }
 
 async fn tcp_session(
@@ -1198,21 +1372,6 @@ async fn relay_tcp_session(mut socket: WebSocket, target: String) {
         }
     };
     tokio::select! { _ = to_tcp => {}, _ = from_tcp => {} }
-}
-
-fn select_mock_rule_id(
-    rules: &HashMap<Uuid, MockRuleState>,
-    method: &str,
-    requested_path: &str,
-) -> Option<Uuid> {
-    rules
-        .iter()
-        .filter(|(_, entry)| {
-            entry.rule.path == requested_path
-                && (entry.rule.method == "*" || entry.rule.method.eq_ignore_ascii_case(method))
-        })
-        .max_by_key(|(_, entry)| (entry.rule.priority, entry.rule.method != "*"))
-        .map(|(id, _)| *id)
 }
 
 async fn capabilities(State(state): State<AppState>) -> Json<Vec<DriverDescriptor>> {
@@ -1668,16 +1827,25 @@ async fn delete_request(
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    let id = core_domain::RequestId(
+    let operation_id = {
+        let store = state.store.lock().await;
+        store
+            .get_request_definition_binding(&id)
+            .map_err(internal_store_error)?
+            .map(|binding| binding.mock_operation_id)
+            .unwrap_or_else(|| id.clone())
+    };
+    let request_id = core_domain::RequestId(
         Uuid::parse_str(&id).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?,
     );
     state
         .store
         .lock()
         .await
-        .delete_request(&id)
-        .map(|_| StatusCode::NO_CONTENT)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+        .delete_request(&request_id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    remove_design_mock_rules(&state, &operation_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_request(
@@ -1763,13 +1931,19 @@ async fn save_api_definition_record(
     let id = path_id
         .or(body.id)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let existing = state
-        .store
-        .lock()
-        .await
+    let store = state.store.lock().await;
+    let existing = store
         .get_api_definition(&id)
         .map_err(internal_store_error)?;
     let now = Utc::now();
+    let canonical_content = store
+        .canonicalize_mock_response_ids(
+            &body.content,
+            existing
+                .as_ref()
+                .map(|definition| definition.content.as_str()),
+        )
+        .map_err(internal_store_error)?;
     let record = ApiDefinitionRecord {
         id,
         project_id: body.project_id,
@@ -1777,17 +1951,202 @@ async fn save_api_definition_record(
         name: body.name,
         format: body.format,
         file_name: body.file_name,
-        content: body.content,
+        content: canonical_content,
         created_at: existing.map(|item| item.created_at).unwrap_or(now),
         updated_at: now,
     };
-    state
-        .store
-        .lock()
-        .await
+    store
         .save_api_definition(&record)
         .map_err(internal_store_error)?;
+    let bindings = store
+        .list_request_definition_bindings()
+        .map_err(internal_store_error)?
+        .into_iter()
+        .filter(|binding| binding.definition_id == record.id)
+        .collect::<Vec<_>>();
+    drop(store);
+    for binding in bindings {
+        sync_design_mock_rules(&state, &binding).await?;
+    }
     Ok(record)
+}
+
+fn parse_definition_extension<T: for<'de> Deserialize<'de>>(
+    content: &str,
+    prefix: &str,
+) -> Option<T> {
+    content
+        .lines()
+        .find_map(|line| serde_json::from_str(line.trim_start().strip_prefix(prefix)?.trim()).ok())
+}
+
+async fn sync_design_mock_rules(
+    state: &AppState,
+    binding: &RequestDefinitionBinding,
+) -> Result<(), (StatusCode, String)> {
+    let (definition, request, request_service_key) = {
+        let store = state.store.lock().await;
+        let definition = store
+            .get_api_definition(&binding.definition_id)
+            .map_err(internal_store_error)?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, "API definition not found".into()))?;
+        let request_id = Uuid::parse_str(&binding.request_id)
+            .map(core_domain::RequestId)
+            .map_err(|error| (StatusCode::BAD_REQUEST, format!("无效的接口 ID：{error}")))?;
+        let request = store
+            .get_request(&request_id)
+            .map_err(internal_store_error)?
+            .ok_or_else(|| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        let service_key = store
+            .list_collections(&request.project_id)
+            .map_err(internal_store_error)?
+            .into_iter()
+            .find(|collection| collection.id == request.collection_id)
+            .map(|collection| collection.module_id)
+            .unwrap_or_else(|| "default".into());
+        (definition, request, service_key)
+    };
+    let responses = parse_definition_extension::<Vec<MockDesignResponse>>(
+        &definition.content,
+        "x-apivoy-responses:",
+    )
+    .unwrap_or_default();
+    let fields = parse_definition_extension::<Vec<MockDesignField>>(
+        &definition.content,
+        "x-apivoy-visual-fields:",
+    )
+    .unwrap_or_default();
+    let method = match &request.envelope.payload {
+        ProtocolPayload::Http(payload) => payload.method.to_uppercase(),
+        ProtocolPayload::Websocket(_) => "WS".into(),
+        _ => request.protocol_id.to_uppercase(),
+    };
+    let path = mock_path_from_target(&request.target);
+    let service_key = definition.module_id.unwrap_or(request_service_key);
+    let mut rules = state.mock_rules.lock().await;
+    rules.retain(|_, entry| {
+        entry.rule.source != "design"
+            || (entry.rule.operation_id.as_deref() != Some(binding.mock_operation_id.as_str())
+                && entry.rule.operation_id.as_deref() != Some(binding.request_id.as_str()))
+    });
+    for (index, response) in responses.into_iter().enumerate() {
+        let response_fields = fields
+            .iter()
+            .filter(|field| {
+                field.scope == "response.body"
+                    && field.response_id.as_deref().map_or_else(
+                        || field.status.as_deref().unwrap_or("200") == response.status_code,
+                        |id| id == response.id,
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let body = response.example_body.as_ref().map_or_else(
+            || {
+                serde_json::to_string_pretty(&mock_object_from_fields(&response_fields))
+                    .unwrap_or_else(|_| "{}".into())
+            },
+            |example| {
+                example.as_str().map(str::to_owned).unwrap_or_else(|| {
+                    serde_json::to_string_pretty(example).unwrap_or_else(|_| "{}".into())
+                })
+            },
+        );
+        let rule = MockRule {
+            id: Uuid::new_v4(),
+            source: "design".into(),
+            project_key: request.project_id.clone(),
+            service_key: service_key.clone(),
+            operation_id: Some(binding.mock_operation_id.clone()),
+            response_id: Some(response.id),
+            enabled: true,
+            name: response.name,
+            method: method.clone(),
+            path: path.clone(),
+            status: response.status_code.parse().unwrap_or(200),
+            headers: HashMap::from([("Content-Type".into(), response.content_type)]),
+            body,
+            match_conditions: MockMatchConditions::default(),
+            delay_ms: 0,
+            error_every: None,
+            priority: -1000 - i32::try_from(index).unwrap_or(i32::MAX - 1000),
+            ws_messages: Vec::new(),
+            ws_echo: false,
+            ws_interval_ms: 0,
+        };
+        rules.insert(rule.id, MockRuleState { rule });
+    }
+    drop(rules);
+    persist_mock_rules(state).await
+}
+
+fn mock_path_from_target(target: &str) -> String {
+    let without_query = target.split(['?', '#']).next().unwrap_or(target);
+    if let Some((_, remainder)) = without_query.split_once("://") {
+        return normalize_mock_path(remainder.find('/').map_or("/", |index| &remainder[index..]));
+    }
+    normalize_mock_path(without_query)
+}
+
+fn mock_object_from_fields(fields: &[MockDesignField]) -> serde_json::Value {
+    mock_object_for_parent(fields, None)
+}
+
+fn mock_object_for_parent(
+    fields: &[MockDesignField],
+    parent_id: Option<&str>,
+) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    for field in fields
+        .iter()
+        .filter(|field| field.parent_id.as_deref() == parent_id)
+    {
+        if !field.name.is_empty()
+            && !matches!(
+                field.name.as_str(),
+                "__proto__" | "prototype" | "constructor"
+            )
+        {
+            object.insert(field.name.clone(), mock_field_value(field, fields));
+        }
+    }
+    serde_json::Value::Object(object)
+}
+
+fn mock_field_value(field: &MockDesignField, fields: &[MockDesignField]) -> serde_json::Value {
+    let children = fields
+        .iter()
+        .filter(|candidate| candidate.parent_id.as_deref() == Some(field.id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if field.kind == "array" {
+        return serde_json::Value::Array(
+            children
+                .first()
+                .map(|child| mock_field_value(child, fields))
+                .into_iter()
+                .collect(),
+        );
+    }
+    if field.kind == "object" || !children.is_empty() {
+        return mock_object_for_parent(fields, Some(&field.id));
+    }
+    if let Some(example) = field
+        .example
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return serde_json::from_str(example).unwrap_or_else(|_| {
+            serde_json::Value::String(example.trim_matches(['\'', '"']).into())
+        });
+    }
+    match field.kind.as_str() {
+        "boolean" => serde_json::Value::Bool(true),
+        "integer" => serde_json::Value::Number(1001.into()),
+        "number" => serde_json::json!(12.5),
+        "null" => serde_json::Value::Null,
+        _ => serde_json::Value::String("string".into()),
+    }
 }
 
 async fn get_api_definition(
@@ -1843,9 +2202,19 @@ async fn bind_request_definition(
     Json(body): Json<BindRequestDefinitionBody>,
 ) -> Result<Json<RequestDefinitionBinding>, (StatusCode, String)> {
     check_protocol_version(&headers)?;
+    let mock_operation_id = {
+        let store = state.store.lock().await;
+        store
+            .get_request_definition_binding(&id)
+            .map_err(internal_store_error)?
+            .map(|binding| binding.mock_operation_id)
+            .map(Ok)
+            .unwrap_or_else(|| store.allocate_mock_id().map_err(internal_store_error))?
+    };
     let binding = RequestDefinitionBinding {
         request_id: id,
         definition_id: body.definition_id,
+        mock_operation_id,
         operation_ref: body.operation_ref,
         updated_at: Utc::now(),
     };
@@ -1855,6 +2224,7 @@ async fn bind_request_definition(
         .await
         .bind_request_definition(&binding)
         .map_err(internal_store_error)?;
+    sync_design_mock_rules(&state, &binding).await?;
     Ok(Json(binding))
 }
 
@@ -1864,13 +2234,30 @@ async fn unbind_request_definition(
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     check_protocol_version(&headers)?;
-    state
-        .store
-        .lock()
-        .await
-        .unbind_request_definition(&id)
-        .map(|_| StatusCode::NO_CONTENT)
-        .map_err(internal_store_error)
+    let mock_operation_id = {
+        let store = state.store.lock().await;
+        let operation_id = store
+            .get_request_definition_binding(&id)
+            .map_err(internal_store_error)?
+            .map(|binding| binding.mock_operation_id)
+            .unwrap_or_else(|| id.clone());
+        store
+            .unbind_request_definition(&id)
+            .map_err(internal_store_error)?;
+        operation_id
+    };
+    remove_design_mock_rules(&state, &mock_operation_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn remove_design_mock_rules(
+    state: &AppState,
+    operation_id: &str,
+) -> Result<(), (StatusCode, String)> {
+    state.mock_rules.lock().await.retain(|_, entry| {
+        entry.rule.source != "design" || entry.rule.operation_id.as_deref() != Some(operation_id)
+    });
+    persist_mock_rules(state).await
 }
 
 async fn get_workspace_tree(
@@ -2436,48 +2823,6 @@ fn state_name(state: ExecutionState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn mock_rule(method: &str, priority: i32) -> MockRuleState {
-        MockRuleState {
-            rule: MockRule {
-                id: Uuid::new_v4(),
-                name: format!("{method}-{priority}"),
-                method: method.into(),
-                path: "/same".into(),
-                status: 200,
-                headers: HashMap::new(),
-                body: String::new(),
-                delay_ms: 0,
-                error_every: None,
-                priority,
-                ws_messages: vec![],
-                ws_echo: false,
-                ws_interval_ms: 0,
-            },
-            hits: 0,
-        }
-    }
-
-    #[test]
-    fn mock_selection_uses_priority_then_method_specificity() {
-        let mut rules = HashMap::new();
-        let wildcard = mock_rule("*", 10);
-        let wildcard_id = wildcard.rule.id;
-        rules.insert(wildcard_id, wildcard);
-        let exact = mock_rule("GET", 5);
-        rules.insert(exact.rule.id, exact);
-        assert_eq!(
-            select_mock_rule_id(&rules, "GET", "/same"),
-            Some(wildcard_id)
-        );
-        let exact_high = mock_rule("GET", 10);
-        let exact_high_id = exact_high.rule.id;
-        rules.insert(exact_high_id, exact_high);
-        assert_eq!(
-            select_mock_rule_id(&rules, "GET", "/same"),
-            Some(exact_high_id)
-        );
-    }
 
     #[test]
     fn tcp_ticket_is_read_from_websocket_subprotocol() {

@@ -45,7 +45,7 @@ export { GraphqlWorkbench, type GraphqlWorkbenchProps, type GraphqlWorkbenchRequ
 export { WebSocketWorkbench, type WebSocketWorkbenchProps, type WebSocketWorkbenchRequest } from "./WebSocketWorkbench";
 export { GrpcWorkbench, type GrpcWorkbenchProps, type GrpcWorkbenchRequest } from "./GrpcWorkbench";
 export { CodeEditor, type CodeEditorProps } from "./CodeEditor";
-export { MockWorkbench, type MockWorkbenchProps, type MockRule } from "./MockWorkbench";
+export { MockWorkbench, type MockWorkbenchProps, type MockRule, type MockRuleInput, type MockServerStatus, type InterfaceMockSeed } from "./MockWorkbench";
 export { PluginCenter, type PluginCenterProps, type PluginManifest, type InstalledPlugin } from "./PluginCenter";
 export { CodeGenerator, generateHttpCode, listHttpCodeTemplates, registerHttpCodeTemplate, type CodeLanguage, type HttpCodeTemplate } from "./CodeGenerator";
 export { ProtocolCodeGenerator, generateProtocolCode, listCodeTemplates, registerCodeTemplate, type CodeTemplate, type CodegenProtocol, type ProtocolCodegenInput } from "./ProtocolCodeGenerator";

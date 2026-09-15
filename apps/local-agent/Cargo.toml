@@ -30,11 +30,13 @@ driver-sql = { workspace = true }
 execution-engine = { workspace = true }
 futures = { workspace = true }
 local-store = { workspace = true }
+mock-server-core = { workspace = true }
 plugin-runtime = { workspace = true }
+reqwest = { workspace = true }
 secret-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["process"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
