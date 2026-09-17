@@ -336,7 +336,17 @@ export async function getWorkspaceTreeViaAgent(): Promise<WorkspaceTree> {
 
 export async function runCollectionViaAgent(collectionId: string, failFast: boolean): Promise<CollectionRunCase[]> {
   const tree = await getWorkspaceTreeViaAgent();
-  const requests = tree.requests.filter((item) => item.collectionId === collectionId);
+  const requests: typeof tree.requests = [];
+  const visited = new Set<string>();
+  function collect(id: string) {
+    if (visited.has(id)) return;
+    visited.add(id);
+    requests.push(...tree.requests.filter((item) => item.collectionId === id));
+    tree.collections.filter((item) => item.parentId === id)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+      .forEach((item) => collect(item.id));
+  }
+  collect(collectionId);
   const cases: CollectionRunCase[] = [];
   for (const item of requests) {
     try {

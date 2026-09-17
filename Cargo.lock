@@ -3693,6 +3693,7 @@ dependencies = [
 name = "mock-server-core"
 version = "0.2.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
  "uuid",

@@ -25,11 +25,22 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: gradle/actions/wrapper-validation@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e --workers=2
+      - name: Test collaboration server
+        working-directory: services/collaboration-server
+        run: ./gradlew test --no-daemon
       - name: Ensure Tauri frontendDist exists for workspace Cargo
         run: mkdir -p apps/desktop/dist && test -f apps/desktop/dist/index.html || printf '%s\n' '<!doctype html><title>ApiVoy</title>' > apps/desktop/dist/index.html
       - run: cargo test --workspace --locked

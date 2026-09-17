@@ -6,7 +6,9 @@ license.workspace = true
 description = "ApiVoy Mock Server rules and deterministic request matching"
 
 [dependencies]
+regex = "1"
 serde = { workspace = true }
+serde_json = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

@@ -1,0 +1,77 @@
+import { expect, test } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+
+test.beforeEach(async ({ page }) => {
+  await page.route("http://127.0.0.1:39217/**", (route) => route.abort());
+  await page.goto("/#workbench=mock");
+});
+
+test("builds request conditions including client IP above the response editor", async ({ page }, testInfo) => {
+  await page.getByRole("button", { name: "新建场景" }).click();
+  await expect(page.getByText("场景信息", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("用于在场景列表中识别和管理规则", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".mock-condition-row.is-placeholder")).toHaveCount(1);
+  await expect(page.getByLabel("条件 1 参数名")).toHaveAttribute("placeholder", "添加匹配条件");
+  await expect(page.getByLabel("条件 1 比较方式")).toHaveValue("equals");
+  await page.locator(".mock-condition-row.is-placeholder .mock-condition-cell").first().hover();
+  await page.getByLabel("条件 1 参数名").click();
+  await expect(page.locator(".mock-condition-row.is-placeholder")).toHaveCount(1);
+  await expect(page.locator(".mock-condition-row.is-active")).toHaveCount(1);
+  await expect(page.getByLabel("条件 1 参数名")).toHaveAttribute("placeholder", "参数名不能为空");
+  await expect(page.getByLabel("条件 1 参数名")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("条件 1 参数名")).toHaveAttribute("aria-required", "true");
+  await expect(page.getByLabel("条件 1 参数名")).not.toHaveAttribute("required", "");
+  await expect(page.getByLabel("条件 1 参数值")).toHaveAttribute("placeholder", "参数值不能为空");
+  await expect(page.getByLabel("条件 1 参数值")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("条件 1 参数值")).not.toHaveAttribute("required", "");
+  await expect(page.locator('option[value="ip"]')).toHaveCount(0);
+  const ipSettings = page.getByRole("region", { name: "IP 条件设置" });
+  await expect(page.locator(".mock-condition-builder").getByText("IP 条件", { exact: true })).toHaveCount(0);
+  await ipSettings.locator("label.ui-switch").click();
+  await expect(ipSettings.getByRole("switch", { name: "IP 条件" })).toBeChecked();
+  await expect(page.getByLabel("客户端 IP")).toHaveAttribute("aria-invalid", "true");
+  await page.getByLabel("客户端 IP").fill("127.0.0.1, 192.168.1.8");
+  await expect(page.getByLabel("客户端 IP")).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByText("响应预设", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("返回内容来源", { exact: true })).toHaveCount(0);
+  await page.getByRole("tab", { name: "设置" }).click();
+  const responseStatus = page.getByLabel("HTTP 状态码");
+  await expect(responseStatus).toHaveValue("200");
+  await expect(responseStatus).toHaveClass(/ui-input/);
+  await expect(page.getByText("可选择，也可直接输入", { exact: true })).toHaveCount(0);
+  await responseStatus.click();
+  expect(await page.locator(".http-status-options [role=option]").count()).toBeGreaterThan(50);
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("响应延迟")).toBeVisible();
+  const statusTop = await responseStatus.evaluate((element) => element.getBoundingClientRect().top);
+  const priorityTop = await page.getByLabel("优先级").evaluate((element) => element.getBoundingClientRect().top);
+  expect(priorityTop).toBeGreaterThan(statusTop);
+  const conditionTop = await page.locator(".mock-condition-builder").evaluate((element) => element.getBoundingClientRect().top);
+  const responseTop = await page.getByText("返回内容", { exact: true }).evaluate((element) => element.getBoundingClientRect().top);
+  expect(conditionTop).toBeLessThan(responseTop);
+  await mkdir("output/playwright", { recursive: true });
+  await page.screenshot({ path: `output/playwright/mock-condition-builder-${testInfo.project.name}.png`, fullPage: true });
+  await page.locator(".mock-response-editor").screenshot({ path: `output/playwright/mock-settings-${testInfo.project.name}.png` });
+});
+
+test("keeps a ghost condition row and appends another after choosing its operator", async ({ page }, testInfo) => {
+  await page.getByRole("button", { name: "新建场景" }).click();
+  const conditionBuilder = page.locator(".mock-condition-builder");
+  const ghostRow = page.locator(".mock-condition-row.is-placeholder");
+  await expect(ghostRow).toHaveCount(1);
+  await expect(ghostRow.getByLabel("条件 1 比较方式")).toHaveValue("equals");
+  await expect(ghostRow.getByLabel("条件 1 比较方式")).toHaveCSS("opacity", "0");
+  await mkdir("output/playwright", { recursive: true });
+  await conditionBuilder.screenshot({ path: `output/playwright/mock-condition-empty-${testInfo.project.name}.png` });
+  await ghostRow.getByLabel("条件 1 比较方式").hover();
+  await expect(ghostRow.getByLabel("条件 1 比较方式")).toHaveCSS("opacity", "1");
+  await expect(ghostRow.getByLabel("条件 1 参数位置")).toHaveCSS("opacity", "0");
+  await expect(ghostRow.locator(".mock-condition-cell").first()).toHaveCSS("opacity", "0");
+  await expect(ghostRow.locator(".mock-condition-cell").nth(1)).toHaveCSS("opacity", "0");
+  await conditionBuilder.screenshot({ path: `output/playwright/mock-condition-hover-${testInfo.project.name}.png` });
+  await ghostRow.getByLabel("条件 1 比较方式").selectOption("contains");
+  await expect(page.locator(".mock-condition-row.is-active")).toHaveCount(1);
+  await expect(page.locator(".mock-condition-row.is-placeholder")).toHaveCount(1);
+  await expect(page.getByLabel("条件 1 比较方式")).toHaveValue("contains");
+  await expect(page.getByLabel("条件 2 比较方式")).toHaveValue("equals");
+});

@@ -63,8 +63,9 @@ test("keeps interface context while creating a status-specific Mock scenario", a
   const tabsBefore = await page.locator(".workbench-tab").count();
   await page.getByRole("button", { name: "\u6dfb\u52a0\u81ea\u5b9a\u4e49\u573a\u666f" }).click();
   await expect(page.locator(".mock-drawer-backdrop.is-embedded")).toBeVisible();
-  await expect(page.locator(".mock-contract-controls select")).toHaveValue("100000002");
-  await expect(page.locator('.mock-response-heading input[type="number"]')).toHaveValue("404");
+  await expect(page.getByLabel("响应定义")).toHaveCount(0);
+  await page.getByRole("tab", { name: "设置" }).click();
+  await expect(page.getByLabel("HTTP 状态码")).toHaveValue("404");
   await expect(page.locator(".workbench-tab")).toHaveCount(tabsBefore);
   await expect(page.getByRole("tab", { name: "Mock" })).toHaveAttribute("aria-selected", "true");
   await mkdir("output/playwright", { recursive: true });

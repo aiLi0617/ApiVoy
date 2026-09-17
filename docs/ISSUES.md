@@ -13,21 +13,21 @@
 |----|------|------|------|----------|
 | [ISS-001](#iss-001-协作引导令牌需人工生成与配置) | 协作引导令牌需人工生成与配置 | P2 | open | 2026-08-12 |
 | [ISS-002](#iss-002-请求响应左右分栏不便查看) | 请求/响应左右分栏不便查看 | P1 | done | 2026-08-12 |
-| [ISS-003](#iss-003-窄屏下主工作区被压缩为侧栏宽度) | 窄屏下主工作区被压缩为侧栏宽度 | P0 | open | 2026-08-15 |
-| [ISS-004](#iss-004-workbench-直达链接被项目主页吞掉) | Workbench 直达链接被项目主页吞掉 | P1 | open | 2026-08-15 |
-| [ISS-005](#iss-005-workbench-会话刷新后丢失) | Workbench 会话刷新后丢失 | P1 | open | 2026-08-15 |
-| [ISS-006](#iss-006-冒烟测试未实际覆盖工作台页面) | 冒烟测试未实际覆盖工作台页面 | P1 | open | 2026-08-15 |
+| [ISS-003](#iss-003-窄屏下主工作区被压缩为侧栏宽度) | 窄屏下主工作区被压缩为侧栏宽度 | P0 | in_progress | 2026-09-17 |
+| [ISS-004](#iss-004-workbench-直达链接被项目主页吞掉) | Workbench 直达链接被项目主页吞掉 | P1 | done | 2026-08-18 |
+| [ISS-005](#iss-005-workbench-会话刷新后丢失) | Workbench 会话刷新后丢失 | P1 | done | 2026-08-18 |
+| [ISS-006](#iss-006-冒烟测试未实际覆盖工作台页面) | 冒烟测试未实际覆盖工作台页面 | P1 | done | 2026-08-18 |
 | [ISS-007](#iss-007-local-agent-失败态暴露原始错误和内部-id) | Local Agent 失败态暴露原始错误和内部 ID | P2 | open | 2026-08-15 |
 | [ISS-008](#iss-008-首页形成嵌套-main-landmark) | 首页形成嵌套 main landmark | P2 | open | 2026-08-15 |
 | [ISS-009](#iss-009-wss-执行因-rustls-cryptoprovider-未初始化而崩溃) | WSS 执行因 Rustls CryptoProvider 未初始化而崩溃 | P0 | done | 2026-08-15 |
 | [ISS-010](#iss-010-glib-安全修复被-tauri-gtk3-栈挡住无法自动升级) | glib 安全修复被 Tauri GTK3 栈挡住，无法自动升级 | P2 | open | 2026-08-18 |
-| [ISS-011](#iss-011-集合运行按最近修改倒序执行) | 集合运行按最近修改倒序执行 | P1 | open | 2026-08-18 |
-| [ISS-012](#iss-012-集合运行忽略所选环境且不递归子集合) | 集合运行忽略所选环境且不递归子集合 | P1 | open | 2026-08-18 |
+| [ISS-011](#iss-011-集合运行按最近修改倒序执行) | 集合运行按最近修改倒序执行 | P1 | done | 2026-09-17 |
+| [ISS-012](#iss-012-集合运行忽略所选环境且不递归子集合) | 集合运行忽略所选环境且不递归子集合 | P1 | in_progress | 2026-09-17 |
 | [ISS-013](#iss-013-desktopwebcli-集合运行器实现与变量语义分裂) | Desktop/Web/CLI 集合运行器实现与变量语义分裂 | P1 | open | 2026-08-18 |
 | [ISS-014](#iss-014-ci-未按路径按需触发) | CI 未按路径按需触发 | P1 | done | 2026-08-18 |
-| [ISS-015](#iss-015-release-校验缺少-e2e-与协作服务测试) | Release 校验缺少 E2E 与协作服务测试 | P2 | open | 2026-08-18 |
+| [ISS-015](#iss-015-release-校验缺少-e2e-与协作服务测试) | Release 校验缺少 E2E 与协作服务测试 | P2 | in_progress | 2026-09-17 |
 | [ISS-016](#iss-016-安装包与私有化工作流漏监听-crates) | 安装包与私有化工作流漏监听 crates | P2 | open | 2026-08-18 |
-| [ISS-017](#iss-017-协议网关默认绑定全接口) | 协议网关默认绑定 0.0.0.0 | P1 | open | 2026-08-18 |
+| [ISS-017](#iss-017-协议网关默认绑定全接口) | 协议网关默认绑定 0.0.0.0 | P1 | in_progress | 2026-09-17 |
 | [ISS-018](#iss-018-网关-ci-runner-只能执行单条请求) | 网关 CI Runner 只能执行单条请求 | P2 | open | 2026-08-18 |
 | [ISS-019](#iss-019-installer-tools-冒烟断言了错误的-health-service-名) | Installer tools 冒烟断言了错误的 health service 名 | P1 | done | 2026-08-26 |
 | [ISS-020](#iss-020-传递依赖-h2-安全公告拖红-ci-security) | 传递依赖 h2 安全公告拖红 CI security | P1 | done | 2026-08-26 |
@@ -131,7 +131,7 @@
 | 字段 | 内容 |
 |------|------|
 | **等级** | P0 |
-| **状态** | open |
+| **状态** | in_progress |
 | **模块** | `WorkbenchDeck` / 响应式布局 |
 | **记录日期** | 2026-08-15 |
 | **关联** | `packages/ui/src/styles.css:72-73,181-190` |
@@ -154,6 +154,8 @@
 - 若产品决定在该断点显示 52px 导航，则需显式恢复 `.protocol-nav` 的布局，并保证主内容落在第二列。
 - 在 375、412、768、1024px 四个宽度下，主内容占满剩余宽度，无非预期横向溢出或大面积空白。
 
+当前 CSS 已在 1024px 断点改为单列，移动端浏览器冒烟通过；仍需按上述四个宽度逐一验收后关闭。
+
 ---
 
 ## ISS-004 Workbench 直达链接被项目主页吞掉
@@ -161,7 +163,7 @@
 | 字段 | 内容 |
 |------|------|
 | **等级** | P1 |
-| **状态** | fixed |
+| **状态** | done |
 | **模块** | `WorkbenchDeck` / URL 路由 |
 | **记录日期** | 2026-08-15 |
 | **修复日期** | 2026-08-18 |
@@ -186,7 +188,7 @@
 | 字段 | 内容 |
 |------|------|
 | **等级** | P1 |
-| **状态** | fixed |
+| **状态** | done |
 | **模块** | `WorkbenchDeck` / 会话恢复 |
 | **记录日期** | 2026-08-15 |
 | **修复日期** | 2026-08-18 |
@@ -209,7 +211,7 @@
 | 字段 | 内容 |
 |------|------|
 | **等级** | P1 |
-| **状态** | fixed |
+| **状态** | done |
 | **模块** | Playwright E2E |
 | **记录日期** | 2026-08-15 |
 | **修复日期** | 2026-08-18 |
@@ -363,7 +365,7 @@ Dependabot 对 `glib` 报 `security_update_not_possible`：当前解析到 `0.18
 | 字段 | 内容 |
 |------|------|
 | **等级** | P1 |
-| **状态** | open |
+| **状态** | done |
 | **模块** | Collection Runner / local-store / Desktop / Web |
 | **记录日期** | 2026-08-18 |
 | **关联** | `crates/local-store` `list_requests`、`apps/desktop/src-tauri` `run_collection`、`apps/web/src/agentClient.ts` `runCollectionViaAgent` |
@@ -390,6 +392,7 @@ Runner 按树顺序执行：父集合 → 子集合 → 同级 `sort_order`。�
 | 日期 | 说明 |
 |------|------|
 | 2026-08-18 | 建单；状态 open；等级 P1 |
+| 2026-09-17 | 请求列表改为稳定的保存顺序；Desktop 按集合层级与同级顺序运行，Web 按相同层级收集请求；补编辑后顺序不变的回归测试。 |
 
 ---
 
@@ -398,7 +401,7 @@ Runner 按树顺序执行：父集合 → 子集合 → 同级 `sort_order`。�
 | 字段 | 内容 |
 |------|------|
 | **等级** | P1 |
-| **状态** | open |
+| **状态** | in_progress |
 | **模块** | Collection Runner / Desktop / Web / Agent |
 | **记录日期** | 2026-08-18 |
 | **关联** | `run_collection` 写死 `default-env`；`list_requests` 仅 `collection_id = 当前 id`；HTTP 工作台环境选择 |
@@ -425,6 +428,7 @@ Runner 按树顺序执行：父集合 → 子集合 → 同级 `sort_order`。�
 | 日期 | 说明 |
 |------|------|
 | 2026-08-18 | 建单；状态 open；等级 P1 |
+| 2026-09-17 | Desktop 改为按请求的 `environmentRef` 读取环境；Desktop 与 Web 均递归运行子集合。运行时环境覆盖与集合级取消仍待共享 Runner 实现。 |
 
 ---
 
@@ -510,7 +514,7 @@ CI 在任意 PR 和 `main` 推送上全量跑 TypeScript、Playwright、Cargo、
 | 字段 | 内容 |
 |------|------|
 | **等级** | P2 |
-| **状态** | open |
+| **状态** | in_progress |
 | **模块** | `.github/workflows/release.yml` |
 | **记录日期** | 2026-08-18 |
 | **关联** | ISS-014、`docs/maintainers/RELEASE.md` |
@@ -535,6 +539,7 @@ Release validate 至少加上 Playwright e2e 与 Gradle test；安装包生命�
 | 日期 | 说明 |
 |------|------|
 | 2026-08-18 | 建单；状态 open；等级 P2 |
+| 2026-09-17 | Release validate 已加入 Playwright Chromium 和协作服务 Gradle 测试；安装包生命周期仍未接入 tag 发布门槛。 |
 
 ---
 
@@ -579,7 +584,7 @@ Release validate 至少加上 Playwright e2e 与 Gradle test；安装包生命�
 | 字段 | 内容 |
 |------|------|
 | **等级** | P1 |
-| **状态** | open |
+| **状态** | in_progress |
 | **模块** | protocol-gateway / 威胁模型 |
 | **记录日期** | 2026-08-18 |
 | **关联** | `apps/protocol-gateway/src/main.rs` `APIVOY_GATEWAY_BIND`、AGENTS.md「默认不远程绑定」、`docs/THREAT_MODEL.md` |
@@ -608,6 +613,7 @@ Compose 里绑 `0.0.0.0` 合理（容器内、前面有 Nginx）。二进制默�
 | 日期 | 说明 |
 |------|------|
 | 2026-08-18 | 建单；状态 open；等级 P1 |
+| 2026-09-17 | 独立网关默认改为回环绑定；新定时任务拒绝可识别的内联凭据，旧任务含此类凭据时启动失败。自由格式正文与脚本仍需更完整的敏感信息策略。 |
 
 ---
 

@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{FromRequestParts, Path, Query, Request, State};
+use axum::extract::{ConnectInfo, FromRequestParts, Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
@@ -98,7 +98,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
     info!("ApiVoy Mock Server listening on http://{bind}");
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -151,6 +155,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
 
 async fn serve_path_mock(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path((project_key, service_key, path)): Path<(String, String, String)>,
     Query(query): Query<MockQuery>,
     request: Request,
@@ -162,12 +167,14 @@ async fn serve_path_mock(
         RouteTarget::Path(path),
         query,
         request,
+        peer.ip().to_string(),
     )
     .await
 }
 
 async fn serve_id_mock(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path((project_key, service_key, operation_id)): Path<(String, String, String)>,
     Query(query): Query<MockQuery>,
     request: Request,
@@ -179,6 +186,7 @@ async fn serve_id_mock(
         RouteTarget::Operation(operation_id),
         query,
         request,
+        peer.ip().to_string(),
     )
     .await
 }
@@ -191,6 +199,7 @@ async fn serve_mock(
     target: RouteTarget,
     query: MockQuery,
     request: Request,
+    client_ip: String,
 ) -> Response {
     state.request_count.fetch_add(1, Ordering::Relaxed);
     refresh_rules(&state).await;
@@ -236,6 +245,7 @@ async fn serve_mock(
         headers: &request_headers,
         cookies: &cookies,
         body: &body_text,
+        client_ip: &client_ip,
     };
     let rules = state.rules.read().await;
     let selected = select_mock_rule(&rules, &facts);

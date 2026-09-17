@@ -27,6 +27,10 @@ coverage/
 .nyc_output/
 playwright-report/
 test-results/
+.playwright-cli/
+.run/
+output/
+debug.png
 
 # Tauri / local
 apps/desktop/src-tauri/gen/

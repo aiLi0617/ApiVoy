@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 fn default_true() -> bool {
@@ -23,6 +25,10 @@ fn default_rule_source() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct MockMatchConditions {
     #[serde(default)]
+    pub conditions: Vec<MockCondition>,
+    #[serde(default)]
+    pub ips: Vec<String>,
+    #[serde(default)]
     pub query: HashMap<String, String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
@@ -30,6 +36,17 @@ pub struct MockMatchConditions {
     pub cookies: HashMap<String, String>,
     #[serde(default)]
     pub body_contains: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MockCondition {
+    pub source: String,
+    #[serde(default)]
+    pub name: String,
+    pub operator: String,
+    #[serde(default)]
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +102,7 @@ pub struct RequestFacts<'a> {
     pub headers: &'a HashMap<String, String>,
     pub cookies: &'a HashMap<String, String>,
     pub body: &'a str,
+    pub client_ip: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +116,151 @@ pub fn normalize_mock_path(value: &str) -> String {
     format!("/{}", value.trim().trim_start_matches('/'))
 }
 
+fn path_parameters(template: &str, actual: &str) -> Option<HashMap<String, String>> {
+    let template = normalize_mock_path(template);
+    let actual = normalize_mock_path(actual);
+    let template_parts = template.trim_matches('/').split('/').collect::<Vec<_>>();
+    let actual_parts = actual.trim_matches('/').split('/').collect::<Vec<_>>();
+    if template_parts.len() != actual_parts.len() {
+        return None;
+    }
+    let mut parameters = HashMap::new();
+    for (expected, received) in template_parts.into_iter().zip(actual_parts) {
+        let parameter = expected
+            .strip_prefix('{')
+            .and_then(|value| value.strip_suffix('}'))
+            .or_else(|| expected.strip_prefix(':'));
+        if let Some(name) = parameter {
+            parameters.insert(name.to_string(), received.to_string());
+        } else if expected != received {
+            return None;
+        }
+    }
+    Some(parameters)
+}
+
+fn json_path_value<'a>(body: &'a Value, path: &str) -> Option<&'a Value> {
+    let normalized = path
+        .trim()
+        .strip_prefix('$')
+        .unwrap_or(path.trim())
+        .trim_start_matches('.');
+    if normalized.is_empty() {
+        return Some(body);
+    }
+    let mut current = body;
+    for segment in normalized.split('.') {
+        let mut remaining = segment;
+        if let Some(field_end) = remaining.find('[') {
+            let field = &remaining[..field_end];
+            if !field.is_empty() {
+                current = current.get(field)?;
+            }
+            remaining = &remaining[field_end..];
+        } else {
+            current = current.get(remaining)?;
+            continue;
+        }
+        while let Some(index_start) = remaining.strip_prefix('[') {
+            let index_end = index_start.find(']')?;
+            let index = index_start[..index_end].parse::<usize>().ok()?;
+            current = current.get(index)?;
+            remaining = &index_start[index_end + 1..];
+        }
+        if !remaining.is_empty() {
+            return None;
+        }
+    }
+    Some(current)
+}
+
+fn value_text(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Null => "null".into(),
+        other => other.to_string(),
+    }
+}
+
+fn compare_condition(actual: Option<&str>, operator: &str, expected: Option<&str>) -> bool {
+    match operator {
+        "exists" => actual.is_some(),
+        "notExists" => actual.is_none(),
+        _ => {
+            let (Some(actual), Some(expected)) = (actual, expected) else {
+                return false;
+            };
+            match operator {
+                "equals" => actual == expected,
+                "notEquals" => actual != expected,
+                "contains" => actual.contains(expected),
+                "notContains" => !actual.contains(expected),
+                "greaterThan" | "greaterOrEqual" | "lessThan" | "lessOrEqual" => {
+                    let (Ok(actual), Ok(expected)) =
+                        (actual.parse::<f64>(), expected.parse::<f64>())
+                    else {
+                        return false;
+                    };
+                    match operator {
+                        "greaterThan" => actual > expected,
+                        "greaterOrEqual" => actual >= expected,
+                        "lessThan" => actual < expected,
+                        _ => actual <= expected,
+                    }
+                }
+                "matches" => Regex::new(expected).is_ok_and(|pattern| pattern.is_match(actual)),
+                _ => false,
+            }
+        }
+    }
+}
+
+fn condition_matches(
+    condition: &MockCondition,
+    request: &RequestFacts<'_>,
+    path_parameters: &HashMap<String, String>,
+    body_json: Option<&Value>,
+) -> bool {
+    let body_value;
+    let actual = match condition.source.as_str() {
+        "query" => request.query.get(&condition.name).map(String::as_str),
+        "path" => path_parameters.get(&condition.name).map(String::as_str),
+        "header" => request
+            .headers
+            .get(&condition.name.to_ascii_lowercase())
+            .map(String::as_str),
+        "cookie" => request.cookies.get(&condition.name).map(String::as_str),
+        "body" => {
+            body_value = if condition.name.trim().is_empty() || condition.name.trim() == "$" {
+                Some(body_json.map(value_text).unwrap_or_else(|| request.body.to_string()))
+            } else {
+                body_json
+                    .and_then(|body| json_path_value(body, &condition.name))
+                    .map(value_text)
+            };
+            body_value.as_deref()
+        }
+        "ip" => Some(request.client_ip),
+        _ => None,
+    };
+    compare_condition(actual, &condition.operator, condition.value.as_deref())
+}
+
 fn conditions_match(rule: &MockRule, request: &RequestFacts<'_>) -> bool {
+    let path_parameters = request
+        .path
+        .and_then(|path| path_parameters(&rule.path, path))
+        .unwrap_or_default();
+    let body_json = if rule
+        .match_conditions
+        .conditions
+        .iter()
+        .any(|condition| condition.source == "body")
+    {
+        serde_json::from_str::<Value>(request.body).ok()
+    } else {
+        None
+    };
     rule.match_conditions
         .query
         .iter()
@@ -119,6 +281,15 @@ fn conditions_match(rule: &MockRule, request: &RequestFacts<'_>) -> bool {
             .body_contains
             .as_ref()
             .is_none_or(|needle| request.body.contains(needle))
+        && (rule.match_conditions.ips.is_empty()
+            || rule
+                .match_conditions
+                .ips
+                .iter()
+                .any(|expected| expected == request.client_ip))
+        && rule.match_conditions.conditions.iter().all(|condition| {
+            condition_matches(condition, request, &path_parameters, body_json.as_ref())
+        })
 }
 
 pub fn select_mock_rule(
@@ -143,7 +314,7 @@ pub fn select_mock_rule(
                     .is_none_or(|response_id| rule.response_id.as_deref() == Some(response_id))
                 && request
                     .path
-                    .is_none_or(|path| rule.path == normalize_mock_path(path))
+                    .is_none_or(|path| path_parameters(&rule.path, path).is_some())
                 && conditions_match(rule, request)
         })
         .collect::<Vec<_>>();
@@ -215,6 +386,7 @@ mod tests {
             headers: query,
             cookies: query,
             body: "",
+            client_ip: "127.0.0.1",
             operation_id: None,
             response_id: None,
             scenario_id: None,
@@ -303,6 +475,7 @@ mod tests {
             headers: &headers,
             cookies: &cookies,
             body: "contains needle here",
+            client_ip: "127.0.0.1",
         };
         assert_eq!(
             select_mock_rule(&rules, &matching),
@@ -321,6 +494,74 @@ mod tests {
             ..matching
         };
         assert_eq!(select_mock_rule(&rules, &wrong_body), MatchResult::NotFound);
+    }
+
+    #[test]
+    fn structured_conditions_match_body_path_numeric_value_path_parameter_and_ip() {
+        let mut candidate = rule("users", 0);
+        candidate.path = "/users/{id}".into();
+        candidate.match_conditions.conditions = vec![
+            MockCondition {
+                source: "path".into(),
+                name: "id".into(),
+                operator: "equals".into(),
+                value: Some("42".into()),
+            },
+            MockCondition {
+                source: "body".into(),
+                name: "$.profile.level".into(),
+                operator: "greaterOrEqual".into(),
+                value: Some("3".into()),
+            },
+            MockCondition {
+                source: "ip".into(),
+                name: "clientIp".into(),
+                operator: "equals".into(),
+                value: Some("192.168.1.8".into()),
+            },
+        ];
+        let id = candidate.id;
+        let rules = HashMap::from([(id, candidate)]);
+        let empty = HashMap::new();
+        let request = RequestFacts {
+            project_key: "project",
+            service_key: "service",
+            method: "GET",
+            path: Some("/users/42"),
+            operation_id: None,
+            response_id: None,
+            scenario_id: None,
+            query: &empty,
+            headers: &empty,
+            cookies: &empty,
+            body: r#"{"profile":{"level":4}}"#,
+            client_ip: "192.168.1.8",
+        };
+        assert_eq!(select_mock_rule(&rules, &request), MatchResult::Matched(id));
+        let wrong_ip = RequestFacts {
+            client_ip: "192.168.1.9",
+            ..request
+        };
+        assert_eq!(select_mock_rule(&rules, &wrong_ip), MatchResult::NotFound);
+    }
+
+    #[test]
+    fn ip_allowlist_matches_any_configured_address() {
+        let mut candidate = rule("ip-list", 0);
+        candidate.match_conditions.ips = vec!["192.168.1.8".into(), "10.0.0.5".into()];
+        let id = candidate.id;
+        let rules = HashMap::from([(id, candidate)]);
+        let empty = HashMap::new();
+        let matching = RequestFacts {
+            client_ip: "10.0.0.5",
+            ..facts(&empty)
+        };
+        assert_eq!(select_mock_rule(&rules, &matching), MatchResult::Matched(id));
+        let rejected = RequestFacts {
+            client_ip: "172.16.0.2",
+            ..matching
+        };
+        assert_eq!(select_mock_rule(&rules, &rejected), MatchResult::NotFound);
     }
 
     #[test]

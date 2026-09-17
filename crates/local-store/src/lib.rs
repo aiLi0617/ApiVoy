@@ -1616,14 +1616,14 @@ impl LocalStore {
             self.conn.prepare(
                 r#"
                 SELECT id, project_id, collection_id, name, protocol_id, target, envelope_json, updated_at, body_blob_id
-                FROM requests WHERE collection_id = ?1 ORDER BY updated_at DESC
+                FROM requests WHERE collection_id = ?1 ORDER BY rowid ASC
                 "#,
             )?
         } else {
             self.conn.prepare(
                 r#"
                 SELECT id, project_id, collection_id, name, protocol_id, target, envelope_json, updated_at, body_blob_id
-                FROM requests ORDER BY updated_at DESC
+                FROM requests ORDER BY rowid ASC
                 "#,
             )?
         };
@@ -1676,6 +1676,32 @@ impl LocalStore {
             });
         }
         Ok(out)
+    }
+
+    /// Collection order is stable across request edits and includes child collections.
+    pub fn list_collection_requests_for_run(&self, collection_id: &str) -> StoreResult<Vec<StoredRequest>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            WITH RECURSIVE subtree(id, path) AS (
+              SELECT id, printf('%020d:%s', sort_order, id)
+              FROM collections WHERE id = ?1
+              UNION ALL
+              SELECT child.id, subtree.path || '/' || printf('%020d:%s', child.sort_order, child.id)
+              FROM collections AS child JOIN subtree ON child.parent_id = subtree.id
+            )
+            SELECT requests.id
+            FROM subtree JOIN requests ON requests.collection_id = subtree.id
+            ORDER BY subtree.path, requests.rowid
+            "#,
+        )?;
+        let ids = statement.query_map(params![collection_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.into_iter()
+            .map(|id| {
+                let request_id = RequestId(Uuid::parse_str(&id).map_err(|error| StoreError::InvalidId(error.to_string()))?);
+                self.get_request(&request_id)?.ok_or(StoreError::NotFound(id))
+            })
+            .collect()
     }
 
     pub fn record_execution(&self, record: &ExecutionRecord) -> StoreResult<()> {
@@ -2654,5 +2680,23 @@ mod tests {
             .delete_collection(&child.id)
             .expect("delete collection");
         store.delete_project(&project.id).expect("delete project");
+    }
+
+    #[test]
+    fn collection_run_order_includes_children_and_ignores_edits() {
+        let store = LocalStore::open_in_memory().unwrap();
+        let project = store.create_project("default-workspace", "Runner").unwrap();
+        let root = store.create_collection(&project.id, None, "Root").unwrap();
+        let child = store.create_collection(&project.id, Some(&root.id), "Child").unwrap();
+        let first = RequestEnvelope::http_get("first", "https://example.com/first");
+        let second = RequestEnvelope::http_get("second", "https://example.com/second");
+        let nested = RequestEnvelope::http_get("nested", "https://example.com/nested");
+        store.save_request(&first, &project.id, &root.id).unwrap();
+        store.save_request(&second, &project.id, &root.id).unwrap();
+        store.save_request(&nested, &project.id, &child.id).unwrap();
+        store.save_request(&first, &project.id, &root.id).unwrap();
+        let names = store.list_collection_requests_for_run(&root.id).unwrap()
+            .into_iter().map(|request| request.name).collect::<Vec<_>>();
+        assert_eq!(names, ["first", "second", "nested"]);
     }
 }

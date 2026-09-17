@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState, LoadingState, useFeedback } from "./Feedback";
-import { Button, Checkbox, Field, IconButton, InlineAlert, SegmentedControl, Select, StatusBadge, Textarea, TextInput } from "./Components";
+import { Button, Checkbox, Field, IconButton, InlineAlert, Select, StatusBadge, Switch, Textarea, TextInput } from "./Components";
 import { ModalFrame } from "./ModalFrame";
+import { HttpStatusCodeInput } from "./HttpStatusCodeInput";
 import { buildMockResponseBody, inferMockScenario, selectMockResponse, type MockDraftSeed, type MockResponseSource, type MockScenarioTemplate, type MockSeedResponse } from "./mockGeneration";
 
 export interface MockRule {
@@ -19,6 +20,8 @@ export interface MockRule {
   headers: Record<string, string>;
   body: string;
   matchConditions: {
+    conditions?: MockCondition[];
+    ips?: string[];
     query: Record<string, string>;
     headers: Record<string, string>;
     cookies: Record<string, string>;
@@ -31,6 +34,11 @@ export interface MockRule {
   wsEcho: boolean;
   wsIntervalMs: number;
 }
+
+export type MockConditionSource = "query" | "path" | "header" | "cookie" | "body" | "ip";
+export type MockConditionOperator = "equals" | "notEquals" | "contains" | "notContains" | "greaterThan" | "greaterOrEqual" | "lessThan" | "lessOrEqual" | "exists" | "notExists" | "matches";
+export interface MockCondition { source: MockConditionSource; name: string; operator: MockConditionOperator; value?: string | null }
+type MockConditionDraft = MockCondition & { key: string; active: boolean };
 
 export interface MockServerStatus {
   running: boolean;
@@ -64,37 +72,128 @@ interface MockRuleDraft {
   path: string;
   status: number;
   priority: number;
-  headers: string;
+  headers: MockHeaderDraft[];
   body: string;
   delayMs: number;
   errorEvery: number;
   wsMessages: string;
   wsEcho: boolean;
   wsIntervalMs: number;
-  matchQuery: string;
-  matchHeaders: string;
-  matchCookies: string;
-  bodyContains: string;
+  conditions: MockConditionDraft[];
+  ipEnabled: boolean;
+  ipAddresses: string;
+}
+
+interface MockHeaderDraft { id: string; name: string; value: string; active: boolean }
+
+const MOCK_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const MOCK_HEADER_VALUE_CONTROL_PATTERN = /[\u0000-\u001F\u007F]/;
+
+function mockHeaderNameError(value: string): string {
+  const name = value.trim();
+  if (!name) return "参数名不能为空";
+  return MOCK_HEADER_NAME_PATTERN.test(name) ? "" : "参数名包含非法字符";
+}
+
+function mockHeaderValueError(value: string): string {
+  if (!value.trim()) return "参数值不能为空";
+  return MOCK_HEADER_VALUE_CONTROL_PATTERN.test(value) ? "参数值不能包含控制字符" : "";
+}
+
+function createMockHeader(name = "", value = "", active = false): MockHeaderDraft {
+  return { id: crypto.randomUUID(), name, value, active };
+}
+
+function mockHeaderRowsFromRecord(headers: Record<string, string>): MockHeaderDraft[] {
+  return [...Object.entries(headers).map(([name, value]) => createMockHeader(name, value, true)), createMockHeader()];
+}
+
+function normalizeMockHeaders(rows: MockHeaderDraft[]): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const names = new Set<string>();
+  for (const row of rows) {
+    if (!row.active) continue;
+    const name = row.name.trim();
+    if (!name) throw new Error("请填写响应头参数名");
+    if (!MOCK_HEADER_NAME_PATTERN.test(name)) throw new Error(`响应头参数名格式不正确：${name}`);
+    const normalizedName = name.toLocaleLowerCase();
+    if (names.has(normalizedName)) throw new Error(`响应头参数名不能重复：${name}`);
+    if (!row.value.trim()) throw new Error(`请填写响应头参数值：${name}`);
+    if (MOCK_HEADER_VALUE_CONTROL_PATTERN.test(row.value)) throw new Error(`响应头参数值包含无效控制字符：${name}`);
+    names.add(normalizedName);
+    headers[name] = row.value;
+  }
+  return headers;
 }
 
 const NEW_RULE: MockRuleDraft = {
-  name: "Example mock",
+  name: "",
   method: "GET",
   path: "/example",
   status: 200,
   priority: 0,
-  headers: '{\n  "Content-Type": "application/json"\n}',
+  headers: [],
   body: '{"ok":true}',
   delayMs: 0,
   errorEvery: 0,
   wsMessages: "connected",
   wsEcho: true,
   wsIntervalMs: 250,
-  matchQuery: "{}",
-  matchHeaders: "{}",
-  matchCookies: "{}",
-  bodyContains: "",
+  conditions: [],
+  ipEnabled: false,
+  ipAddresses: "",
 };
+
+const CONDITION_SOURCES: Array<{ value: MockConditionSource; label: string }> = [
+  { value: "query", label: "Query" },
+  { value: "path", label: "Path" },
+  { value: "header", label: "Header" },
+  { value: "cookie", label: "Cookie" },
+  { value: "body", label: "Body" },
+];
+const CONDITION_OPERATORS: Array<{ value: MockConditionOperator; label: string }> = [
+  { value: "equals", label: "等于" },
+  { value: "notEquals", label: "不等于" },
+  { value: "contains", label: "包含" },
+  { value: "notContains", label: "不包含" },
+  { value: "greaterThan", label: "大于" },
+  { value: "greaterOrEqual", label: "大于等于" },
+  { value: "lessThan", label: "小于" },
+  { value: "lessOrEqual", label: "小于等于" },
+  { value: "exists", label: "存在" },
+  { value: "notExists", label: "不存在" },
+  { value: "matches", label: "正则匹配" },
+];
+function conditionKey() { return crypto.randomUUID(); }
+function emptyCondition(): MockConditionDraft { return { key: conditionKey(), active: false, source: "query", name: "", operator: "equals", value: "" }; }
+function newRuleDraft(): MockRuleDraft { return { ...NEW_RULE, headers: mockHeaderRowsFromRecord({}), conditions: [emptyCondition()] }; }
+function legacyConditions(matchConditions: MockRule["matchConditions"]): MockCondition[] {
+  if (matchConditions.conditions?.length) return matchConditions.conditions;
+  return [
+    ...Object.entries(matchConditions.query ?? {}).map(([name, value]) => ({ source: "query" as const, name, operator: "equals" as const, value })),
+    ...Object.entries(matchConditions.headers ?? {}).map(([name, value]) => ({ source: "header" as const, name, operator: "equals" as const, value })),
+    ...Object.entries(matchConditions.cookies ?? {}).map(([name, value]) => ({ source: "cookie" as const, name, operator: "equals" as const, value })),
+    ...(matchConditions.bodyContains ? [{ source: "body" as const, name: "$", operator: "contains" as const, value: matchConditions.bodyContains }] : []),
+  ];
+}
+
+export function normalizeMockConditions(conditions: Array<MockCondition & { key?: string; active?: boolean }>): MockCondition[] {
+  return conditions.filter((condition) => condition.active !== false).map(({ key: _key, active: _active, ...condition }) => {
+    const normalized = {
+      ...condition,
+      name: condition.source === "ip" ? "clientIp" : condition.name.trim(),
+      value: condition.operator === "exists" || condition.operator === "notExists" ? null : condition.value?.trim() ?? "",
+    };
+    if ((normalized.source !== "ip" && !normalized.name) || ((normalized.operator !== "exists" && normalized.operator !== "notExists") && !normalized.value)) {
+      throw new Error("请完整填写每条匹配条件的参数名和参数值");
+    }
+    return normalized;
+  });
+}
+
+export function normalizeIpAddresses(value: string): string[] {
+  return [...new Set(value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean))];
+}
 
 export function parseMockHeaders(value: string): Record<string, string> {
   const parsed: unknown = JSON.parse(value || "{}");
@@ -107,21 +206,23 @@ export function parseMockHeaders(value: string): Record<string, string> {
   return headers;
 }
 
-function parseMatchRecord(value: string, label: string): Record<string, string> {
-  try { return parseMockHeaders(value); }
-  catch { throw new Error(`${label}必须是键和值均为字符串的 JSON 对象`); }
-}
-
 function draftFromRule(rule: MockRule): MockRuleDraft {
+  const conditions = legacyConditions(rule.matchConditions);
+  const ipAddresses = [...new Set([
+    ...(rule.matchConditions.ips ?? []),
+    ...conditions.filter((condition) => condition.source === "ip").map((condition) => condition.value?.trim() ?? "").filter(Boolean),
+  ])];
   return {
     ...rule,
-    headers: JSON.stringify(rule.headers, null, 2),
+    headers: mockHeaderRowsFromRecord(rule.headers),
     errorEvery: rule.errorEvery ?? 0,
     wsMessages: rule.wsMessages.join("\n"),
-    matchQuery: JSON.stringify(rule.matchConditions.query, null, 2),
-    matchHeaders: JSON.stringify(rule.matchConditions.headers, null, 2),
-    matchCookies: JSON.stringify(rule.matchConditions.cookies, null, 2),
-    bodyContains: rule.matchConditions.bodyContains ?? "",
+    conditions: [
+      ...conditions.filter((condition) => condition.source !== "ip").map((condition) => ({ ...condition, key: conditionKey(), active: true })),
+      emptyCondition(),
+    ],
+    ipEnabled: ipAddresses.length > 0,
+    ipAddresses: ipAddresses.join(", "),
   };
 }
 
@@ -177,9 +278,8 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
   const [testingId, setTestingId] = useState<string | null>(null);
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ruleId: string; status: number; matchedRuleId?: string; body: string } | null>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [responseTab, setResponseTab] = useState<"body" | "headers">("body");
+  const [responseTab, setResponseTab] = useState<"body" | "headers" | "settings">("body");
   const nameInputRef = useRef<HTMLInputElement>(null);
   const editingRule = useMemo(() => rules.find((rule) => rule.id === editingId), [editingId, rules]);
   const visibleRules = useMemo(() => rules.filter((rule) => {
@@ -209,7 +309,7 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
         projectKey: rule.projectKey ?? projectKey,
         serviceKey: rule.serviceKey ?? serviceKey,
         enabled: rule.enabled !== false,
-        matchConditions: rule.matchConditions ?? { query: {}, headers: {}, cookies: {}, bodyContains: null },
+        matchConditions: rule.matchConditions ?? { conditions: [], query: {}, headers: {}, cookies: {}, bodyContains: null },
       })));
     }
     catch (error) { setLoadError(error instanceof Error ? error.message : String(error)); }
@@ -264,6 +364,50 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
     setFormError("");
   }
 
+  function updateCondition(key: string, patch: Partial<MockCondition>) {
+    setDraft((current) => ({
+      ...current,
+      conditions: current.conditions.reduce<MockConditionDraft[]>((next, condition) => {
+        if (condition.key !== key) return [...next, condition];
+        const activating = !condition.active;
+        next.push({ ...condition, ...patch, active: true });
+        if (activating) next.push(emptyCondition());
+        return next;
+      }, []),
+    }));
+    setFormError("");
+  }
+
+  function removeCondition(key: string) {
+    setDraft((current) => {
+      const conditions = current.conditions.filter((condition) => condition.key !== key);
+      return { ...current, conditions: conditions.some((condition) => !condition.active) ? conditions : [...conditions, emptyCondition()] };
+    });
+    setFormError("");
+  }
+
+  function updateHeader(id: string, patch: Partial<Pick<MockHeaderDraft, "name" | "value">>) {
+    setDraft((current) => ({
+      ...current,
+      headers: current.headers.reduce<MockHeaderDraft[]>((next, header) => {
+        if (header.id !== id) return [...next, header];
+        const activating = !header.active;
+        next.push({ ...header, ...patch, active: true });
+        if (activating) next.push(createMockHeader());
+        return next;
+      }, []),
+    }));
+    setFormError("");
+  }
+
+  function removeHeader(id: string) {
+    setDraft((current) => {
+      const headers = current.headers.filter((header) => header.id !== id);
+      return { ...current, headers: headers.some((header) => !header.active) ? headers : [...headers, createMockHeader()] };
+    });
+    setFormError("");
+  }
+
   function startCreate() {
     if (contextSeed) {
       const inferred = inferMockScenario(contextSeed);
@@ -271,18 +415,17 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
       return;
     }
     setEditingId(null);
-    setDraft(NEW_RULE);
+    setDraft(newRuleDraft());
     setSeed(null);
     setResponseSource("smart");
     setScenarioTemplate("success");
     setSelectedResponseId("");
-    setAdvancedOpen(false);
     setResponseTab("body");
     setEditorOpen(true);
     setFormError("");
     window.requestAnimationFrame(() => { nameInputRef.current?.focus(); nameInputRef.current?.select(); });
   }
-  function startEdit(rule: MockRule) { setEditingId(rule.id); setDraft(draftFromRule(rule)); setSeed(null); setResponseSource("custom"); setSelectedResponseId(rule.responseId ?? ""); setAdvancedOpen(Boolean(rule.priority || rule.delayMs || rule.errorEvery)); setResponseTab("body"); setEditorOpen(true); setFormError(""); }
+  function startEdit(rule: MockRule) { setEditingId(rule.id); setDraft(draftFromRule(rule)); setSeed(null); setResponseSource("custom"); setSelectedResponseId(rule.responseId ?? ""); setResponseTab("body"); setEditorOpen(true); setFormError(""); }
 
   function closeEditor() {
     setEditorOpen(false);
@@ -298,17 +441,14 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
     setResponseSource(source);
     setScenarioTemplate(template);
     setSelectedResponseId(response?.id ?? "");
-    setAdvancedOpen(false);
     setResponseTab("body");
     setEditorOpen(true);
     setDraft({
-      ...NEW_RULE,
-      name: `${nextSeed.interfaceName} · ${template === "success" ? "成功" : template === "empty" ? "空数据" : "异常"}`,
+      ...newRuleDraft(),
       method: nextSeed.method || "GET",
       path: nextSeed.path || "/",
       status: responseStatus(response, template),
       priority: contextSeed ? highestVisiblePriority + 1 : NEW_RULE.priority,
-      headers: JSON.stringify({ "Content-Type": response?.contentType || "application/json" }, null, 2),
       body: buildMockResponseBody(response, source, template),
     });
     setFormError("");
@@ -326,29 +466,17 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
     return () => window.removeEventListener("apivoy-create-mock-rule", createRule);
   }, [variant]);
 
-  function changeTemplate(template: MockScenarioTemplate) {
-    if (!seed) return setScenarioTemplate(template);
-    applySeed(seed, template, responseSource === "custom" ? "smart" : responseSource);
-  }
-
-  function changeResponseSource(source: MockResponseSource) {
-    setResponseSource(source);
-    if (!seed || source === "custom") return;
-    const response = seed.responses.find((item) => item.id === selectedResponseId) ?? selectMockResponse(seed.responses, scenarioTemplate);
-    setDraft((current) => ({ ...current, body: buildMockResponseBody(response, source, scenarioTemplate) }));
-  }
-
-  function changeSelectedResponse(responseId: string) {
-    if (!seed) return;
-    const response = seed.responses.find((item) => item.id === responseId);
-    if (!response) return;
-    setSelectedResponseId(responseId);
+  function changeResponseStatus(statusCode: string) {
+    const response = seed?.responses.find((item) => item.statusCode === statusCode);
+    setSelectedResponseId(response?.id ?? "");
     setDraft((current) => ({
       ...current,
-      status: responseStatus(response, scenarioTemplate),
-      headers: JSON.stringify({ "Content-Type": response.contentType || "application/json" }, null, 2),
-      body: responseSource === "custom" ? current.body : buildMockResponseBody(response, responseSource, scenarioTemplate),
+      status: Number(statusCode) || 0,
+      ...(response ? {
+        body: responseSource === "custom" ? current.body : buildMockResponseBody(response, responseSource, scenarioTemplate),
+      } : {}),
     }));
+    setFormError("");
   }
 
   async function testRule(rule: MockRule) {
@@ -387,16 +515,15 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
     if (!path) return setFormError("请输入匹配路径");
     if (draft.status < 100 || draft.status > 999) return setFormError("状态码必须在 100 到 999 之间");
     let headers: Record<string, string>;
-    let matchQuery: Record<string, string>;
-    let matchHeaders: Record<string, string>;
-    let matchCookies: Record<string, string>;
     try {
-      headers = parseMockHeaders(draft.headers);
-      matchQuery = parseMatchRecord(draft.matchQuery, "查询参数");
-      matchHeaders = parseMatchRecord(draft.matchHeaders, "请求头");
-      matchCookies = parseMatchRecord(draft.matchCookies, "Cookie");
+      headers = normalizeMockHeaders(draft.headers);
     }
     catch (error) { return setFormError(error instanceof Error ? error.message : String(error)); }
+    let conditions: MockCondition[];
+    try { conditions = normalizeMockConditions(draft.conditions); }
+    catch (error) { return setFormError(error instanceof Error ? error.message : String(error)); }
+    const ips = draft.ipEnabled ? normalizeIpAddresses(draft.ipAddresses) : [];
+    if (draft.ipEnabled && !ips.length) return setFormError("请输入至少一个客户端 IP");
     const rule: MockRuleInput = {
       projectKey: seed?.projectKey ?? contextSeed?.projectKey ?? projectKey,
       serviceKey: seed?.serviceKey ?? contextSeed?.serviceKey ?? serviceKey,
@@ -410,7 +537,7 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
       priority: draft.priority,
       headers,
       body: draft.body,
-      matchConditions: { query: matchQuery, headers: matchHeaders, cookies: matchCookies, bodyContains: draft.bodyContains.trim() || null },
+      matchConditions: { conditions, ips, query: {}, headers: {}, cookies: {}, bodyContains: null },
       delayMs: Math.max(0, draft.delayMs),
       errorEvery: draft.errorEvery > 0 ? draft.errorEvery : null,
       wsMessages: draft.method === "WS" ? draft.wsMessages.split("\n").filter(Boolean) : [],
@@ -489,39 +616,47 @@ export function MockWorkbench({ onList, onCreate, onUpdate, onDelete, onStatus, 
     <ModalFrame open={editorOpen} onClose={closeEditor} className="mock-editor" overlayClassName={`mock-drawer-backdrop${variant === "interface" ? " is-embedded" : ""}`} ariaLabelledBy="mock-editor-title" initialFocusRef={nameInputRef} as="form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <header className="mock-editor-header"><div><IconButton label="关闭场景编辑器" icon="close" onClick={closeEditor} /><div><h2 id="mock-editor-title">{editingRule ? "编辑自定义 Mock 场景" : "新建自定义 Mock 场景"}</h2><p>{editingRule ? editingRule.name : "配置请求条件与响应覆盖"}</p></div></div><div><Button size="compact" variant="ghost" onClick={closeEditor}>取消</Button><Button type="submit" size="compact" variant="primary" icon={editingRule ? "edit" : "plus"} loading={saving}>{editingRule ? "保存" : "创建"}</Button></div></header>
       <div className="mock-editor-scroll">
-        {seed ? <section className="mock-contract-source" aria-label="契约生成设置">
-          <header><div><span>来源</span><strong>{seed.interfaceName}</strong><small>{seed.responses.length ? `已读取 ${seed.responses.length} 个响应定义` : "接口尚未定义响应字段，将使用基础模板"}</small></div><StatusBadge tone="info">接口契约</StatusBadge></header>
-          <div className="mock-contract-controls">
-            <Field label="场景模板"><SegmentedControl value={scenarioTemplate} ariaLabel="Mock 场景模板" items={[{ value: "success", label: "成功" }, { value: "empty", label: "空数据" }, { value: "error", label: "异常" }]} onValueChange={changeTemplate} /></Field>
-            <Field label="返回内容来源"><SegmentedControl value={responseSource} ariaLabel="Mock 返回内容来源" items={[{ value: "smart", label: "智能生成" }, { value: "example", label: "响应示例" }, { value: "custom", label: "自定义" }]} onValueChange={changeResponseSource} /></Field>
-            {seed.responses.length ? <Field label="响应定义"><Select value={selectedResponseId} onChange={(event) => changeSelectedResponse(event.target.value)}>{seed.responses.map((response) => <option key={response.id} value={response.id}>{response.statusCode} · {response.name}</option>)}</Select></Field> : null}
+        <section className="mock-scene-info">
+          <div className={`mock-fields mock-fields-primary${variant === "interface" ? " is-interface" : ""}`}>
+            <Field label="规则名称" required><TextInput ref={nameInputRef} aria-label="规则名称" value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></Field>
+            {variant === "interface" && contextSeed ? <Field label="继承接口"><div className="mock-inherited-route" role="group" aria-label="继承接口"><strong><span className={`mock-method method-${draft.method.toLowerCase()}`}>{draft.method}</span><code>{draft.path}</code></strong><small>方法与路径由接口设计维护</small></div></Field> : <><Field label="方法" required><Select value={draft.method} onChange={(event) => updateDraft("method", event.target.value)}><option>*</option><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>WS</option></Select></Field><Field label="匹配路径" required hint="相对于 Mock 服务入口"><TextInput className="mock-code-input" value={draft.path} onChange={(event) => updateDraft("path", event.target.value)} placeholder="/path" /></Field></>}
           </div>
-        </section> : null}
-        <div className="mock-editor-group-heading"><div><strong>匹配条件</strong><span>请求满足方法和路径时命中此规则</span></div></div>
-        <div className="mock-fields mock-fields-primary">
-          <Field label="规则名称" required><TextInput ref={nameInputRef} value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} /></Field>
-          {variant === "interface" && contextSeed ? <div className="mock-inherited-route"><span>继承接口</span><strong><span className={`mock-method method-${draft.method.toLowerCase()}`}>{draft.method}</span><code>{draft.path}</code></strong><small>方法与路径由接口设计维护</small></div> : <><Field label="方法" required><Select value={draft.method} onChange={(event) => updateDraft("method", event.target.value)}><option>*</option><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>WS</option></Select></Field><Field label="匹配路径" required hint="相对于 Mock 服务入口"><TextInput className="mock-code-input" value={draft.path} onChange={(event) => updateDraft("path", event.target.value)} placeholder="/path" /></Field></>}
-        </div>
-        <div className="mock-editor-group-heading mock-response-heading"><div><strong>{draft.method === "WS" ? "消息行为" : "返回内容"}</strong><span>{draft.method === "WS" ? "配置连接后的消息与回显" : "预览并调整客户端最终收到的响应"}</span></div>{draft.method !== "WS" ? <Field label="HTTP 状态码"><TextInput type="number" min={100} max={999} value={draft.status} onChange={(event) => updateDraft("status", +event.target.value)} /></Field> : null}</div>
+        </section>
+        <div className="mock-editor-group-heading mock-condition-heading"><div><strong>请求匹配条件</strong><span>请求需要满足以下全部条件（AND）；空白时作为默认场景</span></div></div>
+        <section className="mock-condition-builder" aria-label="请求匹配条件">
+          <div className="mock-condition-columns" aria-hidden="true"><span>参数位置</span><span>参数名</span><span>比较</span><span>参数值</span><span /></div>
+          {draft.conditions.map((condition, index) => {
+              const valueOptional = condition.operator === "exists" || condition.operator === "notExists";
+              const missingName = condition.active && condition.source !== "ip" && !condition.name.trim();
+              const missingValue = condition.active && !valueOptional && !condition.value?.trim();
+              const placeholder = condition.source === "body" ? "$.user.id" : condition.source === "path" ? "id" : condition.source === "header" ? "X-Mode" : condition.source === "cookie" ? "session" : "page";
+              const activate = () => { if (!condition.active) updateCondition(condition.key, {}); };
+              return <div className={`mock-condition-row ${condition.active ? "is-active" : "is-placeholder"}`} key={condition.key}>
+                <Select className="mock-condition-source" aria-label={`条件 ${index + 1} 参数位置`} value={condition.source} onFocus={activate} onChange={(event) => updateCondition(condition.key, { source: event.target.value as MockConditionSource })}>{CONDITION_SOURCES.map((source) => <option value={source.value} key={source.value}>{source.label}</option>)}</Select>
+                <div className="mock-condition-cell"><TextInput className="mock-condition-name" aria-label={`条件 ${index + 1} 参数名`} aria-required={condition.active} aria-invalid={missingName} aria-describedby={missingName ? `${condition.key}-name-error` : undefined} value={condition.name} placeholder={condition.active ? (missingName ? "参数名不能为空" : placeholder) : "添加匹配条件"} onFocus={activate} onChange={(event) => updateCondition(condition.key, { name: event.target.value })} />{missingName ? <span className="mock-condition-error-sr" id={`${condition.key}-name-error`}>参数名不能为空</span> : null}</div>
+                <Select className="mock-condition-operator" aria-label={`条件 ${index + 1} 比较方式`} value={condition.operator} onFocus={activate} onChange={(event) => updateCondition(condition.key, { operator: event.target.value as MockConditionOperator })}>{CONDITION_OPERATORS.map((operator) => <option value={operator.value} key={operator.value}>{operator.label}</option>)}</Select>
+                {condition.active && valueOptional ? <span className="mock-condition-no-value">无需参数值</span> : <div className="mock-condition-cell"><TextInput className="mock-condition-value" aria-label={`条件 ${index + 1} 参数值`} aria-required={condition.active} aria-invalid={missingValue} aria-describedby={missingValue ? `${condition.key}-value-error` : undefined} value={condition.value ?? ""} placeholder={condition.active ? (missingValue ? "参数值不能为空" : "参数值") : ""} onFocus={activate} onChange={(event) => updateCondition(condition.key, { value: event.target.value })} />{missingValue ? <span className="mock-condition-error-sr" id={`${condition.key}-value-error`}>参数值不能为空</span> : null}</div>}
+                {condition.active ? <IconButton label={`删除条件 ${index + 1}`} icon="trash" tone="danger" onClick={() => removeCondition(condition.key)} /> : <span aria-hidden="true" />}
+              </div>;
+            })}
+        </section>
+        <section className="mock-ip-settings" aria-label="IP 条件设置">
+          <Switch label="IP 条件" checked={draft.ipEnabled} onChange={(event) => updateDraft("ipEnabled", event.target.checked)} />
+          {draft.ipEnabled ? <TextInput aria-label="客户端 IP" aria-invalid={!normalizeIpAddresses(draft.ipAddresses).length} value={draft.ipAddresses} placeholder={draft.ipAddresses.trim() ? "多个 IP 使用逗号分隔" : "输入 IP，多个 IP 使用逗号分隔"} onChange={(event) => updateDraft("ipAddresses", event.target.value)} /> : null}
+        </section>
+        <div className="mock-editor-group-heading mock-response-heading"><div><strong>{draft.method === "WS" ? "消息行为" : "返回内容"}</strong><span>{draft.method === "WS" ? "配置连接后的消息与回显" : "预览并调整客户端最终收到的响应"}</span></div></div>
         {draft.method === "WS" ? <div className="mock-payload-grid">
           <Field label="连接后消息" hint="每行作为一帧依次发送"><Textarea className="mock-body" value={draft.wsMessages} onChange={(event) => updateDraft("wsMessages", event.target.value)} /></Field>
-          <div className="mock-ws-settings"><Checkbox label="回显客户端帧" description="原样返回 Text 与 Binary 帧" checked={draft.wsEcho} onChange={(event) => updateDraft("wsEcho", event.target.checked)} /><Field label="消息间隔" hint="毫秒"><TextInput type="number" min={0} value={draft.wsIntervalMs} onChange={(event) => updateDraft("wsIntervalMs", +event.target.value)} /></Field><code>{requestUrl(serviceRoot, { method: "WS", path: draft.path.startsWith("/") ? draft.path : `/${draft.path}`, projectKey: contextProjectKey, serviceKey: contextServiceKey, operationId: contextSeed?.operationId })}</code></div>
+          <div className="mock-ws-settings"><Checkbox label="回显客户端帧" description="原样返回 Text 与 Binary 帧" checked={draft.wsEcho} onChange={(event) => updateDraft("wsEcho", event.target.checked)} /><Field label="消息间隔" hint="毫秒"><TextInput type="number" min={0} value={draft.wsIntervalMs} onChange={(event) => updateDraft("wsIntervalMs", +event.target.value)} /></Field><div className="mock-fields mock-fields-behavior"><Field label="优先级" hint="数值越大越优先"><TextInput type="number" value={draft.priority} onChange={(event) => updateDraft("priority", +event.target.value)} /></Field><Field label="响应延迟" hint="毫秒"><TextInput type="number" min={0} value={draft.delayMs} onChange={(event) => updateDraft("delayMs", +event.target.value)} /></Field><Field label="周期故障" hint="0 表示关闭"><TextInput type="number" min={0} value={draft.errorEvery} onChange={(event) => updateDraft("errorEvery", +event.target.value)} /></Field></div><code>{requestUrl(serviceRoot, { method: "WS", path: draft.path.startsWith("/") ? draft.path : `/${draft.path}`, projectKey: contextProjectKey, serviceKey: contextServiceKey, operationId: contextSeed?.operationId })}</code></div>
         </div> : <div className="mock-response-editor">
-          <div className="mock-response-tabs" role="tablist" aria-label="返回数据"><button type="button" role="tab" aria-selected={responseTab === "body"} className={responseTab === "body" ? "is-active" : ""} onClick={() => setResponseTab("body")}>Body</button><button type="button" role="tab" aria-selected={responseTab === "headers"} className={responseTab === "headers" ? "is-active" : ""} onClick={() => setResponseTab("headers")}>Headers</button></div>
-          {responseTab === "body" ? <Field label="响应正文" hint={seed && responseSource !== "custom" ? "编辑内容后自动切换为自定义" : undefined}><Textarea className="mock-body" value={draft.body} onChange={(event) => { updateDraft("body", event.target.value); setResponseSource("custom"); }} spellCheck={false} /></Field> : <Field label="响应头" hint="JSON 对象，名称和值均为字符串" error={formError.includes("响应头") ? formError : undefined}><Textarea className="mock-headers" value={draft.headers} onChange={(event) => updateDraft("headers", event.target.value)} spellCheck={false} /></Field>}
+          <div className="mock-response-tabs" role="tablist" aria-label="返回数据"><button type="button" role="tab" aria-selected={responseTab === "body"} className={responseTab === "body" ? "is-active" : ""} onClick={() => setResponseTab("body")}>Body</button><button type="button" role="tab" aria-selected={responseTab === "headers"} className={responseTab === "headers" ? "is-active" : ""} onClick={() => setResponseTab("headers")}>Headers</button><button type="button" role="tab" aria-selected={responseTab === "settings"} className={responseTab === "settings" ? "is-active" : ""} onClick={() => setResponseTab("settings")}>设置</button></div>
+          {responseTab === "body" ? <Field label="响应正文"><Textarea className="mock-body" value={draft.body} onChange={(event) => { updateDraft("body", event.target.value); setResponseSource("custom"); }} spellCheck={false} /></Field> : responseTab === "headers" ? <Field label="响应头" hint="参数名和值将作为字符串发送" error={formError.includes("响应头") ? formError : undefined}><div className="mock-header-editor" role="table" aria-label="响应头参数"><div className="mock-header-columns" role="row"><span role="columnheader">参数名</span><span role="columnheader">参数值</span><span aria-hidden="true" /></div>{draft.headers.map((header, index) => { const activate = () => { if (!header.active) updateHeader(header.id, {}); }; const nameError = header.active ? mockHeaderNameError(header.name) : ""; const valueError = header.active ? mockHeaderValueError(header.value) : ""; const nameErrorId = `${header.id}-name-error`; const valueErrorId = `${header.id}-value-error`; return <div className={`mock-header-row ${header.active ? "is-active" : "is-placeholder"}`} role="row" key={header.id}><span className={`mock-header-cell${nameError && header.name ? " has-inline-error" : ""}`} role="cell"><TextInput aria-label={`响应头 ${index + 1} 参数名`} aria-required={header.active} aria-invalid={Boolean(nameError)} aria-describedby={nameError ? nameErrorId : undefined} value={header.name} placeholder={header.active && nameError && !header.name ? nameError : ""} onFocus={activate} onChange={(event) => updateHeader(header.id, { name: event.target.value })} spellCheck={false} />{nameError ? <small className={`mock-header-error${header.name ? " is-inline" : " is-sr-only"}`} id={nameErrorId}>{nameError}</small> : null}</span><span className={`mock-header-cell${valueError && header.value ? " has-inline-error" : ""}`} role="cell"><TextInput aria-label={`响应头 ${index + 1} 参数值`} aria-required={header.active} aria-invalid={Boolean(valueError)} aria-describedby={valueError ? valueErrorId : undefined} value={header.value} placeholder={valueError && !header.value ? valueError : ""} onFocus={activate} onChange={(event) => updateHeader(header.id, { value: event.target.value })} spellCheck={false} />{valueError ? <small className={`mock-header-error${header.value ? " is-inline" : " is-sr-only"}`} id={valueErrorId}>{valueError}</small> : null}</span>{header.active ? <IconButton label={`删除响应头 ${index + 1}`} icon="trash" tone="danger" onClick={() => removeHeader(header.id)} /> : <span aria-hidden="true" />}</div>; })}</div></Field> : <div className="mock-fields mock-settings-fields">
+            <Field label="HTTP 状态码" required><HttpStatusCodeInput value={draft.status ? String(draft.status) : ""} onChange={changeResponseStatus} invalid={draft.status < 100 || draft.status > 999} maxLength={3} /></Field>
+            <Field label="优先级" hint="数值越大越优先"><TextInput aria-label="优先级" type="number" value={draft.priority} onChange={(event) => updateDraft("priority", +event.target.value)} /></Field>
+            <Field label="响应延迟" hint="毫秒"><TextInput aria-label="响应延迟" type="number" min={0} value={draft.delayMs} onChange={(event) => updateDraft("delayMs", +event.target.value)} /></Field>
+            <Field label="周期故障" hint="0 表示关闭"><TextInput aria-label="周期故障" type="number" min={0} value={draft.errorEvery} onChange={(event) => updateDraft("errorEvery", +event.target.value)} /></Field>
+          </div>}
         </div>}
-        <section className="mock-advanced-section">
-          <Button size="compact" variant="ghost" icon="settings" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((open) => !open)}>高级行为</Button>
-          {advancedOpen ? <div className="mock-fields mock-fields-behavior">
-            <Field label="优先级" hint="数值越大越优先"><TextInput type="number" value={draft.priority} onChange={(event) => updateDraft("priority", +event.target.value)} /></Field>
-            <Field label="响应延迟" hint="毫秒"><TextInput type="number" min={0} value={draft.delayMs} onChange={(event) => updateDraft("delayMs", +event.target.value)} /></Field>
-            <Field label="周期故障" hint="0 表示关闭"><TextInput type="number" min={0} value={draft.errorEvery} onChange={(event) => updateDraft("errorEvery", +event.target.value)} /></Field>
-            <Field label="查询参数条件" hint={'JSON，例如 {"page":"1"}'}><Textarea value={draft.matchQuery} onChange={(event) => updateDraft("matchQuery", event.target.value)} spellCheck={false} /></Field>
-            <Field label="请求头条件" hint="JSON；名称匹配不区分大小写"><Textarea value={draft.matchHeaders} onChange={(event) => updateDraft("matchHeaders", event.target.value)} spellCheck={false} /></Field>
-            <Field label="Cookie 条件" hint="JSON"><Textarea value={draft.matchCookies} onChange={(event) => updateDraft("matchCookies", event.target.value)} spellCheck={false} /></Field>
-            <Field label="Body 包含" hint="留空表示不限制"><TextInput value={draft.bodyContains} onChange={(event) => updateDraft("bodyContains", event.target.value)} /></Field>
-          </div> : null}
-        </section>
         {formError && !formError.includes("响应头") ? <InlineAlert tone="danger" title="无法保存场景">{formError}</InlineAlert> : null}
       </div>
     </ModalFrame>

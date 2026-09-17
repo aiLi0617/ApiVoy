@@ -25,7 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, VecDeque},
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -38,6 +39,7 @@ use uuid::Uuid;
 
 const API_VERSION: &str = "1";
 const MAX_RESULTS: usize = 500;
+const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:39218";
 
 #[derive(Clone)]
 struct AppState {
@@ -118,12 +120,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = build_state()?;
     spawn_scheduler(state.clone());
     let app = app(state);
-    let bind: SocketAddr = std::env::var("APIVOY_GATEWAY_BIND")
-        .unwrap_or_else(|_| "0.0.0.0:39218".into())
-        .parse()?;
+    let bind = gateway_bind()?;
     info!(%bind, "ApiVoy Protocol Gateway listening");
     axum::serve(tokio::net::TcpListener::bind(bind).await?, app).await?;
     Ok(())
+}
+
+fn gateway_bind() -> Result<SocketAddr, std::net::AddrParseError> {
+    std::env::var("APIVOY_GATEWAY_BIND")
+        .unwrap_or_else(|_| DEFAULT_GATEWAY_BIND.into())
+        .parse()
 }
 
 fn build_state() -> Result<AppState, Box<dyn std::error::Error>> {
@@ -137,7 +143,7 @@ fn build_state() -> Result<AppState, Box<dyn std::error::Error>> {
     );
     fs::create_dir_all(&data_dir)?;
     let jobs_path = data_dir.join("jobs.json");
-    let jobs = load_jobs(&jobs_path);
+    let jobs = load_jobs(&jobs_path)?;
     let max_concurrency = std::env::var("APIVOY_GATEWAY_MAX_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -196,7 +202,7 @@ async fn health() -> Json<Value> {
 async fn capabilities(State(state): State<AppState>) -> Json<Value> {
     let drivers = state.engine.read().await.list_drivers();
     Json(
-        json!({"apiVersion":API_VERSION,"modes":["remote","scheduled","ci"],"drivers":drivers,"dataFlow":{"request":"sent to this gateway and then directly to the configured target","secrets":"use secret references; scheduled request envelopes are persisted exactly as submitted","retention":"scheduled envelopes persist on disk; the latest 500 summaries retain only states, metrics, assertions, and response metadata without headers"}}),
+        json!({"apiVersion":API_VERSION,"modes":["remote","scheduled","ci"],"drivers":drivers,"dataFlow":{"request":"sent to this gateway and then directly to the configured target","secrets":"scheduled requests with recognizable inline credentials are rejected; the gateway does not currently resolve secret references","retention":"scheduled envelopes persist on disk; the latest 500 summaries retain only states, metrics, assertions, and response metadata without headers"}}),
     )
 }
 async fn authenticate(
@@ -353,6 +359,13 @@ async fn create_job(State(state): State<AppState>, Json(body): Json<CreateJob>) 
         )
             .into_response();
     }
+    if scheduled_request_contains_credentials(&body.request) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"scheduled request contains inline credentials; credentialed schedules are not supported by this gateway"})),
+        )
+            .into_response();
+    }
     let job = ScheduledJob {
         id: Uuid::new_v4(),
         name: body.name,
@@ -366,6 +379,7 @@ async fn create_job(State(state): State<AppState>, Json(body): Json<CreateJob>) 
     let mut jobs = state.jobs.lock().await;
     jobs.insert(job.id, job.clone());
     if let Err(error) = persist_jobs(&state.jobs_path, &jobs) {
+        jobs.remove(&job.id);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error":error.to_string()})),
@@ -424,20 +438,76 @@ fn spawn_scheduler(state: AppState) {
         }
     });
 }
-fn load_jobs(path: &Path) -> HashMap<Uuid, ScheduledJob> {
-    fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Vec<ScheduledJob>>(&b).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|j| (j.id, j))
-        .collect()
+fn load_jobs(path: &Path) -> Result<HashMap<Uuid, ScheduledJob>, Box<dyn std::error::Error>> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let jobs: Vec<ScheduledJob> = serde_json::from_slice(&bytes)?;
+    if jobs.iter().any(|job| scheduled_request_contains_credentials(&job.request)) {
+        return Err("jobs.json contains scheduled requests with inline credentials; remove them and rotate exposed credentials before restarting".into());
+    }
+    Ok(jobs.into_iter().map(|job| (job.id, job)).collect())
+}
+
+fn sensitive_name(name: &str) -> bool {
+    let normalized: String = name.chars().filter(|ch| ch.is_ascii_alphanumeric()).flat_map(char::to_lowercase).collect();
+    ["authorization", "cookie", "token", "secret", "password", "passwd", "apikey", "credential"]
+        .iter()
+        .any(|part| normalized.contains(part))
+}
+
+fn has_sensitive_fields(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => fields.iter().any(|(key, value)| {
+            (sensitive_name(key) && !matches!(key.as_str(), "secretRef" | "secretRefs") && !value.is_null())
+                || has_sensitive_fields(value)
+        }),
+        Value::Array(items) => {
+            if items.len() == 2 && items[0].as_str().is_some_and(sensitive_name) {
+                return true;
+            }
+            items.iter().any(has_sensitive_fields)
+        }
+        _ => false,
+    }
+}
+
+fn scheduled_request_contains_credentials(request: &RequestEnvelope) -> bool {
+    let original = serde_json::to_value(request).expect("RequestEnvelope serializes");
+    let sanitized = serde_json::to_value(request.sanitized_for_persistence()).expect("RequestEnvelope serializes");
+    if original != sanitized {
+        return true;
+    }
+    let target_query = request.target.split_once('?').map(|(_, query)| query.split('#').next().unwrap_or(""));
+    if target_query.is_some_and(|query| query.split('&').any(|pair| sensitive_name(pair.split('=').next().unwrap_or("")))) {
+        return true;
+    }
+    let payload = original.get("payload").unwrap_or(&Value::Null);
+    let variables = original.get("variables").unwrap_or(&Value::Null);
+    has_sensitive_fields(payload) || has_sensitive_fields(variables)
 }
 fn persist_jobs(path: &Path, jobs: &HashMap<Uuid, ScheduledJob>) -> Result<(), std::io::Error> {
     let temp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(&jobs.values().collect::<Vec<_>>())
         .map_err(std::io::Error::other)?;
-    fs::write(&temp, bytes)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
     fs::rename(temp, path)
 }
 
@@ -463,8 +533,43 @@ mod tests {
         let mut jobs = HashMap::new();
         jobs.insert(job.id, job);
         persist_jobs(&path, &jobs).unwrap();
-        assert_eq!(load_jobs(&path).len(), 1);
+        assert_eq!(load_jobs(&path).unwrap().len(), 1);
+        persist_jobs(&path, &jobs).unwrap();
+        assert_eq!(load_jobs(&path).unwrap().len(), 1);
         fs::remove_dir_all(dir).unwrap()
+    }
+    #[test]
+    fn scheduled_jobs_reject_inline_credentials() {
+        let mut request = execution_engine::sample_http_get("https://example.com?api_key=literal");
+        assert!(scheduled_request_contains_credentials(&request));
+        request.target = "https://example.com".into();
+        if let core_domain::ProtocolPayload::Http(payload) = &mut request.payload {
+            payload.headers.push(("Authorization".into(), "Bearer literal".into()));
+        }
+        assert!(scheduled_request_contains_credentials(&request));
+        if let core_domain::ProtocolPayload::Http(payload) = &mut request.payload {
+            payload.headers.clear();
+        }
+        assert!(!scheduled_request_contains_credentials(&request));
+    }
+    #[test]
+    fn default_gateway_bind_is_loopback() {
+        let address: SocketAddr = DEFAULT_GATEWAY_BIND.parse().unwrap();
+        assert!(address.ip().is_loopback());
+    }
+    #[test]
+    fn existing_inline_credentials_block_startup() {
+        let dir = std::env::temp_dir().join(format!("apivoy-gateway-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("jobs.json");
+        let job = ScheduledJob {
+            id: Uuid::new_v4(), name: "unsafe".into(), enabled: true, interval_seconds: 60,
+            next_run_at: Utc::now(), request: execution_engine::sample_http_get("https://example.com?token=literal"),
+            created_at: Utc::now(), last_execution_id: None,
+        };
+        persist_jobs(&path, &HashMap::from([(job.id, job)])).unwrap();
+        assert!(load_jobs(&path).is_err());
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn engine_exposes_all_protocols() {

@@ -23,4 +23,6 @@ ApiVoy 的 Mock 数据面由独立的 `apivoy-mock` 进程提供。它与 Local 
 
 自定义场景只用于条件匹配、延迟、周期故障和 WebSocket 行为等覆盖。每条场景有独立 `enabled` 开关；新建默认启用，旧规则缺少该字段时也按启用读取。停用会保留配置但不参与匹配，“设为当前”只调整同一接口内场景优先级，不能替代启停。
 
+普通场景条件使用统一的“参数位置、参数名、比较方式、参数值”结构，当前支持 Query、Path、Header、Cookie 和 JSON Body，多条条件按 AND 匹配；Body 参数名使用 JSONPath（例如 `$.user.id`），Path 参数名对应 `/users/{id}` 中的 `id`。客户端 IP 作为独立条件配置，可填写多个 IP，列表内任意一个 IP 命中即可；地址取自 Mock 服务的 TCP 对端，不信任 `X-Forwarded-For`。旧版 `query`、`headers`、`cookies`、`bodyContains` 和单条 IP 条件继续兼容读取，编辑后会写入新结构。
+
 匹配边界为 `projectKey + serviceKey + method + path/operationId`，不会跨项目或服务回退。条件可包含 Query、Header、Cookie 和 Body 包含文本。

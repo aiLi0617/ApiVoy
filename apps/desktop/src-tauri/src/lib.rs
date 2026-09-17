@@ -1247,16 +1247,17 @@ async fn run_collection(
         .store
         .lock()
         .await
-        .list_requests(Some(&collection_id))
+        .list_collection_requests_for_run(&collection_id)
         .map_err(|error| error.to_string())?;
     let mut cases = Vec::new();
     for stored in requests {
+        let environment_id = stored.envelope.environment_ref.as_deref().unwrap_or("default-env");
         let mut scope = VariableScope::default();
         if let Some(env) = state
             .store
             .lock()
             .await
-            .get_environment("default-env")
+            .get_environment(environment_id)
             .map_err(|error| error.to_string())?
         {
             scope.environment = env.variables;
